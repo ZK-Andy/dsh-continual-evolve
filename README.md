@@ -1,14 +1,40 @@
 # dsh-continual-evolve
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
+[![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)]()
+[![Status](https://img.shields.io/badge/status-Phase%203%20%2F%20benchmark%20validation-ff69b4)]()
+
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
 
 > **Status: Phase 3 (benchmark-driven validation loop).** On top of the
 > completed Phase 2, an evaluation matrix runner (host-plane `subagents`,
-> frozen runtime, JSON-validated cells) feeds a code-owned scoreboard; the
+> frozen runtime, structured-output cells) feeds a code-owned scoreboard; the
 > non-regressive acceptance rule decides accept/reject with no model-written
-> aggregates. The runner deliberately avoids the workflow engine because the
-> web profile keeps it in a per-agent isolated realm a host plugin cannot
-> resolve.
+> aggregates.
+
+## Background
+
+This project started as a research question: *can a harness improve itself,
+and what would a production-grade version look like?* Three lines of evidence
+shaped the answer:
+
+- **penguin-harness** demonstrated the concept (benchmark → evaluate →
+  optimize → accept/rollback) but with **zero code-level enforcement** — every
+  guarantee was a prompt contract. Its report (`docs/research/`) became the
+  hardening checklist this project implements.
+- **prime-agent `/refine`** proved the engineering shape: versioned harness
+  entries, atomic persistence, optimistic concurrency, inverse-op rollback.
+  This package is an original implementation of that shape on the DSH plugin
+  surface.
+- Academic work (Self-Harness, AHE, HarnessOpt-Bench) supplied the discipline:
+  frozen evaluation runtime, code-owned aggregation, non-regressive
+  acceptance.
+
+The result: **the model proposes, the code guarantees.** Every mechanical
+safety property (schema validation, snapshots, versioning, audit trail,
+acceptance decisions) is enforced in code — never by asking the model to
+behave.
 
 ## Why
 
@@ -24,9 +50,8 @@ Agents accumulate reusable experience in every session — repeated failures, du
 
 Inspired by three bodies of work (see [`docs/design.md`](docs/design.md)):
 
-- **prime-agent `/refine`** (MIT): the state model, atomic persistence, optimistic concurrency, per-edit validation, and inverse-op rollback this package implements. The code here is an original implementation of that design, written for the DSH plugin surface.
+- **prime-agent `/refine`** (MIT): the state model, atomic persistence, optimistic concurrency, per-edit validation, and inverse-op rollback this package implements — annotated reference source in [`docs/research/prime-agent-refinement.ts`](docs/research/prime-agent-refinement.ts). The code here is an original implementation, written for the DSH plugin surface.
 - **penguin-harness** (Apache-2.0): the benchmark-driven evolution loop — research report in [`docs/research/penguin-harness-self-evolution.md`](docs/research/penguin-harness-self-evolution.md); its prompt-only contracts are the anti-pattern this package hardens.
-- **prime-agent `/refine`** (MIT): reference implementation studied for this design — annotated source in [`docs/research/prime-agent-refinement.ts`](docs/research/prime-agent-refinement.ts).
 - Academic: Self-Harness (arXiv 2606.09498), AHE (arXiv 2604.25850), HarnessOpt-Bench (arXiv 2608.06301).
 
 ## Tech stack
