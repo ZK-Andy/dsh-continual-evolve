@@ -152,15 +152,16 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 - **验收**：两条真实会话中长出跨会话可复用的 memory/skill 条目，可回滚，坏 JSON/非法编辑全部代码级拒绝
 
 ### Phase 2 —— 门禁与自动化
-- [ ] turn_interval / compact review 门禁（廉价 LLM 调用）
-- [ ] global scope 开启，带人工审批门禁
-- [ ] skill 条目可执行化（对齐 prime-agent 的 python reference 契约）
-- [ ] 提示词渲染进 preset（additive section，封顶 6 条/类）
+- [x] turn_interval / compact review 门禁（廉价 LLM 调用）
+- [x] global scope 开启，带人工审批门禁
+- [x] skill 条目可执行化（对齐 prime-agent 的 python reference 契约，物化 `$DSH_HOME/skills/<kebab>/SKILL.md`）
+- [ ] **prompt 条目真正注入系统提示词**（additive section，封顶 6 条/类）——现状：prompt 条目只是 store 文本 + 概览，未注入提示词段；接入点在 `index.ts` 的 `ctx.systemPrompt.section`（当前是静态引导语）+ `render.ts` 概览（当前靠 `evolve_list` 才可见）
+- [ ] **subagent 条目生成可复用委派规格**——现状：subagent 条目只是 store 文本；需接入委派接缝（子代理启动时按规格组装任务提示），对齐 prime-agent 的 subagent spec 形态
 
 ### Phase 3 —— 验证闭环（penguin 硬化版，可选）
-- [ ] `dsh-workflow` 引擎编排"候选 → 评估矩阵"：沙箱内独立 workspace、冻结 provider/model、重复 Run
-- [ ] scoreboard 聚合下沉代码（模型只产细胞级分数）
-- [ ] 接受规则：顶层平均分严格高于 Reference 且无退化（Self-Harness 的非退化规则）
+- [x] 评估矩阵执行器（改用 host 平面 `ctx.subagents` + `outputSchema` 结构化输出；web profile 无 host workflowEngine，见 FAQ #1）
+- [x] scoreboard 聚合下沉代码（模型只产细胞级分数）
+- [x] 接受规则：顶层平均分严格高于 Reference 且无退化（Self-Harness 的非退化规则）
 - [ ] rubric 目录对优化器不可读（沙箱 ACL，权限强制）
 
 ## 8. 风险与权衡
