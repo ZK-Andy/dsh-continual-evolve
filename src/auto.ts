@@ -78,19 +78,36 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		}
 	};
 
-	ctx.on("agent/status", (payload: { agent?: Agent; status?: string }) => {
+	// Turn counting uses `agent/turn-stopping` — empirically the only event
+	// whose payload carries the agent subject in every dispatch (verified: the
+	// gate fired under it at 20:56). `agent/status` serves as the idle trigger.
+	ctx.on("agent/turn-stopping", (payload: { agent?: Agent }) => {
 		const agent = payload.agent;
-		if (!agent || typeof payload.status !== "string") {
-			logger.warn(`auto-review gate: agent/status payload missing agent/status (scope injection absent); skipping`);
+		if (!agent) {
+			logger.warn(`auto-review gate: agent/turn-stopping payload missing agent; skipping count`);
 			return;
 		}
 		const state = stateFor(perSession, agent.id);
-		const completed = advanceGateState(state, payload.status);
-		if (!completed) return;
+		state.turns += 1;
+	});
+
+	ctx.on("agent/status", (payload: { agent?: Agent; status?: string }) => {
+		const agent = payload.agent;
+		if (!agent || payload.status !== "idle") return;
+		const state = stateFor(perSession, agent.id);
 		if (state.turns - state.lastReviewAt < config.intervalTurns) return;
 		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
+		// Every failure is durably recorded — nothing fails silently.
 		void runGate(ctx, engine, agent, config, state, "turn_interval", record).catch((cause) => {
-			logger.warn(`auto-review failed for ${agent.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
+			const message = cause instanceof Error ? cause.message : String(cause);
+			logger.warn(`auto-review failed for ${agent.id}: ${message}`);
+			record({
+				sessionId: agent.id,
+				reason: "turn_interval",
+				turnsSinceLastReview: state.turns - state.lastReviewAt,
+				outcome: "failed",
+				rationale: `gate error: ${message}`,
+			});
 			state.lastReviewAt = state.turns; // back off until the interval elapses again
 		});
 	});
@@ -125,6 +142,13 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		// Compaction is unconditional: persist what is about to be summarized away.
 		void runGate(ctx, engine, agent, config, state, "compact", record).catch((cause) => {
 			logger.warn(`auto-review failed at compaction for ${agent.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
+			record({
+				sessionId: agent.id,
+				reason: "compact",
+				turnsSinceLastReview: state.turns - state.lastReviewAt,
+				outcome: "failed",
+				rationale: `gate error at compaction: ${cause instanceof Error ? cause.message : String(cause)}`,
+			});
 		});
 	});
 }
