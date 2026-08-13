@@ -68,3 +68,20 @@ output: { schema: { type: "object", properties: { text: { type: "string", requir
 **原因**：命令分词器不懂引号，`"Commit hygiene"` 被按空白拆成 `"Commit` 和 `hygiene"`。
 
 **修复**：shell 风格引号分词（见 #4）。注意帮助文本里的 `<任务文本>` 是占位符——真实使用要写实际内容。
+## 7. 门禁报 `gate error: review gate produced no text`
+
+**症状**：`reviews.jsonl` 里出现 `failed (turn_interval, 6 turns): gate error: evolve: review gate produced no text`，但 `maxTokens` 预算充足。
+
+**原因**：DeepSeek 推理模型把输出预算烧在**可见思考**上，最终文本块为零——门禁/规划器拿到的是空 text。prime-agent 源码有同款处理："keep the refinement request non-reasoning so the model uses its output budget for the JSON object"。
+
+**修复**：LLM 调用传 `reasoningEffort: ReasoningEffortId("off")`（DeepSeek 适配器支持 `"off"`），并显式处理 `max-tokens` 截断：
+
+```ts
+import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
+for await (const chunk of ctx.llm.stream({
+  provider, model, system, messages,
+  reasoningEffort: ReasoningEffortId("off"),   // ← 关键
+  maxTokens: 8000,
+})) { assembler.push(chunk); }
+```
+
