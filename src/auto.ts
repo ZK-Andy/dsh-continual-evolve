@@ -29,9 +29,10 @@ export interface AutoReviewConfig {
 	budgetTokens: number;
 }
 
-interface GateState {
+export interface GateState {
 	turns: number;
 	lastReviewAt: number;
+	running: boolean;
 }
 
 interface ReviewRecord {
@@ -42,6 +43,25 @@ interface ReviewRecord {
 	outcome: "approved" | "declined" | "failed";
 	rationale?: string;
 	refinementId?: string;
+}
+
+/**
+ * Count completed turns from agent/status transitions alone. The runtime
+ * emits `agent/status` with a `{status}` payload and (per host consumers like
+ * dsh-host-apiproxy) an injected `agent` subject; `agent/turn-stopping` does
+ * not reliably carry the agent, so it is NOT used for counting.
+ */
+export function advanceGateState(state: GateState, status: string): boolean {
+	if (status === "running") {
+		state.running = true;
+		return false;
+	}
+	if (status === "idle" && state.running) {
+		state.running = false;
+		state.turns += 1;
+		return true;
+	}
+	return false;
 }
 
 export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config: AutoReviewConfig): void {
@@ -58,9 +78,21 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		}
 	};
 
-	ctx.on("agent/turn-stopping", (payload: { agent: Agent }) => {
-		const state = stateFor(perSession, payload.agent.id);
-		state.turns += 1;
+	ctx.on("agent/status", (payload: { agent?: Agent; status?: string }) => {
+		const agent = payload.agent;
+		if (!agent || typeof payload.status !== "string") {
+			logger.warn(`auto-review gate: agent/status payload missing agent/status (scope injection absent); skipping`);
+			return;
+		}
+		const state = stateFor(perSession, agent.id);
+		const completed = advanceGateState(state, payload.status);
+		if (!completed) return;
+		if (state.turns - state.lastReviewAt < config.intervalTurns) return;
+		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
+		void runGate(ctx, engine, agent, config, state, "turn_interval", record).catch((cause) => {
+			logger.warn(`auto-review failed for ${agent.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
+			state.lastReviewAt = state.turns; // back off until the interval elapses again
+		});
 	});
 
 	// Diagnostic: the armed marker proves registerAutoReview ran with the
@@ -84,18 +116,6 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		logger.warn(`failed to write armed marker: ${cause instanceof Error ? cause.message : String(cause)}`);
 	}
 
-	ctx.on("agent/status", (payload: { agent: Agent; status: string }) => {
-		if (payload.status !== "idle") return;
-		const agent = payload.agent;
-		const state = stateFor(perSession, agent.id);
-		if (state.turns - state.lastReviewAt < config.intervalTurns) return;
-		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
-		void runGate(ctx, engine, agent, config, state, "turn_interval", record).catch((cause) => {
-			logger.warn(`auto-review failed for ${agent.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
-			state.lastReviewAt = state.turns; // back off until the interval elapses again
-		});
-	});
-
 	ctx.on("session/event", (session: { id: string }, event: { type: string }) => {
 		if (event.type !== "compaction/start") return;
 		const agents = (ctx as unknown as { agents?: { get(id: string): Agent | undefined } }).agents;
@@ -112,7 +132,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 	let state = map.get(sessionId);
 	if (!state) {
-		state = { turns: 0, lastReviewAt: 0 };
+		state = { turns: 0, lastReviewAt: 0, running: false };
 		map.set(sessionId, state);
 	}
 	return state;
