@@ -7,7 +7,7 @@
  * provider/model so the plan uses the same model the session runs on.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
+import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementProposal, RefinementResult } from "./types.js";
 import { parseProposal } from "./plan.js";
@@ -87,6 +87,8 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
 			}),
 		],
+		// Force non-reasoning output: the proposal must be pure JSON text.
+		reasoningEffort: ReasoningEffortId("off"),
 		maxTokens: options.maxOutputTokens ?? 8000,
 		...(options.signal ? { signal: options.signal } : {}),
 	})) {

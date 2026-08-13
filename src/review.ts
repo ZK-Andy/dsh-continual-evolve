@@ -6,7 +6,7 @@
  * "should we refine?", never "what should we edit?".
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
+import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementResult } from "./types.js";
 import { extractJsonObject } from "./plan.js";
@@ -121,7 +121,11 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
 			}),
 		],
-		maxTokens: options.budgetTokens ?? 4096,
+		// Force non-reasoning output so the model spends its budget on the JSON
+		// answer, not on visible thinking (reasoning models otherwise produce
+		// zero text blocks — the exact failure recorded in reviews.jsonl).
+		reasoningEffort: ReasoningEffortId("off"),
+		maxTokens: options.budgetTokens ?? 8000,
 		...(options.signal ? { signal: options.signal } : {}),
 	})) {
 		assembler.push(chunk);
@@ -132,6 +136,9 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 	}
 	if (finish.kind === "aborted") {
 		throw new Error("evolve: review gate call aborted");
+	}
+	if (finish.kind === "max-tokens") {
+		throw new Error("evolve: review gate output budget exhausted (max-tokens)");
 	}
 	const text = assembler
 		.blocks()
