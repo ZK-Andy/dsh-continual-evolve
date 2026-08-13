@@ -139,6 +139,24 @@ produces raw per-cell scores only; aggregation and decisions live in
 rubric files); rejection is recorded and suggested for rollback (human in
 the loop, no auto-rollback).
 
+### Real recorded run (ACCEPT)
+
+A live `dsh web` session, one case, one candidate — the first genuine
+acceptance:
+
+| Step | Command | Outcome |
+|---|---|---|
+| reference | `/evolve benchmark run lint_convention` | **90** — the evaluator agent actually grepped the harness store and reported *"lint/ruff/eslint/mypy appear in zero entries"* |
+| candidate | `/evolve plan 记住：写代码前必须先运行适用的 lint 检查` | creates `memory:convention_lint_before_code` |
+| re-evaluate | `/evolve benchmark run lint_convention candidate <id>` | **100** — evaluator ran `evolve_list`, hit the memory, quoted it verbatim |
+| decision | — | `overall: 90 → 100` · `lint_knowledge: 90 → 100` · **DECISION: ACCEPTED** |
+
+The evaluator does not grade model common sense — it inspects the actual
+harness state under test (grep, `evolve_list`) and scores against it, so a
+harness change measurably moves the score. Earlier runs in the same session
+produced honest `REJECTED` decisions (0 → 0 placeholder cases, and 100 → 100
+where the baseline was already perfect).
+
 ## Configuration
 
 | Key | Default | Meaning |

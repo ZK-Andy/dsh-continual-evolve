@@ -114,6 +114,19 @@ dsh-continual-evolve/
 
 闭环：冻结参考分 → 进化候选（`/evolve plan`）→ 用同一 case × run 矩阵复测进化后状态 → **代码所有**的接受规则只在总体均值严格提高且无 case 退化时保留候选（Self-Harness 风格）。模型只产出原始细胞级分数；聚合与决策都在 `src/score.ts`。rubric 隔离靠构造（规划器的提示词永远不含 rubric 文件）；拒绝会记录并提示回滚（人工在环，不自动回滚）。
 
+### 真实运行记录（ACCEPT）
+
+一次真实的 `dsh web` 会话，一个 case、一个候选——第一次真正的接受：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 参考线 | `/evolve benchmark run lint_convention` | **90**——评估子代理真的 grep 了 harness store，报告"lint/ruff/eslint/mypy 在所有条目中零出现" |
+| 进化候选 | `/evolve plan 记住：写代码前必须先运行适用的 lint 检查` | 创建 `memory:convention_lint_before_code` |
+| 复测 | `/evolve benchmark run lint_convention candidate <id>` | **100**——评估器跑 `evolve_list` 命中记忆并逐字引用 |
+| 决策 | — | `overall: 90 → 100` · `lint_knowledge: 90 → 100` · **DECISION: ACCEPTED** |
+
+评估器评的不是模型常识，而是**被测 harness 状态本身**（grep、`evolve_list` 检查）——所以 harness 的改动会真实地反映在分数上。同一会话早些时候还产生过诚实的 `REJECTED` 决策（0→0 占位符 case、100→100 满分基线无法超越）。
+
 ## 配置
 
 | 键 | 默认值 | 含义 |
