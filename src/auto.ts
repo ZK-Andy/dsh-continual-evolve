@@ -63,6 +63,27 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		state.turns += 1;
 	});
 
+	// Diagnostic: the armed marker proves registerAutoReview ran with the
+	// configured interval; a restart that writes it but nothing after means the
+	// trigger events are not reaching this listener.
+	try {
+		mkdirSync(join(engine.baseDir, "evolve"), { recursive: true });
+		appendFileSync(
+			reviewsPath,
+			`${JSON.stringify({
+				timestamp: new Date().toISOString(),
+				sessionId: "boot",
+				reason: "boot",
+				turnsSinceLastReview: 0,
+				outcome: "armed",
+				rationale: `auto-review gate registered (interval=${config.intervalTurns})`,
+			})}\n`,
+			"utf8",
+		);
+	} catch (cause) {
+		logger.warn(`failed to write armed marker: ${cause instanceof Error ? cause.message : String(cause)}`);
+	}
+
 	ctx.on("agent/status", (payload: { agent: Agent; status: string }) => {
 		if (payload.status !== "idle") return;
 		const agent = payload.agent;
