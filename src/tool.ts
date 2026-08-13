@@ -17,8 +17,9 @@ interface ToolExec {
 	agent?: { id: string };
 }
 
-function scopeOf(value: unknown, fallback: HarnessScope): HarnessScope {
-	return value === "global" ? "global" : fallback;
+/** Accept both the boolean tool parameter (`global: true`) and the string form. */
+export function scopeOf(value: unknown, fallback: HarnessScope): HarnessScope {
+	return value === "global" || value === true ? "global" : fallback;
 }
 
 /** The calling agent's session id; tools always run inside an agent scope. */
