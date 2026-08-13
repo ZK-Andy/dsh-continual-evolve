@@ -1,0 +1,9 @@
+# dsh-continual-evolve bundle layer.
+#
+# Installed via `dsh plugin --profile <name> add dsh-continual-evolve`, this
+# patch inserts the plugin row so it activates without manual profile editing.
+# Conservative defaults: the auto-review gate is OFF (opt in via your profile
+# cordis.patch.yml config) and cross-session edits require human approval.
+- insert:
+    - id: continual-evolve
+      name: 'dsh-continual-evolve'
