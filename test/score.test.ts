@@ -3,7 +3,7 @@
  * non-regressive acceptance rule.
  */
 import { describe, expect, it } from "vitest";
-import { aggregate, decide, entryFromCells, type AggregateOptions } from "../src/score.js";
+import { aggregate, decide, decisionReport, entryFromCells, type AggregateOptions } from "../src/score.js";
 import type { CellScore } from "../src/benchmark.js";
 
 const OPTS: AggregateOptions = { passThreshold: 60, regressionTolerance: 0 };
@@ -43,6 +43,18 @@ describe("entryFromCells", () => {
 		expect(entry.refinementId).toBe("r1");
 		expect(entry.aggregate["a"]).toBe(90);
 		expect(entry.overall).toBe(90);
+	});
+});
+
+describe("decisionReport", () => {
+	it("renders per-case deltas and the decision line", () => {
+		const reference = entryFromCells("reference", cells([["a", 70], ["b", 80]]));
+		const candidate = entryFromCells("candidate", cells([["a", 90], ["b", 85]]));
+		const decision = decide(reference, candidate, OPTS);
+		const lines = decisionReport(reference, candidate, decision);
+		expect(lines.join("\n")).toContain("overall: 75 → 87.5");
+		expect(lines.join("\n")).toContain("a: 70 → 90");
+		expect(lines.join("\n")).toContain("DECISION: ACCEPTED");
 	});
 });
 

@@ -47,6 +47,22 @@ export interface Decision {
 	reasons: string[];
 }
 
+/** Human-readable decision report with per-case before → after deltas. */
+export function decisionReport(reference: EvaluationEntry, candidate: EvaluationEntry, decision: Decision): string[] {
+	const lines: string[] = [`overall: ${reference.overall ?? "?"} → ${candidate.overall ?? "?"}`];
+	for (const [caseId, refScore] of Object.entries(reference.aggregate)) {
+		if (caseId === "overall" || refScore === null) continue;
+		const candScore = candidate.aggregate[caseId];
+		lines.push(`  ${caseId}: ${refScore} → ${candScore ?? "?"}`);
+	}
+	lines.push(
+		decision.accepted
+			? "DECISION: ACCEPTED — overall improved, no regression"
+			: `DECISION: REJECTED — ${decision.reasons.join("; ")}`,
+	);
+	return lines;
+}
+
 /**
  * Non-regressive acceptance rule (Self-Harness style):
  * the candidate is accepted iff its overall mean is STRICTLY higher than the

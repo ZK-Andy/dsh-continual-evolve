@@ -1,0 +1,70 @@
+# FAQ
+
+踩坑记录与解决方案。这些条目都来自真实开发过程——每一条都对应一次实际的故障与修复。
+
+## 1. `dsh web` 启动失败：`1 entry did not activate` / `waiting for service: workflowEngine`
+
+**症状**：插件树加载失败，报 `dsh-continual-evolve: pending (waiting for service: workflowEngine)`。
+
+**原因**：web profile 的 host 层**故意禁用**了 `workflow-worker-thread` 和 `tool-workflow`（`dsh-web-app/cordis.patch.yml` 里 `disabled: true`）；标准预设里的那份在 `delegation` 组内且配置了 `isolate: { workflowEngine: true }`——引擎在组内隔离域，host 插件永远解析不到。把 `workflowEngine` 声明为必选 `inject` 会让整个插件卡在 pending。
+
+**修复**：不要把 `workflowEngine` 放进 `inject`。需要时用 `ctx.get("workflowEngine")` 惰性读取，拿不到就抛明确错误。评估类工作优先用 **host 平面的 `ctx.subagents`**（任何 profile 都有）。
+
+## 2. `unsupported JSON schema: schema.required is not supported by the value schema DSL`
+
+**症状**：`defineTool` 抛 `JsonSchemaError: schema.required is not supported by the value schema DSL`。
+
+**原因**：`defineTool` 对两类 schema 走不同编译路径：
+
+| 字段 | 编译路径 | 是否支持根级 `required: [...]` |
+|---|---|---|
+| `parameters` | `compilePropertyMap` | 支持，但写法是**每个属性上写 `required: true`** |
+| `output.schema` | `compileValueSchema`（`allowRequired: false`） | **不支持**根级 `required: [...]` |
+
+**修复**：`output.schema` 用 DSL 写法——在属性上标 `required: true`：
+
+```ts
+// ❌ 错误
+output: { schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }
+// ✅ 正确
+output: { schema: { type: "object", properties: { text: { type: "string", required: true } } } }
+```
+
+## 3. benchmark 评估报 `unit failed: text.trim is not a function`
+
+**症状**：评估单元全部记 0 分，cells 的 notes 是 `unit failed: text.trim is not a function`。
+
+**原因**：`SubagentResult.output` 的类型是 **`ContentBlock[]`**（不是字符串）——对它调 `.trim()` 必然炸。而且 `SubagentRun.result` 用完后**必须 `dispose()`**，否则子代理残留。
+
+**修复**：
+- 用 `ctx.subagents.start` 的 **`outputSchema`** 参数请求结构化输出，从 `result.structured` 取 provider 已校验的值——根本不需要解析模型文本
+- 回退路径：从 `output`（ContentBlock[]）拼接文本再解析
+- `await result` 后记得 `runObj.dispose()`
+
+## 4. 回滚报 `Refinement <id> not found in local history`
+
+**症状**：`/evolve rollback <evolve_xxx>` 找不到记录。
+
+**原因**：帮助文本里 `<id>` 是占位符语法，用户原样复制会把尖括号带进 id（`<evolve_xxx>` ≠ `evolve_xxx`）；行尾 `# 注释` 也会被当成参数。
+
+**修复**：命令解析器内置两类容错（本项目已实现）：
+- `stripAngleBrackets()`：容忍 `<id>` 与 `id` 两种写法
+- 引号感知分词：`"多 词 参数"` 保持为一个 token 并剥引号，`#` 在外层开始注释
+
+## 5. 自动 review 门禁从不触发（reviews.jsonl 只有 armed）
+
+**症状**：`autoReview: true` 配置正确、`armed` 标记正常，但聊了很多轮 `reviews.jsonl` 里没有任何判断记录。
+
+**原因**（两个层面）：
+1. **每 6 回合一次且重启清零**——门禁的内存计数器随进程重启归零，两次重启之间没攒够 6 回合就不会触发。这是"看起来没工作"最常见的原因。
+2. `agent/turn-stopping` 事件的**实际发射 payload 只有 `{turn, signal}`**——虽然类型声明写有 `agent`，但发射处（agent-loop）没带上；用 `payload.agent.id` 会直接抛错。**计数改用 `agent/status` 的 `running → idle` 转换**（该事件路径被 `dsh-host-apiproxy` 等 host 消费者验证可用），并抽出纯函数 `advanceGateState` 便于测试。
+
+**修复**：见 `src/auto.ts`。每次门禁判断（approved / declined / failed）都会追加到 `<dshHome>/evolve/reviews.jsonl`，是唯一的可靠观察点。
+
+## 6. `/evolve benchmark add-case` 的参数被拆烂（statement 变成 `hygiene"`）
+
+**症状**：case 的 statement/rubric 落盘后内容残缺。
+
+**原因**：命令分词器不懂引号，`"Commit hygiene"` 被按空白拆成 `"Commit` 和 `hygiene"`。
+
+**修复**：shell 风格引号分词（见 #4）。注意帮助文本里的 `<任务文本>` 是占位符——真实使用要写实际内容。

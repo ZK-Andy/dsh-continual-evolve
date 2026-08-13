@@ -14,6 +14,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { BenchmarkCase, CellScore } from "./benchmark.js";
+import { mapPool } from "./pool.js";
 
 export interface EvaluateOptions {
 	cases: readonly BenchmarkCase[];
@@ -70,6 +71,9 @@ export interface EvaluationOutcome {
 	stopReason: string;
 }
 
+/** How many evaluation units may run concurrently (bounded subagent fan-out). */
+export const DEFAULT_EVALUATION_CONCURRENCY = 4;
+
 export async function evaluateState(ctx: Context, agent: Agent, options: EvaluateOptions): Promise<EvaluationOutcome> {
 	if (!agent.options.provider || !agent.options.model) {
 		throw new Error("evolve: benchmark evaluation requires a provider/model route");
@@ -78,56 +82,67 @@ export async function evaluateState(ctx: Context, agent: Agent, options: Evaluat
 	if (!subagents) {
 		throw new Error("evolve: benchmark evaluation requires the subagents service");
 	}
-	const cells: CellScore[] = [];
+	const units: { case: BenchmarkCase; run: number }[] = [];
 	for (const c of options.cases) {
 		for (let run = 1; run <= options.runs; run += 1) {
-			const prompt = [
-				EVAL_SYSTEM_PROMPT,
-				"---",
-				"Your harness guidance (state under test):",
-				`<harness_overview>\n${options.harnessOverview}\n</harness_overview>`,
-				`Case ${c.id} — task (statement):\n${c.statement}`,
-				`Rubric — score yourself strictly against these criteria:\n${c.rubric}`,
-				`Run ${run} of ${options.runs}. passThreshold = ${options.passThreshold}.`,
-				"Execute the task with your tools, then produce the structured evaluation.",
-			].join("\n\n");
-			let cell: CellScore;
-			try {
-				const runObj = await subagents.start("spawn", {
-					label: `${c.id} r${run}`,
-					prompt: [{ type: "text", text: prompt }],
-					parent: agent,
-					signal: options.signal ?? new AbortController().signal,
-					outputSchema: CELL_SCHEMA,
-				});
-				try {
-					const settled = await runObj.result;
-					if (settled.stopReason !== "completed") {
-						throw new Error(`child stopped: ${settled.stopReason ?? "unknown"}`);
-					}
-					const parsed =
-						normalizeCell(settled.structured, c.id, run, options.passThreshold) ??
-						fromOutputText(settled.output, c.id, run, options.passThreshold);
-					if (!parsed) {
-						throw new Error("child returned neither a structured value nor usable text");
-					}
-					cell = parsed;
-				} finally {
-					runObj.dispose();
-				}
-			} catch (cause) {
-				cell = {
-					caseId: c.id,
-					run,
-					score: 0,
-					passed: false,
-					notes: `unit failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-				};
-			}
-			cells.push(cell);
+			units.push({ case: c, run });
 		}
 	}
+	const cells = await mapPool(units, DEFAULT_EVALUATION_CONCURRENCY, (unit) =>
+		runUnit(subagents, agent, options, unit.case, unit.run),
+	);
 	return { label: options.label, cells, stopReason: "completed" };
+}
+
+async function runUnit(
+	subagents: SubagentsService,
+	agent: Agent,
+	options: EvaluateOptions,
+	c: BenchmarkCase,
+	run: number,
+): Promise<CellScore> {
+	const prompt = [
+		EVAL_SYSTEM_PROMPT,
+		"---",
+		"Your harness guidance (state under test):",
+		`<harness_overview>\n${options.harnessOverview}\n</harness_overview>`,
+		`Case ${c.id} — task (statement):\n${c.statement}`,
+		`Rubric — score yourself strictly against these criteria:\n${c.rubric}`,
+		`Run ${run} of ${options.runs}. passThreshold = ${options.passThreshold}.`,
+		"Execute the task with your tools, then produce the structured evaluation.",
+	].join("\n\n");
+	try {
+		const runObj = await subagents.start("spawn", {
+			label: `${c.id} r${run}`,
+			prompt: [{ type: "text", text: prompt }],
+			parent: agent,
+			signal: options.signal ?? new AbortController().signal,
+			outputSchema: CELL_SCHEMA,
+		});
+		try {
+			const settled = await runObj.result;
+			if (settled.stopReason !== "completed") {
+				throw new Error(`child stopped: ${settled.stopReason ?? "unknown"}`);
+			}
+			const parsed =
+				normalizeCell(settled.structured, c.id, run, options.passThreshold) ??
+				fromOutputText(settled.output, c.id, run, options.passThreshold);
+			if (!parsed) {
+				throw new Error("child returned neither a structured value nor usable text");
+			}
+			return parsed;
+		} finally {
+			runObj.dispose();
+		}
+	} catch (cause) {
+		return {
+			caseId: c.id,
+			run,
+			score: 0,
+			passed: false,
+			notes: `unit failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+		};
+	}
 }
 
 /** Validate a provider-validated structured cell; returns undefined when malformed. */

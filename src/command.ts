@@ -4,13 +4,16 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
-import type { HarnessScope, RefinementResult } from "./types.js";
+import type { HarnessEntry, HarnessScope, HarnessState, RefinementResult } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { planWithLlm } from "./planner.js";
+import { readFileSync, writeFileSync } from "node:fs";
 import { requireGlobalApproval } from "./approval.js";
+import { saveHarnessState } from "./state.js";
+import { appendResult, storePaths } from "./store.js";
 import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadScoreboard, saveScoreboard } from "./benchmark.js";
-import { decide, entryFromCells } from "./score.js";
+import { decide, decisionReport, entryFromCells } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 
 const USAGE = `Usage:
@@ -18,7 +21,9 @@ const USAGE = `Usage:
   /evolve list [global]    list entries (add "global" for the cross-session store)
   /evolve history [global] show applied refinements (rollback ids)
   /evolve rollback <id> [global]  deterministically revert a refinement
-  /evolve plan [msg]       run the LLM planner against the current store`;
+  /evolve plan [msg]       run the LLM planner against the current store
+  /evolve export [global] <path>  backup a store to a JSON file
+  /evolve import [global] <path>  restore a store from an export file`;
 
 export interface CommandGateOptions {
 	requireGlobalApproval: boolean;
@@ -123,6 +128,56 @@ async function executeEvolveCommand(
 				const result = engine.rollback(scope, sessionId, id);
 				return success(renderResult(result));
 			}
+			case "export": {
+				const { scope, rest: after } = scopeArg(rest);
+				const path = after[0];
+				if (!path) {
+					return error(`export requires an output path.\n${USAGE}`);
+				}
+				const state = engine.load(scope, sessionId);
+				const history = engine.history(scope, sessionId);
+				const payload = {
+					version: 1,
+					scope,
+					schema: state.schema,
+					entries: state.entries,
+					refinements: state.refinements,
+					history,
+				};
+				writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+				return success(`exported ${scope} store (${Object.values(state.entries).reduce((n, e) => n + Object.keys(e).length, 0)} entries, ${history.length} refinements) to ${path}`);
+			}
+			case "import": {
+				const { scope, rest: after } = scopeArg(rest);
+				const path = after[0];
+				if (!path) {
+					return error(`import requires an input path.\n${USAGE}`);
+				}
+				const payload = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+				if (!isValidExport(payload)) {
+					return error(`invalid export file shape: expected {version, entries: {prompt, memory, skill, subagent}, refinements, history}`);
+				}
+				const state: HarnessState = {
+					schema: typeof payload["schema"] === "number" ? payload["schema"] : 1,
+					entries: {
+						prompt: toEntryRecord(payload["entries"]["prompt"]),
+						memory: toEntryRecord(payload["entries"]["memory"]),
+						skill: toEntryRecord(payload["entries"]["skill"]),
+						subagent: toEntryRecord(payload["entries"]["subagent"]),
+					},
+					refinements: Array.isArray(payload["refinements"]) ? (payload["refinements"] as HarnessState["refinements"]) : [],
+				};
+				const paths = storePaths(engine.baseDir, scope, sessionId);
+				saveHarnessState(paths.stateDir, state);
+				if (Array.isArray(payload["history"])) {
+					for (const result of payload["history"]) {
+						if (isResultRecord(result)) {
+							appendResult(paths, result);
+						}
+					}
+				}
+				return success(`imported ${scope} store from ${path}`);
+			}
 			case "plan": {
 				const { scope, rest: after } = scopeArg(rest);
 				const instructions = after.length > 0 ? after.join(" ") : undefined;
@@ -174,11 +229,12 @@ async function executeBenchmarkCommand(
 		case "help":
 			return success(BENCHMARK_USAGE);
 		case "new": {
-			const title = args.join(" ");
+			const title = args[0] ?? "";
 			if (!title) {
 				return error(`benchmark new requires a title.\n${BENCHMARK_USAGE}`);
 			}
-			const definition = createBenchmark(baseDir, { title });
+			const runs = args[1] !== undefined ? parsePositiveInt(args[1], "runs") : undefined;
+			const definition = createBenchmark(baseDir, { title, ...(runs !== undefined ? { runs } : {}) });
 			return success(
 				`benchmark ${definition.id} created (runs=${definition.runs}, passThreshold=${definition.passThreshold})\nAdd cases with: /evolve benchmark add-case ${definition.id} "<title>" "<statement>" "<rubric>"`,
 			);
@@ -281,11 +337,7 @@ async function executeBenchmarkCommand(
 						reasons: decision.reasons,
 						createdAt: new Date().toISOString(),
 					});
-					lines.push(
-						decision.accepted
-							? "DECISION: ACCEPTED — overall improved, no regression"
-							: `DECISION: REJECTED — ${decision.reasons.join("; ")}`,
-					);
+					lines.push(...decisionReport(board.reference, entry, decision));
 					if (!decision.accepted) {
 						lines.push(`Consider rolling back the candidate: /evolve rollback <${candidateId}>`);
 					}
@@ -319,13 +371,40 @@ function renderResult(result: RefinementResult): string {
 		`summary: ${result.summary}`,
 	];
 	for (const e of applied) {
-		lines.push(`- ${e.action} ${e.kind}:${e.id} (v${e.after?.version ?? "?"})`);
+		lines.push(`- ${e.action} ${e.kind}:${e.id} (v${(e.after?.version ?? e.before?.version) ?? "?"})`);
 	}
 	for (const e of failed) {
 		lines.push(`- failed ${e.action} ${e.kind}:${e.id ?? "(computed)"} — ${e.error ?? "unknown error"}`);
 	}
 	lines.push(`expected outcome: ${result.expectedOutcome}`);
 	return lines.join("\n");
+}
+
+function toEntryRecord(value: unknown): Record<string, HarnessEntry> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return {};
+	}
+	return value as Record<string, HarnessEntry>;
+}
+
+function parsePositiveInt(value: string, what: string): number {
+	const n = Number(value);
+	if (!Number.isInteger(n) || n < 1) {
+		throw new Error(`${what} must be a positive integer, got "${value}"`);
+	}
+	return n;
+}
+
+function isValidExport(payload: Record<string, unknown>): payload is { entries: Record<string, Record<string, unknown>>; refinements: unknown; history: unknown; schema: unknown } {
+	if (typeof payload !== "object" || payload === null) return false;
+	const entries = payload["entries"];
+	if (typeof entries !== "object" || entries === null || Array.isArray(entries)) return false;
+	const kinds = ["prompt", "memory", "skill", "subagent"];
+	return kinds.every((kind) => Object.prototype.hasOwnProperty.call(entries, kind));
+}
+
+function isResultRecord(value: unknown): boolean {
+	return typeof value === "object" && value !== null && "id" in value && "appliedEdits" in value;
 }
 
 function success(text: string): CommandResult {

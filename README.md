@@ -113,6 +113,8 @@ dsh-continual-evolve/
 /evolve history          applied refinements (ids for rollback)
 /evolve rollback <id>    deterministically revert a refinement
 /evolve plan [msg]       LLM planner against the current store
+/evolve export <path>    backup the local store to JSON
+/evolve import <path>    restore a store from an export file
 ```
 
 Model-facing tools: `evolve_list`, `evolve_add`, `evolve_update`, `evolve_delete`, `evolve_rollback`.
@@ -120,7 +122,7 @@ Model-facing tools: `evolve_list`, `evolve_add`, `evolve_update`, `evolve_delete
 ## Benchmark-driven validation (Phase 3)
 
 ```
-/evolve benchmark new <title>                          create a benchmark
+/evolve benchmark new <title> [runs]                   create a benchmark (runs = repeats per case, default 1)
 /evolve benchmark add-case <bid> <title> <statement> <rubric>
 /evolve benchmark list                                 list benchmarks
 /evolve benchmark status <bid>                         scoreboard + decisions
@@ -169,6 +171,9 @@ pnpm build          # tsc -> lib/
 pnpm test           # vitest run
 pnpm lint           # oxlint src test
 ```
+
+Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting).
+
 
 ## Roadmap
 

@@ -182,7 +182,7 @@ function applyEditsText(engine: EvolutionEngine, scope: HarnessScope, sessionId:
 	const failed = result.appliedEdits.filter((e) => !e.applied);
 	const lines = [`refinement ${result.id}: ${applied.length} applied, ${failed.length} failed`];
 	for (const e of applied) {
-		lines.push(`- ${e.action} ${e.kind}:${e.id} (v${e.after?.version ?? "?"})`);
+		lines.push(`- ${e.action} ${e.kind}:${e.id} (v${(e.after?.version ?? e.before?.version) ?? "?"})`);
 	}
 	for (const e of failed) {
 		lines.push(`- failed ${e.action} ${e.kind}:${e.id ?? "(computed)"} — ${e.error ?? "unknown error"}`);

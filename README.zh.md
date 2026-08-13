@@ -158,6 +158,8 @@ pnpm test           # vitest run
 pnpm lint           # oxlint src test
 ```
 
+遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数等）。
+
 ## 路线图
 
 - **Phase 1（完成）**：纯核心引擎——状态模型、校验、应用、回滚、提案解析；已测试。
