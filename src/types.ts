@@ -1,0 +1,139 @@
+/**
+ * Type model for the continual-evolution harness state.
+ *
+ * Design provenance: the state model follows the continual-harness design
+ * validated in prime-agent's `/refine` subsystem (MIT): versioned entries
+ * keyed by kind, an append-only refinement history carrying an evidence
+ * trail, atomic persistence, and deterministic inverse-op rollback. The
+ * code here is an original implementation, written for the DeepSeek Harness
+ * plugin surface.
+ */
+
+/** What a harness entry can be. */
+export type RefinementKind = "prompt" | "memory" | "skill" | "subagent";
+
+/** How an entry changes. */
+export type RefinementAction = "create" | "update" | "delete";
+
+/** Where an entry lives: session-scoped or cross-session. */
+export type HarnessScope = "local" | "global";
+
+/** A single persisted harness entry. */
+export interface HarnessEntry {
+	id: string;
+	kind: RefinementKind;
+	title: string;
+	content: string;
+	path: string;
+	scope: HarnessScope;
+	/** Skill entries carry an executable contract; see {@link PythonReference}. */
+	reference: Record<string, unknown>;
+	/** Skill entries declare their accepted inputs here. */
+	arguments: Record<string, unknown>;
+	metadata: Record<string, unknown>;
+	source: "evolve";
+	created_at: string;
+	updated_at: string;
+	version: number;
+}
+
+/** One entry of the append-only refinement history (the evidence trail). */
+export interface HarnessRefinementEvent {
+	id: string;
+	trigger: string;
+	changes: string[];
+	/** Where the trajectory evidence for this refinement lives (e.g. seq ranges). */
+	evidence: string;
+	/** The falsifiable expectation recorded with the edit. */
+	outcome: string;
+	created_at: string;
+}
+
+/** The whole harness state file. */
+export interface HarnessState {
+	schema: number;
+	entries: Record<RefinementKind, Record<string, HarnessEntry>>;
+	refinements: HarnessRefinementEvent[];
+}
+
+/** A model-proposed edit, before validation and application. */
+export interface RefinementEdit {
+	action: RefinementAction;
+	kind: RefinementKind;
+	id?: string;
+	title?: string;
+	content?: string;
+	path?: string;
+	reference?: Record<string, unknown>;
+	arguments?: Record<string, unknown>;
+	metadata?: Record<string, unknown>;
+	reason?: string;
+}
+
+/** The structured output of a planning pass. */
+export interface RefinementProposal {
+	summary: string;
+	rationale: string;
+	edits: RefinementEdit[];
+	expectedOutcome: string;
+}
+
+/** An edit after the apply pass: before/after snapshots and outcome per edit. */
+export interface AppliedRefinementEdit extends RefinementEdit {
+	id: string;
+	before?: HarnessEntry;
+	after?: HarnessEntry;
+	applied: boolean;
+	error?: string;
+}
+
+/** The result of applying one refinement. */
+export interface RefinementResult {
+	id: string;
+	summary: string;
+	rationale: string;
+	expectedOutcome: string;
+	appliedEdits: AppliedRefinementEdit[];
+	harnessStatePath: string;
+	rollbackOf?: string;
+	scope?: HarnessScope;
+}
+
+/** The executable contract a skill entry must carry (python REPL skills). */
+export interface PythonReference {
+	type: "python";
+	import?: string;
+	python_import?: string;
+	callable?: string;
+	call_pattern?: string;
+}
+
+/** A stable id derived from a title. */
+export function slug(raw: string, fallback: string): string {
+	const normalized = raw
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_")
+		.replace(/^_+|_+$/g, "")
+		.slice(0, 80);
+	return normalized || fallback;
+}
+
+/** Fresh empty state with the current schema version. */
+export function emptyHarnessState(): HarnessState {
+	return {
+		schema: 1,
+		entries: {
+			prompt: {},
+			memory: {},
+			skill: {},
+			subagent: {},
+		},
+		refinements: [],
+	};
+}
+
+/** Deep clone helper (state is plain JSON data). */
+export function cloneEntry(entry: HarnessEntry | undefined): HarnessEntry | undefined {
+	return entry ? (JSON.parse(JSON.stringify(entry)) as HarnessEntry) : undefined;
+}

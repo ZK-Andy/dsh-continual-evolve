@@ -1,0 +1,17 @@
+{
+  "plugins": [],
+  "categories": {
+    "correctness": "off"
+  },
+  "options": {
+    "reportUnusedDisableDirectives": "warn"
+  },
+  "env": {
+    "builtin": true
+  },
+  "ignorePatterns": [
+    "**/lib/**",
+    "**/node_modules/**",
+    "**/.pnpm-store/**"
+  ]
+}

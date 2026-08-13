@@ -1,0 +1,64 @@
+/**
+ * Tests for the review gate: JSON parsing and trajectory serialization.
+ */
+import { describe, expect, it } from "vitest";
+import { parseAutoRefineReview, serializeSurface } from "../src/review.js";
+
+describe("parseAutoRefineReview", () => {
+	it("parses an approval with instructions", () => {
+		const review = parseAutoRefineReview(
+			JSON.stringify({
+				shouldRefine: true,
+				rationale: "repeated failure pattern",
+				instructions: "record the git-submodule gotcha",
+			}),
+		);
+		expect(review.shouldRefine).toBe(true);
+		expect(review.rationale).toBe("repeated failure pattern");
+		expect(review.instructions).toBe("record the git-submodule gotcha");
+	});
+
+	it("parses a rejection", () => {
+		const review = parseAutoRefineReview(JSON.stringify({ shouldRefine: false, rationale: "one-off noise" }));
+		expect(review.shouldRefine).toBe(false);
+		expect(review.instructions).toBeUndefined();
+	});
+
+	it("rejects non-boolean shouldRefine as false", () => {
+		const review = parseAutoRefineReview(JSON.stringify({ shouldRefine: "yes", rationale: "r" }));
+		expect(review.shouldRefine).toBe(false);
+	});
+
+	it("recovers JSON wrapped in prose", () => {
+		const review = parseAutoRefineReview(
+			'Here is my decision:\n```json\n{"shouldRefine": true, "rationale": "ok"}\n```',
+		);
+		expect(review.shouldRefine).toBe(true);
+	});
+
+	it("throws on non-object replies", () => {
+		expect(() => parseAutoRefineReview("not json at all")).toThrow();
+	});
+});
+
+describe("serializeSurface", () => {
+	const surface = [
+		{ type: "turn/start", data: {} },
+		{ type: "user/message", data: { content: [{ type: "text", text: "记住：测试用 vitest" }] } },
+		{ type: "assistant/message", data: { content: [{ type: "text", text: "好的，已记录。" }] } },
+		{ type: "tool/result", data: { content: [{ type: "tool-result", content: [{ type: "text", text: "ignored" }] }] } },
+	];
+
+	it("keeps user and assistant text with role prefixes, skips others", () => {
+		const out = serializeSurface(surface, 1000);
+		expect(out).toContain("user: 记住：测试用 vitest");
+		expect(out).toContain("assistant: 好的，已记录。");
+		expect(out).not.toContain("tool-result");
+	});
+
+	it("truncates from the tail to the max char budget", () => {
+		const out = serializeSurface(surface, 20);
+		expect(out.length).toBeLessThanOrEqual(20);
+		expect(out).toContain("assistant");
+	});
+});
