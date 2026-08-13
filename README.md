@@ -1,9 +1,11 @@
 # dsh-continual-evolve
 
+[中文](README.zh.md) | English
+
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-66%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-Phase%203%20%2F%20benchmark%20validation-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -72,25 +74,35 @@ Inspired by three bodies of work (see [`docs/design.md`](docs/design.md)):
 
 ```
 dsh-continual-evolve/
-├── package.json          # exports map, files, engines, scripts
-├── tsconfig.json         # strict es2024 bundler config (DSH conventions)
-├── .oxlintrc.json        # oxlint config
-├── .editorconfig
-├── .gitignore
-├── LICENSE               # MIT
-├── README.md
+├── package.json          # exports / files / engines / scripts + dsh.bundle manifest
+├── cordis.patch.yml      # bundle patch (dsh plugin add activates on install)
+├── tsconfig.json / .oxlintrc.json / .editorconfig / .gitignore
+├── LICENSE / README.md / README.zh.md
+├── docs/
+│   ├── design.md               # full design doc (incl. hardening matrix)
+│   └── research/               # penguin-harness report + prime-agent reference source
 ├── src/
-│   ├── index.ts          # cordis plugin entry (service mount)
+│   ├── index.ts          # cordis plugin entry (service mount + wiring)
 │   ├── types.ts          # HarnessState / entry / edit / result types
 │   ├── state.ts          # atomic persistence, corrupt degrade, merge, concurrency
 │   ├── validate.ts       # code-enforced edit validation
 │   ├── apply.ts          # per-edit apply pass with optimistic locking
 │   ├── rollback.ts       # deterministic inverse-op rollback
-│   └── plan.ts           # proposal JSON parsing (truncation-aware)
-└── test/
-    ├── state.test.ts
-    ├── validate.test.ts
-    └── apply.test.ts
+│   ├── plan.ts           # proposal JSON parsing (truncation-aware)
+│   ├── tool.ts           # evolve_* model-facing tools (5)
+│   ├── command.ts        # /evolve command (incl. benchmark subcommands)
+│   ├── planner.ts        # ctx.llm planner
+│   ├── render.ts         # bounded prompt rendering
+│   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit)
+│   ├── review.ts         # gate LLM judgment
+│   ├── approval.ts       # human approval for global edits
+│   ├── skill.ts          # skill materialization ($DSH_HOME/skills/)
+│   ├── benchmark.ts      # benchmark store
+│   ├── score.ts          # code-owned aggregation + acceptance rule
+│   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
+│   ├── store.ts          # store layout + snapshots + result history
+│   └── service.ts        # evolution engine (onApplied hook)
+└── test/                 # 10 files, 66 tests
 ```
 
 ## In-session usage (after restart)
