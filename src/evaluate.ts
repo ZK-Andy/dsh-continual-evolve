@@ -15,6 +15,12 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { BenchmarkCase, CellScore } from "./benchmark.js";
 import { mapPool } from "./pool.js";
+import { decryptRubric, deriveKey, DEV_RUBRIC_KEY } from "./rubric.js";
+
+/** Key used when the caller did not resolve one: mirrors resolveRubricKey's dev fallback. */
+function devRubricKey(): Buffer {
+	return deriveKey(DEV_RUBRIC_KEY);
+}
 
 export interface EvaluateOptions {
 	cases: readonly BenchmarkCase[];
@@ -23,6 +29,8 @@ export interface EvaluateOptions {
 	/** Serialized harness state under test (the candidate's guidance). */
 	harnessOverview: string;
 	label: string;
+	/** AES-256 key for the encrypted rubric envelopes (see src/rubric.ts). */
+	rubricKey?: Buffer;
 	signal?: AbortSignal;
 }
 
@@ -101,13 +109,28 @@ async function runUnit(
 	c: BenchmarkCase,
 	run: number,
 ): Promise<CellScore> {
+	// The ONLY rubric decryption point: the envelope is opened here, in the
+	// host, and the plaintext goes straight into the child prompt. The
+	// optimizer never reaches this path.
+	let rubric: string;
+	try {
+		rubric = decryptRubric(c.rubric, options.rubricKey ?? devRubricKey());
+	} catch (cause) {
+		return {
+			caseId: c.id,
+			run,
+			score: 0,
+			passed: false,
+			notes: `rubric decrypt failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+		};
+	}
 	const prompt = [
 		EVAL_SYSTEM_PROMPT,
 		"---",
 		"Your harness guidance (state under test):",
 		`<harness_overview>\n${options.harnessOverview}\n</harness_overview>`,
 		`Case ${c.id} — task (statement):\n${c.statement}`,
-		`Rubric — score yourself strictly against these criteria:\n${c.rubric}`,
+		`Rubric — score yourself strictly against these criteria:\n${rubric}`,
 		`Run ${run} of ${options.runs}. passThreshold = ${options.passThreshold}.`,
 		"Execute the task with your tools, then produce the structured evaluation.",
 	].join("\n\n");

@@ -139,9 +139,9 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 | `dsh-skill-filesystem` | skill 条目落盘 `$DSH_HOME/skills/<kebab>/SKILL.md`（插件自写，发现机制复用 DSH 的） |
 | `userQuestions` | global 进化的人工评审门禁（`approval.ts`，等价替代 dsh-plan-mode） |
 | 插件自带 `store.ts` | local/global 变更历史 JSONL + 快照 + 回滚源（不依赖 dsh-session-persistence-jsonl） |
-| `dsh-evolve` | v2 可选：把进化结果以热挂载 cordis 插件落地——**未实现（可选）** |
+| `dsh-evolve` | v2 可选：把进化结果以热挂载 cordis 插件落地——**已实现**（`src/mount.ts`：`/evolve mount <skillId>` 把 skill 条目渲染为插件包并用 loader 热挂载，重启后按 ledger 自动恢复） |
 | `dsh-agent-presets` | prompt 条目渲染进提示词层（`systemPrompt.section` 直接注册，additive，不动基座；已实现） |
-| `dsh-goal` | v3 可选：进化循环的轮次驱动——**未实现（可选）** |
+| `dsh-goal` | v3 可选：进化循环的轮次驱动——**已实现**（`src/goal.ts`：`/evolve goal` 创建/编辑会话 goal；active goal 时自动 review 门禁**每轮**触发，由 goal 轮次机器驱动，完成/阻塞即停） |
 
 ## 7. 分阶段路线
 
@@ -163,7 +163,7 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 - [x] 评估矩阵执行器（改用 host 平面 `ctx.subagents` + `outputSchema` 结构化输出；web profile 无 host workflowEngine，见 FAQ #1）
 - [x] scoreboard 聚合下沉代码（模型只产细胞级分数）
 - [x] 接受规则：顶层平均分严格高于 Reference 且无退化（Self-Harness 的非退化规则，`src/score.ts` `decide`；拒绝时命令行提示回滚候选，人工在环）
-- [ ] rubric 目录对优化器不可读（沙箱 ACL，权限强制）——**未实现**（Phase 3 为可选阶段，此项留作候选功能：当前 rubric 仅靠"规划器提示词不含 rubric 文件"的构造性隔离）
+- [x] rubric 目录对优化器不可读（沙箱 ACL，权限强制）——**已实现**（`src/rubric.ts`：rubric 明文永不着盘，落盘为 AES-256-GCM 密文信封；唯一解密点在宿主评估路径（`evaluate.ts` 注入子代理提示词前），优化器/主 agent 读 benchmark 文件只能看到密文；密钥优先级 config `rubricKey` → 环境变量 `DSH_EVOLVE_RUBRIC_KEY` → dev 默认键；旧明文文件透传兼容）
 
 ## 8. 风险与权衡
 

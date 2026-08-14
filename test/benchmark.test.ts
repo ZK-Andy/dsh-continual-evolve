@@ -3,8 +3,9 @@
  * persistence, and id sanitization.
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { decryptRubric, deriveKey, DEV_RUBRIC_KEY } from "../src/rubric.js";
 import {
 	addCase,
 	createBenchmark,
@@ -57,11 +58,17 @@ describe("benchmark store", () => {
 		const base = tmpBase();
 		try {
 			const def = createBenchmark(base, { title: "Tasks" });
-			addCase(base, def.id, "Fix the bug", "statement text", "rubric text");
+			const added = addCase(base, def.id, "Fix the bug", "statement text", "rubric text");
+			expect(added.rubric).toBe("rubric text"); // in-memory view stays plaintext
 			const cases = listCases(base, def.id);
 			expect(cases).toHaveLength(1);
 			expect(cases[0]?.statement).toBe("statement text");
-			expect(cases[0]?.rubric).toBe("rubric text");
+			// ACL: the stored/listed rubric is ciphertext — plaintext never on disk.
+			expect(cases[0]?.rubric).not.toBe("rubric text");
+			expect(cases[0]?.rubric.startsWith("v1:")).toBe(true);
+			expect(decryptRubric(cases[0]?.rubric ?? "", deriveKey(DEV_RUBRIC_KEY))).toBe("rubric text");
+			const disk = readFileSync(join(base, "evolve/benchmarks", def.id, "cases", "fix_the_bug", "rubric.json"), "utf8");
+			expect(disk).not.toContain("rubric text");
 			expect(existsSync(join(base, "evolve/benchmarks", def.id, "cases", "fix_the_bug", "statement.md"))).toBe(true);
 		} finally {
 			rmSync(base, { recursive: true, force: true });

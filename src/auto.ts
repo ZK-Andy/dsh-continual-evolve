@@ -22,6 +22,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
+import { goalServiceOf } from "./goal.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -95,7 +96,11 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		const agent = payload.agent;
 		if (!agent || payload.status !== "idle") return;
 		const state = stateFor(perSession, agent.id);
-		if (state.turns - state.lastReviewAt < config.intervalTurns) return;
+		// v3 optional: an active evolution goal drives the gate EVERY round
+		// (the goal's round machine keeps the session continuing); without a
+		// goal the plain turn interval applies.
+		const goalDriven = goalServiceOf(ctx)?.get(agent)?.phase === "active";
+		if (!goalDriven && state.turns - state.lastReviewAt < config.intervalTurns) return;
 		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
 		// Every failure is durably recorded — nothing fails silently.
 		void runGate(ctx, engine, agent, config, state, "turn_interval", record).catch((cause) => {

@@ -5,14 +5,17 @@
  * Layout:
  *   benchmark.json          title, runs (repeats per case), passThreshold
  *   cases/<cid>/statement.md   public task text
- *   cases/<cid>/rubric.json    private scoring criteria (JSON)
+ *   cases/<cid>/rubric.json    encrypted scoring criteria (AES-256-GCM, see src/rubric.ts)
  *   scoreboard.json         code-owned aggregates + acceptance history
  *
- * Rubric isolation is by construction: only the evaluation runner reads
- * rubric files; the planner's prompts never include them.
+ * Rubric isolation is code-enforced: rubric plaintext never reaches the
+ * disk. Only the evaluation runner decrypts (into the child prompt); the
+ * optimizer can read the file and sees ciphertext only. Legacy files that
+ * predate encryption carry plaintext and are still readable.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { encryptRubric, DEV_RUBRIC_KEY, deriveKey } from "./rubric.js";
 
 export interface BenchmarkCase {
 	id: string;
@@ -107,7 +110,7 @@ export function loadBenchmark(baseDir: string, bid: string): BenchmarkDefinition
 	}
 }
 
-export function addCase(baseDir: string, bid: string, title: string, statement: string, rubric: string): BenchmarkCase {
+export function addCase(baseDir: string, bid: string, title: string, statement: string, rubric: string, rubricKey?: Buffer): BenchmarkCase {
 	const definition = loadBenchmark(baseDir, bid);
 	if (!definition) {
 		throw new Error(`benchmark ${bid} not found`);
@@ -119,7 +122,10 @@ export function addCase(baseDir: string, bid: string, title: string, statement: 
 	}
 	mkdirSync(caseDir, { recursive: true });
 	writeFileSync(join(caseDir, "statement.md"), statement, "utf8");
-	writeFileSync(join(caseDir, "rubric.json"), `${JSON.stringify(rubric, null, 2)}\n`, "utf8");
+	// Rubric plaintext never touches the disk; without a key it is written
+	// encrypted under the development key (see resolveRubricKey).
+	const stored = rubricKey ? encryptRubric(rubric, rubricKey) : encryptRubric(rubric, deriveKey(DEV_RUBRIC_KEY));
+	writeFileSync(join(caseDir, "rubric.json"), `${JSON.stringify(stored, null, 2)}\n`, "utf8");
 	return { id, title: title.trim(), statement, rubric };
 }
 

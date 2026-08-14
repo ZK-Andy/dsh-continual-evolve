@@ -176,6 +176,7 @@ where the baseline was already perfect).
 | `reviewBudgetTokens` | 4096 | output budget for the gate call |
 | `requireGlobalApproval` | `true` | cross-session (global) edits ask the user for "批准" before applying |
 | `skillsDir` | `<dshHome>/skills` | root where skill entries materialize as SKILL.md bundles |
+| `rubricKey` | `DSH_EVOLVE_RUBRIC_KEY` → dev key | passphrase for AES-256-GCM rubric encryption (benchmark rubrics never touch the disk in plaintext) |
 
 Example (profile `cordis.patch.yml`):
 
@@ -205,7 +206,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
 - **Phase 1 (done)**: pure-core engine — state model, validation, apply, rollback, proposal parsing; tested.
 - **Phase 1b (done)**: `evolve_*` tools, `/evolve` command, and the `ctx.llm` planner; installed into the web profile.
 - **Phase 2 (done)**: ✅ auto-refine review gate (turn-interval checkpoints); ✅ compaction checkpoint (`compaction/start`); ✅ global-scope approval gate (userQuestions); ✅ executable skills (materialize to `$DSH_HOME/skills/`); ✅ prompt entries injected as a real system-prompt section (additive, capped 6/kind, inherited by subagents through the parent chain); ✅ subagent entries rendered as reusable delegation specs at the delegation seam.
-- **Phase 3 (done)**: ✅ benchmark-driven validation loop — evaluation matrix via the workflow engine, code-owned scoreboard aggregation, non-regressive acceptance rule, rubric isolation by construction. (Future: sandbox ACL isolation of rubrics, automated rollback on rejection.)
+- **Phase 3 (done)**: ✅ benchmark-driven validation loop — evaluation matrix via the workflow engine, code-owned scoreboard aggregation, non-regressive acceptance rule, rubric isolation by construction; ✅ rubric ACL (rubric plaintext never on disk — AES-256-GCM envelopes, decrypted only by the evaluation runner); ✅ hot-mounted skill plugins (`/evolve mount <skillId>`, live loader entry, restored on boot); ✅ goal-driven evolution rounds (`/evolve goal` — an active goal drives the review gate every round). (Future: automated rollback on rejection.)
 
 ## License
 

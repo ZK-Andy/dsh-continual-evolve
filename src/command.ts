@@ -11,6 +11,8 @@ import { planWithLlm } from "./planner.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { requireGlobalApproval } from "./approval.js";
 import { saveHarnessState } from "./state.js";
+import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
+import { blockEvolutionGoal, completeEvolutionGoal, goalServiceOf, goalStatusText, upsertEvolutionGoal } from "./goal.js";
 import { appendResult, storePaths } from "./store.js";
 import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadScoreboard, saveScoreboard } from "./benchmark.js";
 import { decide, decisionReport, entryFromCells } from "./score.js";
@@ -23,18 +25,28 @@ const USAGE = `Usage:
   /evolve rollback <id> [global]  deterministically revert a refinement
   /evolve plan [msg]       run the LLM planner against the current store
   /evolve export [global] <path>  backup a store to a JSON file
-  /evolve import [global] <path>  restore a store from an export file`;
+  /evolve import [global] <path>  restore a store from an export file
+  /evolve mount <skillId>    hot-mount a skill entry as a live cordis plugin
+  /evolve mount list         list hot-mounted plugins
+  /evolve unmount <id>       remove a hot-mounted plugin
+  /evolve goal               show the evolution goal (round-driven auto-review)
+  /evolve goal <objective>   create/update the evolution goal
+  /evolve goal done          complete the evolution goal`;
 
 export interface CommandGateOptions {
 	requireGlobalApproval: boolean;
 }
 
-export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions): void {
+export interface CommandRuntimeOptions {
+	rubricKey: Buffer;
+}
+
+export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
 	ctx.commands.register({
 		name: "evolve",
 		description: "inspect and evolve the continual harness state (memories, skills, prompt notes, subagent specs)",
 		input: { hint: "[list [global] | history [global] | rollback <id> [global] | plan [msg]]" },
-		handler: (invocation) => executeEvolveCommand(ctx, engine, invocation, opts),
+		handler: (invocation) => executeEvolveCommand(ctx, engine, invocation, opts, runtime),
 	});
 }
 
@@ -99,6 +111,7 @@ async function executeEvolveCommand(
 	engine: EvolutionEngine,
 	invocation: CommandInvocation,
 	opts: CommandGateOptions,
+	runtime: CommandRuntimeOptions,
 ): Promise<CommandResult> {
 	const tokens = tokenizeEvolveInput(invocation.rawInput);
 	const sub = tokens[0] ?? "";
@@ -202,12 +215,92 @@ async function executeEvolveCommand(
 				const result = engine.apply(scope, sessionId, proposal, { scope, baselineState: state });
 				return success(renderResult(result));
 			}
+			case "goal": {
+				return executeGoalCommand(ctx, invocation, rest);
+			}
+			case "mount": {
+				return executeMountCommand(ctx, engine, invocation, rest);
+			}
+			case "unmount": {
+				const id = stripAngleBrackets(rest[0] ?? "");
+				if (!id) {
+					return error(`unmount requires a mount id (see /evolve mount list).`);
+				}
+				const record = await unmountSkill(ctx, engine.baseDir, id);
+				return record ? success(`unmounted ${record.id} (${record.entryId})`) : error(`no mount found for ${id}`);
+			}
 			case "benchmark": {
-				return executeBenchmarkCommand(ctx, engine, invocation, rest);
+				return executeBenchmarkCommand(ctx, engine, invocation, rest, runtime);
 			}
 			default:
 				return error(`unknown subcommand: ${sub}\n${USAGE}`);
 		}
+	} catch (cause) {
+		return error(cause instanceof Error ? cause.message : String(cause));
+	}
+}
+
+function executeGoalCommand(ctx: Context, invocation: CommandInvocation, rest: string[]): CommandResult {
+	const agent = invocation.agent;
+	const goals = goalServiceOf(ctx);
+	if (!goals) {
+		return error(`/evolve goal requires the goals service (load @deepseek-ai/dsh-goal)`);
+	}
+	const sub = rest[0] ?? "";
+	try {
+		if (sub === "done") {
+			const view = completeEvolutionGoal(ctx, agent);
+			return view ? success(`evolution goal completed: ${goalStatusText(view)}`) : success("(no goal to complete)");
+		}
+		if (sub === "block") {
+			const reason = rest.slice(1).join(" ") || "user requested block";
+			const view = blockEvolutionGoal(ctx, agent, reason);
+			return view ? success(`evolution goal blocked: ${goalStatusText(view)}`) : success("(no active goal to block)");
+		}
+		if (sub.length === 0) {
+			const current = goals.get(agent);
+			return current ? success(goalStatusText(current)) : success("(no evolution goal — /evolve goal <objective> to create one)");
+		}
+		const objective = rest.join(" ");
+		const view = upsertEvolutionGoal(ctx, agent, objective);
+		return success(`evolution goal ready: ${goalStatusText(view)}\n(active goal drives the review gate every round)`);
+	} catch (cause) {
+		return error(cause instanceof Error ? cause.message : String(cause));
+	}
+}
+
+async function executeMountCommand(
+	ctx: Context,
+	engine: EvolutionEngine,
+	invocation: CommandInvocation,
+	rest: string[],
+): Promise<CommandResult> {
+	const sub = rest[0] ?? "";
+	if (sub === "list") {
+		const ledger = loadLedger(engine.baseDir);
+		if (ledger.mounted.length === 0) {
+			return success("(no hot-mounted plugins — /evolve mount <skillId>)");
+		}
+		return success(ledger.mounted.map((m) => `- ${m.id} (${m.entryId}, v${m.version}, ${m.mountedAt})`).join("\n"));
+	}
+	const skillId = stripAngleBrackets(sub);
+	if (!skillId) {
+		return error(`mount requires a skill entry id.\nUsage: /evolve mount <skillId> | /evolve mount list`);
+	}
+	const sessionId = invocation.agent.id;
+	const local = engine.load("local", sessionId);
+	const globalState = engine.load("global", undefined);
+	const entry =
+		local.entries.skill[skillId] ??
+		globalState.entries.skill[skillId] ??
+		Object.values(local.entries.skill).find((e) => e.id === skillId) ??
+		Object.values(globalState.entries.skill).find((e) => e.id === skillId);
+	if (!entry) {
+		return error(`skill entry ${skillId} not found in local or global store`);
+	}
+	try {
+		const record = await mountSkill(ctx, engine.baseDir, entry);
+		return success(`mounted ${record.id} as ${record.entryId} (v${record.version}) — tool: skill_${record.id.replace(/_/g, "-")}`);
 	} catch (cause) {
 		return error(cause instanceof Error ? cause.message : String(cause));
 	}
@@ -218,6 +311,7 @@ async function executeBenchmarkCommand(
 	engine: EvolutionEngine,
 	invocation: CommandInvocation,
 	rest: string[],
+	runtime: CommandRuntimeOptions,
 ): Promise<CommandResult> {
 	const sub = rest[0] ?? "";
 	const args = rest.slice(1);
@@ -260,7 +354,7 @@ async function executeBenchmarkCommand(
 			if (!bid || !title || !statement || !rubric) {
 				return error(`benchmark add-case needs <bid> <title> <statement> <rubric>.\n${BENCHMARK_USAGE}`);
 			}
-			const caseItem = addCase(baseDir, bid, title, statement, rubric);
+			const caseItem = addCase(baseDir, bid, title, statement, rubric, runtime.rubricKey);
 			return success(`case ${caseItem.id} added to ${bid}`);
 		}
 		case "reset": {
@@ -310,6 +404,7 @@ async function executeBenchmarkCommand(
 			const overview = formatHarnessStateForPrompt(engine.load("local", sessionId));
 			const outcome = await evaluateState(ctx, invocation.agent, {
 				cases,
+				rubricKey: runtime.rubricKey,
 				runs: definition.runs,
 				passThreshold: definition.passThreshold,
 				harnessOverview: overview,

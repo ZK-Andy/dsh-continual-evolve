@@ -17,6 +17,8 @@ import { registerEvolveCommand } from "./command.js";
 import { registerAutoReview } from "./auto.js";
 import { syncSkillsFromResult } from "./skill.js";
 import { entriesSectionText } from "./inject.js";
+import { resolveRubricKey } from "./rubric.js";
+import { restoreMounted } from "./mount.js";
 
 export const name = "continual-evolve";
 
@@ -42,6 +44,8 @@ export const Config = z.object({
 	requireGlobalApproval: z.boolean().default(true),
 	/** Skills root for materialized skill entries; defaults to <dshHome>/skills. */
 	skillsDir: z.string(),
+	/** Passphrase for rubric encryption; falls back to DSH_EVOLVE_RUBRIC_KEY, then a dev key. */
+	rubricKey: z.string(),
 });
 
 /** Structurally typed resolved config (loader passes the validated object). */
@@ -54,6 +58,7 @@ export interface EvolveConfig {
 	reviewBudgetTokens?: number;
 	requireGlobalApproval?: boolean;
 	skillsDir?: string;
+	rubricKey?: string;
 }
 
 export interface EvolutionService {
@@ -96,7 +101,12 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 
 	const gate = { requireGlobalApproval: config.requireGlobalApproval ?? true };
 	registerEvolveTools(ctx, engine, gate);
-	registerEvolveCommand(ctx, engine, gate);
+	registerEvolveCommand(ctx, engine, gate, { rubricKey: resolveRubricKey(config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m)) });
+
+	// v2 optional: restore hot-mounted skill plugins after a restart.
+	void restoreMounted(ctx, baseDir).catch((cause) => {
+		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+	});
 
 	if (config.autoReview) {
 		registerAutoReview(ctx, engine, {
