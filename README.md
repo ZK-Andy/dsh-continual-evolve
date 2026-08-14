@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -114,9 +114,10 @@ dsh-continual-evolve/
 │   ├── logfile.ts        # plugin-owned file logging (JSONL exporter + rotation)
 │   ├── score.ts          # code-owned aggregation + acceptance rule
 │   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
+│   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 19 files, 166 tests
+└── test/                 # 20 files, 184 tests
 ```
 
 ## In-session usage (after restart)
@@ -129,7 +130,7 @@ dsh-continual-evolve/
 /evolve plan [msg]       LLM planner against the current store
 /evolve archive <id>     hide an entry from injection (data kept, restorable)
 /evolve unarchive <id>   restore an archived entry
-/evolve log [tail N]     show the recent plugin log (default 50 lines)
+/evolve log [tail N] [session <id>]  show the recent plugin log (default 50 lines; optional per-session filter)
 /evolve export <path>    backup the local store to JSON
 /evolve import <path>    restore a store from an export file
 /evolve mount <skillId>  hot-mount a skill entry as a live cordis plugin (tool: skill_<name>)
@@ -205,8 +206,8 @@ run the same case × run matrix against the post-refinement state → the
 strictly improves with no case regressing (Self-Harness style). The model
 produces raw per-cell scores only; aggregation and decisions live in
 `src/score.ts`. Rubric isolation is by construction (the planner never sees
-rubric files); rejection is recorded and suggested for rollback (human in
-the loop, no auto-rollback).
+rubric files); a rejection is recorded in the scoreboard and the refinement
+is rolled back automatically (`autoRollbackOnReject`, on by default).
 
 ### Real recorded run (ACCEPT)
 
@@ -243,6 +244,7 @@ where the baseline was already perfect).
 | `logToFile` | `true` | write all cordis log messages to `<dshHome>/evolve/plugin.log` (JSONL, 0600) — plugin-owned logging works with any launch method, no extra component to install |
 | `logLevel` | `1` | file log level: 0=error, 1=info, 2=warn, 3=debug |
 | `logMaxBytes` | 5 MiB | rotate the log to `plugin.log.1` when it exceeds this size |
+| `autoRollbackOnReject` | `true` | after a benchmark decision rejects a candidate, roll the refinement back automatically (same engine path as `/evolve rollback` — deterministic, snapshotted, audited) |
 
 Example (profile `cordis.patch.yml`):
 

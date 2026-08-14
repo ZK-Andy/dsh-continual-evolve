@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -91,9 +91,10 @@ dsh-continual-evolve/
 │   ├── logfile.ts        # 插件自带文件日志（JSONL exporter + 轮转）
 │   ├── score.ts          # 代码所有聚合 + 接受规则
 │   ├── evaluate.ts       # 评估矩阵执行器（结构化输出子代理）
+│   ├── pool.ts           # 评估运行的有界并发工作池
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 19 个文件，166 个测试
+└── test/                 # 20 个文件，184 个测试
 ```
 
 ## 会话内用法（安装后）
@@ -106,7 +107,7 @@ dsh-continual-evolve/
 /evolve plan [msg]            LLM 规划器
 /evolve archive <id>          归档条目——不再注入（数据保留，可恢复）
 /evolve unarchive <id>        恢复已归档条目
-/evolve log [tail N]          查看最近插件日志（默认 50 行）
+/evolve log [tail N] [session <id>] 查看最近插件日志（默认 50 行；可加会话过滤）
 /evolve export <path>         备份局部 store 为 JSON
 /evolve import <path>         从导出文件恢复 store
 /evolve mount <skillId>       热挂载 skill 条目为实时 cordis 插件（工具：skill_<name>）
@@ -151,7 +152,7 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 /evolve benchmark run <bid> candidate <refinementId>  评估进化后状态 → 决策
 ```
 
-闭环：冻结参考分 → 进化候选（`/evolve plan`）→ 用同一 case × run 矩阵复测进化后状态 → **代码所有**的接受规则只在总体均值严格提高且无 case 退化时保留候选（Self-Harness 风格）。模型只产出原始细胞级分数；聚合与决策都在 `src/score.ts`。rubric 隔离靠构造（规划器的提示词永远不含 rubric 文件）；拒绝会记录并提示回滚（人工在环，不自动回滚）。
+闭环：冻结参考分 → 进化候选（`/evolve plan`）→ 用同一 case × run 矩阵复测进化后状态 → **代码所有**的接受规则只在总体均值严格提高且无 case 退化时保留候选（Self-Harness 风格）。模型只产出原始细胞级分数；聚合与决策都在 `src/score.ts`。rubric 隔离靠构造（规划器的提示词永远不含 rubric 文件）；拒绝会记录进 scoreboard 并自动回滚该 refinement（`autoRollbackOnReject`，默认开）。
 
 ### 真实运行记录（ACCEPT）
 
@@ -183,6 +184,7 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 | `logToFile` | `true` | 所有 cordis 日志消息写入 `<dshHome>/evolve/plugin.log`（JSONL、0600）——插件自带日志，与启动方式无关、无需安装额外组件 |
 | `logLevel` | `1` | 文件日志级别：0=error、1=info、2=warn、3=debug |
 | `logMaxBytes` | 5 MiB | 超过该大小轮转到 `plugin.log.1` |
+| `autoRollbackOnReject` | `true` | benchmark 决策拒绝候选后自动回滚该 refinement（与 `/evolve rollback` 同一引擎路径——确定性、快照、审计） |
 
 示例（profile `cordis.patch.yml`）：
 
