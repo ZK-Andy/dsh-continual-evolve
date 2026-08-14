@@ -5,12 +5,12 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-66%20passing-brightgreen)]()
-[![Status](https://img.shields.io/badge/status-Phase%203%20%2F%20benchmark%20validation-ff69b4)]()
+[![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)]()
+[![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
-> **状态：Phase 3（benchmark 驱动验证闭环）已全部完成。** 在 Phase 2 之上，评估矩阵执行器（host 平面 `subagents`、冻结运行时、结构化输出单元）驱动代码所有的计分板；非退化接受规则决定接受/拒绝，模型从不直接写聚合值。
+> **状态：全部阶段完成。** Phase 2 补齐了真实系统提示词段：`prompt` 条目注入为 additive 提示词补充、`subagent` 条目注入为可复用委派规格——均封顶（每类 6 条、180 字符）、沿父会话链被子代理继承、store 为空时整段丢弃（零 token 成本）。之上，Phase 3 的评估矩阵执行器（host 平面 `subagents`、冻结运行时、结构化输出单元）驱动代码所有的计分板；非退化接受规则决定接受/拒绝，模型从不直接写聚合值。
 
 ## 背景
 
@@ -76,6 +76,7 @@ dsh-continual-evolve/
 │   ├── command.ts        # /evolve 命令（含 benchmark 子命令）
 │   ├── planner.ts        # ctx.llm 规划器
 │   ├── render.ts         # 有界提示词渲染
+│   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格）
 │   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计）
 │   ├── review.ts         # 门禁 LLM 判断
 │   ├── approval.ts       # 全局写入人工审批
@@ -85,7 +86,7 @@ dsh-continual-evolve/
 │   ├── evaluate.ts       # 评估矩阵执行器（结构化输出子代理）
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 10 个文件，66 个测试
+└── test/                 # 13 个文件，86 个测试
 ```
 
 ## 会话内用法（安装后）
@@ -95,6 +96,8 @@ dsh-continual-evolve/
 /evolve list [global]         列出条目
 /evolve history               已应用的 refinement（回滚用 id）
 /evolve rollback <id>         确定性回滚某个 refinement
+/evolve export <path>         备份局部 store 为 JSON
+/evolve import <path>         从导出文件恢复 store
 /evolve plan [msg]            LLM 规划器
 ```
 
@@ -171,7 +174,7 @@ pnpm test           # vitest run
 pnpm lint           # oxlint src test
 ```
 
-遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数等）。
+遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
 
 ## 路线图
 

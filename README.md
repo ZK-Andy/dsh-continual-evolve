@@ -5,14 +5,18 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-66%20passing-brightgreen)]()
-[![Status](https://img.shields.io/badge/status-Phase%203%20%2F%20benchmark%20validation-ff69b4)]()
+[![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)]()
+[![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
 
-> **Status: Phase 3 (benchmark-driven validation loop).** On top of the
-> completed Phase 2, an evaluation matrix runner (host-plane `subagents`,
-> frozen runtime, structured-output cells) feeds a code-owned scoreboard; the
+> **Status: all phases complete.** Phase 2 adds a real system-prompt section:
+> `prompt` entries are injected as additive prompt notes and `subagent`
+> entries as reusable delegation specs — both capped (6/kind, 180 chars),
+> inherited by subagents through the parent-session chain, and dropped
+> entirely when the store is empty (zero token cost). On top of that,
+> Phase 3's evaluation matrix runner (host-plane `subagents`, frozen
+> runtime, structured-output cells) feeds a code-owned scoreboard; the
 > non-regressive acceptance rule decides accept/reject with no model-written
 > aggregates.
 
@@ -93,6 +97,7 @@ dsh-continual-evolve/
 │   ├── command.ts        # /evolve command (incl. benchmark subcommands)
 │   ├── planner.ts        # ctx.llm planner
 │   ├── render.ts         # bounded prompt rendering
+│   ├── inject.ts         # dynamic system-prompt section (prompt notes + delegation specs)
 │   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit)
 │   ├── review.ts         # gate LLM judgment
 │   ├── approval.ts       # human approval for global edits
@@ -102,7 +107,7 @@ dsh-continual-evolve/
 │   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
 │   ├── store.ts          # store layout + snapshots + result history
 │   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 10 files, 66 tests
+└── test/                 # 13 files, 86 tests
 ```
 
 ## In-session usage (after restart)
@@ -125,6 +130,7 @@ Model-facing tools: `evolve_list`, `evolve_add`, `evolve_update`, `evolve_delete
 /evolve benchmark new <title> [runs]                   create a benchmark (runs = repeats per case, default 1)
 /evolve benchmark add-case <bid> <title> <statement> <rubric>
 /evolve benchmark list                                 list benchmarks
+/evolve benchmark reset <bid>                          clear the scoreboard (re-run reference)
 /evolve benchmark status <bid>                         scoreboard + decisions
 /evolve benchmark run <bid>                            evaluate current state → reference
 /evolve benchmark run <bid> candidate <refinementId>   evaluate post-refinement state → decide
@@ -190,7 +196,7 @@ pnpm test           # vitest run
 pnpm lint           # oxlint src test
 ```
 
-Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting).
+Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
 
 ## Roadmap
