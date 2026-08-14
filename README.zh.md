@@ -177,7 +177,7 @@ pnpm lint           # oxlint src test
 
 - **Phase 1（完成）**：纯核心引擎——状态模型、校验、应用、回滚、提案解析；已测试。
 - **Phase 1b（完成）**：`evolve_*` 工具、`/evolve` 命令、`ctx.llm` 规划器；已装入 web profile。
-- **Phase 2（完成）**：✅ 自动 review 门禁（回合间隔）；✅ 压缩检查点（`compaction/start`）；✅ 全局人工审批门禁（userQuestions）；✅ 可执行技能（物化到 `$DSH_HOME/skills/`）。
+- **Phase 2（完成）**：✅ 自动 review 门禁（回合间隔）；✅ 压缩检查点（`compaction/start`）；✅ 全局人工审批门禁（userQuestions）；✅ 可执行技能（物化到 `$DSH_HOME/skills/`）；✅ prompt 条目注入为真实系统提示词段（additive、每类封顶 6 条、沿父链被子代理继承）；✅ subagent 条目渲染为委派接缝上的可复用委派规格。
 - **Phase 3（完成）**：✅ benchmark 驱动验证闭环——评估矩阵、代码所有计分板聚合、非退化接受规则、rubric 构造性隔离。（未来：rubric 的沙箱 ACL 隔离、拒绝自动回滚。）
 
 ## License

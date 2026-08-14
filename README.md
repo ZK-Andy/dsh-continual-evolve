@@ -197,7 +197,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
 
 - **Phase 1 (done)**: pure-core engine — state model, validation, apply, rollback, proposal parsing; tested.
 - **Phase 1b (done)**: `evolve_*` tools, `/evolve` command, and the `ctx.llm` planner; installed into the web profile.
-- **Phase 2 (done)**: ✅ auto-refine review gate (turn-interval checkpoints); ✅ compaction checkpoint (`compaction/start`); ✅ global-scope approval gate (userQuestions); ✅ executable skills (materialize to `$DSH_HOME/skills/`).
+- **Phase 2 (done)**: ✅ auto-refine review gate (turn-interval checkpoints); ✅ compaction checkpoint (`compaction/start`); ✅ global-scope approval gate (userQuestions); ✅ executable skills (materialize to `$DSH_HOME/skills/`); ✅ prompt entries injected as a real system-prompt section (additive, capped 6/kind, inherited by subagents through the parent chain); ✅ subagent entries rendered as reusable delegation specs at the delegation seam.
 - **Phase 3 (done)**: ✅ benchmark-driven validation loop — evaluation matrix via the workflow engine, code-owned scoreboard aggregation, non-regressive acceptance rule, rubric isolation by construction. (Future: sandbox ACL isolation of rubrics, automated rollback on rejection.)
 
 ## License

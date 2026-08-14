@@ -155,8 +155,8 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 - [x] turn_interval / compact review 门禁（廉价 LLM 调用）
 - [x] global scope 开启，带人工审批门禁
 - [x] skill 条目可执行化（对齐 prime-agent 的 python reference 契约，物化 `$DSH_HOME/skills/<kebab>/SKILL.md`）
-- [ ] **prompt 条目真正注入系统提示词**（additive section，封顶 6 条/类）——现状：prompt 条目只是 store 文本 + 概览，未注入提示词段；接入点在 `index.ts` 的 `ctx.systemPrompt.section`（当前是静态引导语）+ `render.ts` 概览（当前靠 `evolve_list` 才可见）
-- [ ] **subagent 条目生成可复用委派规格**——现状：subagent 条目只是 store 文本；需接入委派接缝（子代理启动时按规格组装任务提示），对齐 prime-agent 的 subagent spec 形态
+- [x] **prompt 条目真正注入系统提示词**（additive section，封顶 6 条/类）——`src/inject.ts` 的 `entriesSectionText` 在 `index.ts` 注册为 `tool:continual-evolve:entries` 动态 section（order 118+1）：text 是 provider，每次 assembly 用 `context.agent` 定位会话，读 global + 沿 `SessionHeader.parentSession` 链最近非空 local store 合并渲染；空 store 渲染为 "" 被 prompt renderer 丢弃，零 token 成本；全量仍由 `evolve_list` 提供
+- [x] **subagent 条目生成可复用委派规格**——同一 section 把 subagent 条目渲染为 Delegation Specs 块（"委派时按规格组装子代理提示"）；子代理组装系统提示词时沿 parentSession 链继承父会话的 prompt/subagent 条目，无需包装 provider——委派接缝即全局 section + 链继承
 
 ### Phase 3 —— 验证闭环（penguin 硬化版，可选）
 - [x] 评估矩阵执行器（改用 host 平面 `ctx.subagents` + `outputSchema` 结构化输出；web profile 无 host workflowEngine，见 FAQ #1）

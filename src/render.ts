@@ -9,7 +9,7 @@ const DEFAULT_MAX_ENTRIES_PER_KIND = 6;
 const DEFAULT_MAX_REFINEMENTS = 5;
 const DEFAULT_MAX_CONTENT_LENGTH = 180;
 
-function compactText(text: string, maxLength: number): string {
+export function compactText(text: string, maxLength: number): string {
 	const normalized = text.replace(/\s+/g, " ").trim();
 	if (normalized.length <= maxLength) {
 		return normalized;
@@ -17,7 +17,7 @@ function compactText(text: string, maxLength: number): string {
 	return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
-function entryLine(entry: HarnessEntry, maxContentLength: number): string {
+export function entryLine(entry: HarnessEntry, maxContentLength: number): string {
 	const argumentsText =
 		entry.kind === "skill" && Object.keys(entry.arguments).length > 0
 			? ` args=${compactText(JSON.stringify(entry.arguments), maxContentLength)}`

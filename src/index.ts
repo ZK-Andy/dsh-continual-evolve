@@ -16,6 +16,7 @@ import { registerEvolveTools } from "./tool.js";
 import { registerEvolveCommand } from "./command.js";
 import { registerAutoReview } from "./auto.js";
 import { syncSkillsFromResult } from "./skill.js";
+import { entriesSectionText } from "./inject.js";
 
 export const name = "continual-evolve";
 
@@ -80,7 +81,17 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 	ctx.systemPrompt.section({
 		name: "tool:continual-evolve",
 		order: config.sectionOrder ?? 118,
-		text: "You have a continual harness: versioned, persistent prompt notes, memories, skills, and subagent specs. Use evolve_list to see it. Create an entry (evolve_add) after a repeated failure, a reusable tactic, a durable fact or preference, a repeated procedure, or a repeated delegation role. Keep edits small and evidence-backed; prefer local scope, use global: true only for stable cross-session lessons. Update or delete (evolve_update / evolve_delete) when an entry is wrong or obsolete; roll back faulty refinements with evolve_rollback. Every edit is snapshotted, versioned, and recorded — no edit can be silently lost.",
+		text: "You have a continual harness: versioned, persistent prompt notes, memories, skills, and subagent specs. Prompt notes and delegation specs are injected below; use evolve_list for the full state. Create an entry (evolve_add) after a repeated failure, a reusable tactic, a durable fact or preference, a repeated procedure, or a repeated delegation role. Keep edits small and evidence-backed; prefer local scope, use global: true only for stable cross-session lessons. Update or delete (evolve_update / evolve_delete) when an entry is wrong or obsolete; roll back faulty refinements with evolve_rollback. Every edit is snapshotted, versioned, and recorded — no edit can be silently lost.",
+	});
+
+	// Phase 2: make prompt entries real system-prompt content and subagent
+	// entries real delegation specs. The text is a provider evaluated at every
+	// assembly with the assembling agent; a store without prompt/subagent
+	// entries renders to "" and the prompt renderer drops the section.
+	ctx.systemPrompt.section({
+		name: "tool:continual-evolve:entries",
+		order: (config.sectionOrder ?? 118) + 1,
+		text: (context) => entriesSectionText(engine, context.agent),
 	});
 
 	const gate = { requireGlobalApproval: config.requireGlobalApproval ?? true };
