@@ -279,11 +279,11 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **trajectory-grounded planning** — `/evolve plan` (and every planner call, including the gate's refine step) now reads the session trajectory: the caller's recent direct user messages are extracted from the session log and fed to the planner as a `<session_trajectory>` block, so proposals are grounded in what the user actually said (explicit `trajectory` overrides; empty trajectory is omitted at zero cost)
   - **gate-proposed archiving** — stale entries are a first-class refine target: the planner can emit `action: "archive"` (kind + id only), which stamps `metadata.archivedAt` through the normal apply path — snapshot, version bump, audit event, and a deterministic rollback inverse that restores the pre-archive state. Archive hides from injection but never deletes; re-archiving an archived entry is rejected, and the base system prompt stays immutable
   - **automatic rollback on benchmark rejection** — the acceptance loop is closed: when the code-owned decision rejects a candidate, the refinement is reverted automatically through the same engine path as `/evolve rollback` (deterministic inverse edits, snapshotted and audited; configurable via `autoRollbackOnReject`, on by default). Failures report the manual fallback instead of throwing
+  - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
 
 **Planned / candidates** (low priority; driven by real usage)
 
 - CI matrix with Node 24
-- per-session filtering for the file log
 
 ## License
 

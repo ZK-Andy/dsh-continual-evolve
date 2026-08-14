@@ -108,6 +108,49 @@ export function formatLogLine(line: string): string {
 	}
 }
 
+/** A session id as it appears in log text (dsh `session-<hex-uuid>` ids). */
+const SESSION_TOKEN_RE = /\bsession-[0-9a-fA-F-]+\b/g;
+
+/**
+ * The distinct session ids mentioned in one stored log line, drawn from the
+ * rendered message and the raw args (unparseable lines fall back to a raw
+ * text scan). Exact-token matching, so `session-abc` never matches
+ * `session-abcd`.
+ */
+export function sessionIdsInLine(line: string): string[] {
+	const ids: string[] = [];
+	const collect = (text: string) => {
+		for (const match of text.matchAll(SESSION_TOKEN_RE)) {
+			ids.push(match[0]);
+		}
+	};
+	try {
+		const record = JSON.parse(line) as { message?: unknown; args?: unknown[] };
+		if (typeof record.message === "string") collect(record.message);
+		if (Array.isArray(record.args)) {
+			for (const arg of record.args) {
+				collect(typeof arg === "object" && arg !== null ? JSON.stringify(arg) : String(arg));
+			}
+		}
+	} catch {
+		collect(line);
+	}
+	return [...new Set(ids)];
+}
+
+/**
+ * Keep only the lines mentioning the given session id (exact token match).
+ * An empty/whitespace session id filters everything out — the caller should
+ * validate the argument before calling.
+ */
+export function filterLogBySession(lines: readonly string[], sessionId: string): string[] {
+	const needle = sessionId.trim();
+	if (!needle) {
+		return [];
+	}
+	return lines.filter((line) => sessionIdsInLine(line).includes(needle));
+}
+
 /** Append one line, rotating the file first when it exceeds maxBytes. */
 export function appendOrRotate(path: string, maxBytes: number, line: string): void {
 	const dir = dirname(path);

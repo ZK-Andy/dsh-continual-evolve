@@ -226,7 +226,7 @@ async function runGate(
 	state.lastReviewAt = state.turns;
 
 	if (!review.shouldRefine) {
-		logger.info(`auto-review declined (${reason}) after ${turnsSinceLastReview} turns: ${review.rationale}`);
+		logger.info(`auto-review declined (${reason}) [${sessionId}] after ${turnsSinceLastReview} turns: ${review.rationale}`);
 		record({ sessionId, reason, turnsSinceLastReview, outcome: "declined", rationale: review.rationale });
 		return;
 	}
@@ -245,7 +245,7 @@ async function runGate(
 		...(source ? { source } : {}),
 	});
 	logger.info(
-		`auto-review approved (${reason}) after ${turnsSinceLastReview} turns; auto-refine ${result.id}: ${result.appliedEdits.filter((e) => e.applied).length} applied, ${result.appliedEdits.filter((e) => !e.applied).length} failed — ${review.rationale}`,
+		`auto-review approved (${reason}) [${sessionId}] after ${turnsSinceLastReview} turns; auto-refine ${result.id}: ${result.appliedEdits.filter((e) => e.applied).length} applied, ${result.appliedEdits.filter((e) => !e.applied).length} failed — ${review.rationale}`,
 	);
 	record({ sessionId, reason, turnsSinceLastReview, outcome: "approved", rationale: review.rationale, refinementId: result.id });
 	// Visibility: tell the user what the gate just persisted. Only the

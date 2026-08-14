@@ -19,7 +19,7 @@ import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loa
 import { decide, decisionReport, entryFromCells } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 import { entrySourceOf } from "./source.js";
-import { formatLogLine, pluginLogFilePath } from "./logfile.js";
+import { filterLogBySession, formatLogLine, pluginLogFilePath } from "./logfile.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
@@ -199,8 +199,21 @@ async function executeEvolveCommand(
 				return success(renderResult(result));
 			}
 			case "log": {
-				const tailArg = rest[0] ?? "";
-				const tail = tailArg ? Math.min(Math.max(parsePositiveInt(tailArg, "tail"), 1), 1000) : 50;
+				// /evolve log [tail N] [session <sessionId>]
+				let tail = 50;
+				let sessionFilter: string | undefined;
+				for (let i = 0; i < rest.length; i += 1) {
+					const token = rest[i] ?? "";
+					if (token === "session") {
+						sessionFilter = stripAngleBrackets(rest[i + 1] ?? "");
+						if (!sessionFilter) {
+							return error(`log session requires a session id (e.g. /evolve log session session-abc123).\n${USAGE}`);
+						}
+						i += 1;
+					} else {
+						tail = Math.min(Math.max(parsePositiveInt(token, "tail"), 1), 1000);
+					}
+				}
 				const path = pluginLogFilePath(engine.baseDir);
 				if (!existsSync(path)) {
 					return success(`(no plugin log yet — ${path} is created on the first log message)`);
@@ -209,9 +222,11 @@ async function executeEvolveCommand(
 				if (lines.length === 0) {
 					return success(`(empty plugin log: ${path})`);
 				}
-				const shown = lines.slice(-tail);
+				const filtered = sessionFilter ? filterLogBySession(lines, sessionFilter) : lines;
+				const shown = filtered.slice(-tail);
+				const scopeNote = sessionFilter ? `, ${filtered.length} for session ${sessionFilter}` : "";
 				return success(
-					`plugin log ${path} (${lines.length} lines, showing last ${shown.length}):\n${shown.map(formatLogLine).join("\n")}`,
+					`plugin log ${path} (${lines.length} lines${scopeNote}, showing last ${shown.length}):\n${shown.map(formatLogLine).join("\n")}`,
 				);
 			}
 			case "export": {

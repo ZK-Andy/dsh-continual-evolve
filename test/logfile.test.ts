@@ -10,11 +10,13 @@ import {
 	DEFAULT_LOG_MAX_BYTES,
 	PLUGIN_LOG_FILE_NAME,
 	appendOrRotate,
+	filterLogBySession,
 	formatLogLine,
 	logRecord,
 	pluginLogFilePath,
 	registerFileLogger,
 	renderArgs,
+	sessionIdsInLine,
 } from "../src/logfile.js";
 
 function message(overrides: Partial<Parameters<typeof logRecord>[0]> = {}) {
@@ -143,5 +145,39 @@ describe("paths", () => {
 	it("exposes the log file name and path", () => {
 		expect(PLUGIN_LOG_FILE_NAME).toBe("plugin.log");
 		expect(pluginLogFilePath("/base")).toBe(join("/base", "evolve", "plugin.log"));
+	});
+});
+
+describe("sessionIdsInLine / filterLogBySession", () => {
+	const lineA = logRecord({
+		ts: 1,
+		type: "info",
+		name: "continual-evolve",
+		args: ["auto-review declined (turn_interval) [session-abc123] after 6 turns: nothing durable"],
+	});
+	const lineB = logRecord({
+		ts: 2,
+		type: "info",
+		name: "continual-evolve",
+		args: ["mounted skill", { sessionId: "session-def456" }],
+	});
+	const lineC = logRecord({ ts: 3, type: "info", name: "hmr", args: ["watching %o", []] });
+
+	it("extracts distinct session tokens from message and args", () => {
+		expect(sessionIdsInLine(lineA)).toEqual(["session-abc123"]);
+		expect(sessionIdsInLine(lineB)).toEqual(["session-def456"]);
+		expect(sessionIdsInLine(lineC)).toEqual([]);
+	});
+
+	it("filters lines by exact session token (no substring matches)", () => {
+		const lines = [lineA, lineB, lineC];
+		expect(filterLogBySession(lines, "session-abc123")).toEqual([lineA]);
+		expect(filterLogBySession(lines, "session-abc")).toEqual([]); // prefix is not a match
+		expect(filterLogBySession(lines, "session-def456")).toEqual([lineB]);
+	});
+
+	it("filters nothing for an empty session id and passes unparseable lines through a raw scan", () => {
+		expect(filterLogBySession([lineA], "  ")).toEqual([]);
+		expect(sessionIdsInLine("raw line session-00ff99")).toEqual(["session-00ff99"]);
 	});
 });
