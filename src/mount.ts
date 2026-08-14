@@ -91,6 +91,10 @@ export function renderPluginSource(toolName: string, entry: HarnessEntry): strin
  */
 export const name = "evolve-skill-${skillNameOf(entry.id)}";
 
+// Cordis requires declared service access; without this, \`ctx.tools\` throws
+// "cannot get property \\"tools\\" without inject".
+export const inject = ["tools"];
+
 export function apply(ctx) {
   ctx.tools.register({
     name: ${JSON.stringify(toolName)},

@@ -57,6 +57,7 @@ describe("renderMountPackage", () => {
 	it("generates a plugin that registers a tool with the entry's contract", () => {
 		const source = renderPluginSource("skill_code_reviewer", skillEntry());
 		expect(source).toContain('export const name = "evolve-skill-code-reviewer"');
+		expect(source).toContain('export const inject = ["tools"];');
 		expect(source).toContain('name: "skill_code_reviewer"');
 		expect(source).toContain("Review the diff strictly.");
 		expect(source).toContain('"strictness"');
