@@ -98,21 +98,22 @@ interface HarnessRefinementEvent {
 |---|---|---|
 | **手动命令** | `/evolve [instructions] [--global]` | 用户显式要求，最优先 |
 | **模型自觉** | `evolve` 工具（`refine.run` 同款 API） | 发现重复失败/可复用战术时主动调度 |
-| **回合间隔** | `agent/settled` 监听 + turn 计数 | 每 N 回合（默认 6）跑一次**廉价 review 门禁** |
-| **压缩时** | `agent/session-start` 前 / compaction 挂钩 | 压缩前把"会被丢掉的经验"先沉淀（prime-agent 的 `compact` 触发点） |
+| **回合间隔** | `agent/turn-stopping`（计数）+ `agent/status`（idle 触发） | 每 N 回合（默认 6）跑一次**廉价 review 门禁**；计数器重启清零，每次判断写 `reviews.jsonl` 审计（见 FAQ #5） |
+| **压缩时** | `session/event`（`compaction/start`） | 压缩前无条件跑一次门禁，把会被丢掉的经验先沉淀 |
 
 ### 关键纪律（照抄 prime-agent）
-- **绝不在 step 中途应用**：调度后 `pending=true`，回合结束（`agent/settled`）串行执行：规划 → 重新读盘 → 应用 → 重建系统提示词 → 恢复 agent
+- **绝不在 step 中途打断 agent**：手动路径（`/evolve plan`、evolve 工具）在显式调用点同步 apply（带 baseline 比对，天然串行）；自动路径（门禁批准后）在 `agent/status` idle 之后异步串行执行——两种路径都不会打断进行中的 step
 - **plan 与 apply 分离**：LLM 规划可能耗时数十秒，期间共享文件可能被别的会话写——apply 前必须重读 + baseline 比对
-- **单回合一次**：重复调用只更新 instructions，不重复排队
+- **单回合一次**：门禁用 `lastReviewAt` 记账，间隔内不重复跑
 - **review 门禁是独立廉价 LLM 调用**（4k token 预算、只读最后 40k 字符），决定"该不该进化"，而非直接进化
 
 ## 5. 验证层接线（DSH 相对两个参照物的结构性优势）
 
 ### 5.1 提案校验 —— 比 prime-agent 更硬
 prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己产出**的（LLM 调 LLM，自产自审）。DSH 方案：
-- 提案生成走 **`dsubagent` 结构化输出**（schema 校验是 DSH 内建能力）：字段白名单、枚举、`score`/`version` 类型约束，非法输出即重试/判失败——这正是 penguin 报告里"Evaluator 输出自审"的硬化版
+- 提案生成走 **`ctx.llm` 流式调用**（与主 agent 同 provider/model，`reasoningEffort: "off"` 强制非推理输出，见 FAQ #7）+ `plan.ts` 的截断感知 JSON 恢复（`extractJsonObject`/`isIncompleteJson`），非法输出即判失败——而不是让模型自产自审
 - 应用前仍跑一遍 `validateEdit`（双保险）
+- 评估单元格走 **`dsh-subagent` `outputSchema` 结构化输出**（schema 校验是 DSH 内建能力）：provider 校验子代理回复，宿主从不解析模型文本（见 FAQ #3）
 
 ### 5.2 轨迹即证据 —— DSH 事件溯源是天然资产
 - penguin 的 Trace 绑定靠 evaluator 自查；prime-agent 的 evidence 靠模型自觉摘要
@@ -131,25 +132,25 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 
 ## 6. 与 DSH 现有能力的映射（实现清单）
 
-| DSH 现有插件/服务 | 本插件如何用 |
+| DSH 现有插件/服务 | 本插件如何用（实现状态） |
 |---|---|
-| `agent/settled`、`agent/pre-step` 事件 | 回合末应用、压缩前 review |
-| `dsh-subagent`（结构化输出） | 提案生成 + schema 校验 |
-| `dsh-skill-filesystem` | skill 条目落盘与发现 |
-| `dsh-plan-mode` | global 进化的人工评审门禁 |
-| `dsh-session-persistence-jsonl` | local 历史 + evidence 审计 |
-| `dsh-evolve` | v2 可选：把进化结果以热挂载 cordis 插件落地 |
-| `dsh-agent-presets` | prompt 条目渲染进 preset 的提示词层（additive，不动基座） |
-| `dsh-goal` | v3 可选：进化循环的轮次驱动 |
+| `agent/turn-stopping`、`agent/status`、`session/event` | 回合计数 + idle 触发门禁 + `compaction/start` 压缩前 review（已实现，见 §4） |
+| `ctx.llm`（流式）+ `dsh-subagent` | 提案生成走 `ctx.llm` 流 + JSON 恢复；评估单元格走 `outputSchema` 结构化输出（均已实现） |
+| `dsh-skill-filesystem` | skill 条目落盘 `$DSH_HOME/skills/<kebab>/SKILL.md`（插件自写，发现机制复用 DSH 的） |
+| `userQuestions` | global 进化的人工评审门禁（`approval.ts`，等价替代 dsh-plan-mode） |
+| 插件自带 `store.ts` | local/global 变更历史 JSONL + 快照 + 回滚源（不依赖 dsh-session-persistence-jsonl） |
+| `dsh-evolve` | v2 可选：把进化结果以热挂载 cordis 插件落地——**未实现（可选）** |
+| `dsh-agent-presets` | prompt 条目渲染进提示词层（`systemPrompt.section` 直接注册，additive，不动基座；已实现） |
+| `dsh-goal` | v3 可选：进化循环的轮次驱动——**未实现（可选）** |
 
 ## 7. 分阶段路线
 
 ### Phase 1 —— MVP（照抄 prime-agent 骨架子集）
-- [ ] 状态模型 + 原子读写 + 损坏降级 + 乐观并发
-- [ ] `/evolve` 命令 + `evolve_add/update/delete/list/rollback` 工具
-- [ ] 回合末串行应用 + 自动快照 + 逆操作回滚
-- [ ] 仅 local scope；global 只读展示
-- **验收**：两条真实会话中长出跨会话可复用的 memory/skill 条目，可回滚，坏 JSON/非法编辑全部代码级拒绝
+- [x] 状态模型 + 原子读写 + 损坏降级 + 乐观并发（`src/state.ts`：tmp+rename 保留 mode、坏文件降级空、baseline 比对拒绝并发改）
+- [x] `/evolve` 命令 + `evolve_add/update/delete/list/rollback` 工具（`src/command.ts` + `src/tool.ts`，另有 export/import 备份恢复）
+- [x] 回合末串行应用 + 自动快照 + 逆操作回滚（`src/service.ts` apply 前 `snapshotBefore`；`src/rollback.ts` 确定性逆操作；手动路径显式调用点同步 apply，自动路径 idle 后异步，见 §4）
+- [x] 仅 local scope；global 只读展示（Phase 2 起升级为 global 人工审批可写）
+- **验收**：真实会话中长出跨会话可复用的 memory/skill 条目，可回滚，坏 JSON/非法编辑全部代码级拒绝（已达成并有运行证据）
 
 ### Phase 2 —— 门禁与自动化
 - [x] turn_interval / compact review 门禁（廉价 LLM 调用）
@@ -161,8 +162,8 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 ### Phase 3 —— 验证闭环（penguin 硬化版，可选）
 - [x] 评估矩阵执行器（改用 host 平面 `ctx.subagents` + `outputSchema` 结构化输出；web profile 无 host workflowEngine，见 FAQ #1）
 - [x] scoreboard 聚合下沉代码（模型只产细胞级分数）
-- [x] 接受规则：顶层平均分严格高于 Reference 且无退化（Self-Harness 的非退化规则）
-- [ ] rubric 目录对优化器不可读（沙箱 ACL，权限强制）
+- [x] 接受规则：顶层平均分严格高于 Reference 且无退化（Self-Harness 的非退化规则，`src/score.ts` `decide`；拒绝时命令行提示回滚候选，人工在环）
+- [ ] rubric 目录对优化器不可读（沙箱 ACL，权限强制）——**未实现**（Phase 3 为可选阶段，此项留作候选功能：当前 rubric 仅靠"规划器提示词不含 rubric 文件"的构造性隔离）
 
 ## 8. 风险与权衡
 
