@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-112%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -79,15 +79,18 @@ dsh-continual-evolve/
 │   ├── render.ts         # 有界提示词渲染
 │   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格）
 │   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计）
+│   ├── goal.ts           # goal 驱动的进化轮次（/evolve goal）
 │   ├── review.ts         # 门禁 LLM 判断
 │   ├── approval.ts       # 全局写入人工审批
 │   ├── skill.ts          # 技能物化（$DSH_HOME/skills/）
+│   ├── mount.ts          # 技能热挂载插件（loader.create + 启动恢复）
 │   ├── benchmark.ts      # benchmark 存储
+│   ├── rubric.ts         # rubric ACL（AES-256-GCM 密文信封）
 │   ├── score.ts          # 代码所有聚合 + 接受规则
 │   ├── evaluate.ts       # 评估矩阵执行器（结构化输出子代理）
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 13 个文件，86 个测试
+└── test/                 # 16 个文件，112 个测试
 ```
 
 ## 会话内用法（安装后）
