@@ -154,7 +154,7 @@ export function renderParameters(entry: HarnessEntry): Record<string, unknown> {
 export async function mountSkill(ctx: Context, baseDir: string, entry: HarnessEntry): Promise<MountRecord> {
 	const dir = renderMountPackage(baseDir, entry);
 	const entryId = `evolve-mount-${skillNameOf(entry.id)}`;
-	const loader = (ctx as unknown as { loader?: LoaderLike }).loader;
+	const loader = (ctx as unknown as { get(name: string): unknown }).get("loader") as LoaderLike | undefined;
 	if (loader) {
 		try {
 			// EntryOptions: {id, name (module specifier), config, group, disabled, inject} —
@@ -185,7 +185,7 @@ export async function unmountSkill(ctx: Context, baseDir: string, id: string): P
 	if (!record) {
 		return undefined;
 	}
-	const loader = (ctx as unknown as { loader?: LoaderLike }).loader;
+	const loader = (ctx as unknown as { get(name: string): unknown }).get("loader") as LoaderLike | undefined;
 	if (loader) {
 		try {
 			await loader.remove(record.entryId);
@@ -204,7 +204,7 @@ export async function unmountSkill(ctx: Context, baseDir: string, id: string): P
 /** Re-mount every ledger entry at plugin boot (restart persistence). */
 export async function restoreMounted(ctx: Context, baseDir: string): Promise<void> {
 	const ledger = loadLedger(baseDir);
-	const loader = (ctx as unknown as { loader?: LoaderLike }).loader;
+	const loader = (ctx as unknown as { get(name: string): unknown }).get("loader") as LoaderLike | undefined;
 	for (const record of ledger.mounted) {
 		if (!existsSync(join(record.path, "index.js"))) {
 			continue; // package was removed; ledger prunes on next unmount

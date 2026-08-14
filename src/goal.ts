@@ -42,9 +42,16 @@ export interface GoalServiceLike {
 export const DEFAULT_EVOLVE_GOAL_OBJECTIVE =
 	"持续进化本会话 harness 状态：每轮沉淀可复用经验（失败/战术/事实/委派规格），保持条目小而带证据";
 
-/** Resolve the goal service lazily; undefined when the profile lacks it. */
+/**
+ * Resolve the goal service lazily; undefined when the profile lacks it.
+ * Uses `ctx.get("goals")` (the global service registry) — a direct property
+ * access like `ctx.goals` walks only the caller's fiber ancestor chain and
+ * throws "cannot get property \"goals\" without inject" for services
+ * provided by sibling plugin entries (the goal plugin is a sibling of this
+ * one in the profile tree).
+ */
 export function goalServiceOf(ctx: Context): GoalServiceLike | undefined {
-	return (ctx as unknown as { goals?: GoalServiceLike }).goals;
+	return (ctx as unknown as { get(name: string): unknown }).get("goals") as GoalServiceLike | undefined;
 }
 
 /** True when a goal view exists and is in a round-driving phase (active). */
