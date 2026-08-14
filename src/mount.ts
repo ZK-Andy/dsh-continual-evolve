@@ -145,8 +145,9 @@ export async function mountSkill(ctx: Context, baseDir: string, entry: HarnessEn
 	if (loader) {
 		try {
 			// EntryOptions: {id, name (module specifier), config, group, disabled, inject} —
-			// `name` is the specifier to import, so it points at the generated package dir.
-			await loader.create({ id: entryId, name: dir });
+			// `name` must resolve as an ES module: Node ESM does not support
+			// directory imports, so point at the generated index.js explicitly.
+			await loader.create({ id: entryId, name: join(dir, "index.js") });
 		} catch (cause) {
 			throw new Error(`hot mount failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 		}
@@ -199,7 +200,7 @@ export async function restoreMounted(ctx: Context, baseDir: string): Promise<voi
 			continue;
 		}
 		try {
-			await loader.create({ id: record.entryId, name: record.path });
+			await loader.create({ id: record.entryId, name: join(record.path, "index.js") });
 		} catch (cause) {
 			ctx.logger("continual-evolve").warn(
 				`mount restore failed for ${record.id}: ${cause instanceof Error ? cause.message : String(cause)}`,
