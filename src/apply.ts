@@ -6,13 +6,14 @@
  */
 import type {
 	AppliedRefinementEdit,
+	EntrySource,
 	HarnessEntry,
 	HarnessScope,
 	HarnessState,
 	RefinementProposal,
 	RefinementResult,
 } from "./types.js";
-import { cloneEntry, slug } from "./types.js";
+import { SOURCE_SESSION_KEY, SOURCE_SEQS_KEY, cloneEntry, slug } from "./types.js";
 import { entryChangedSince } from "./state.js";
 import { validateEdit } from "./validate.js";
 
@@ -22,6 +23,12 @@ export interface ApplyOptions {
 	rollbackOf?: string;
 	/** State captured before planning; used to reject conflicting edits. */
 	baselineState?: HarnessState;
+	/**
+	 * Trajectory citation stamped into newly created entries' metadata
+	 * (sourceSession + sourceSeqs); updates keep whatever the entry already
+	 * carries. Omitted entirely when the caller cannot determine it.
+	 */
+	source?: EntrySource;
 }
 
 export function applyRefinementProposal(
@@ -77,6 +84,18 @@ export function applyRefinementProposal(
 			continue;
 		}
 
+		// Trajectory citation: stamped on create (the distillation moment),
+		// never re-stamped on update (the entry keeps its original source).
+		// Model-supplied metadata wins on key collision.
+		const sourceMetadata =
+			!before && options.source
+				? {
+						[SOURCE_SESSION_KEY]: options.source.sessionId,
+						...(options.source.seqs && options.source.seqs.length > 0
+							? { [SOURCE_SEQS_KEY]: options.source.seqs }
+							: {}),
+					}
+				: {};
 		const after: HarnessEntry = {
 			id,
 			kind: edit.kind,
@@ -86,7 +105,7 @@ export function applyRefinementProposal(
 			scope: before?.scope ?? options.scope ?? "local",
 			reference: edit.reference ?? before?.reference ?? {},
 			arguments: edit.arguments ?? before?.arguments ?? {},
-			metadata: edit.metadata ?? before?.metadata ?? {},
+			metadata: { ...sourceMetadata, ...(edit.metadata ?? before?.metadata ?? {}) },
 			source: "evolve",
 			created_at: before?.created_at ?? now,
 			updated_at: now,

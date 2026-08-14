@@ -1,8 +1,17 @@
 /**
- * Tests for the review gate: JSON parsing and trajectory serialization.
+ * Tests for the review gate: JSON parsing, trajectory serialization, and the
+ * global-coverage rule in the gate's system prompt.
  */
 import { describe, expect, it } from "vitest";
-import { parseAutoRefineReview, serializeSurface } from "../src/review.js";
+import { AUTO_REVIEW_SYSTEM_PROMPT, parseAutoRefineReview, serializeSurface } from "../src/review.js";
+
+describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
+	it("tells the gate to decline local duplicates of globally covered topics", () => {
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toContain("scope=global");
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/already covered\s+by a global entry/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/decline/i);
+	});
+});
 
 describe("parseAutoRefineReview", () => {
 	it("parses an approval with instructions", () => {

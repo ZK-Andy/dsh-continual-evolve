@@ -18,6 +18,45 @@ export type RefinementAction = "create" | "update" | "delete";
 /** Where an entry lives: session-scoped or cross-session. */
 export type HarnessScope = "local" | "global";
 
+/**
+ * Metadata key recording which session an entry's content was distilled from
+ * (trajectory citation; see {@link EntrySource}).
+ */
+export const SOURCE_SESSION_KEY = "sourceSession";
+/**
+ * Metadata key recording the session-log event seqs (of the direct user
+ * messages) the entry cites as its source (trajectory citation).
+ */
+export const SOURCE_SEQS_KEY = "sourceSeqs";
+
+/**
+ * Metadata key recording when an entry was archived. Archived entries are
+ * hidden from injection but never deleted — the data stays in the store and
+ * the entry can be restored (unarchive) or rolled back like any other edit.
+ */
+export const ARCHIVED_AT_KEY = "archivedAt";
+
+/**
+ * True when the entry is archived (hidden from injection, restorable).
+ * Absent or empty archivedAt means the entry is active.
+ */
+export function isArchived(entry: HarnessEntry): boolean {
+	const value = entry.metadata[ARCHIVED_AT_KEY];
+	return typeof value === "string" && value.length > 0;
+}
+
+/**
+ * Trajectory citation attached to newly created entries: the session the
+ * content came from and the seqs of the direct user messages it was
+ * distilled from. Both fields are optional — when they cannot be determined
+ * the citation is simply omitted (never an error).
+ */
+export interface EntrySource {
+	sessionId?: string;
+	/** Event seqs of the source user messages, in log order. */
+	seqs?: number[];
+}
+
 /** A single persisted harness entry. */
 export interface HarnessEntry {
 	id: string;

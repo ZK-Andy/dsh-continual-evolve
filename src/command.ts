@@ -4,7 +4,8 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
-import type { HarnessEntry, HarnessScope, HarnessState, RefinementResult } from "./types.js";
+import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementResult } from "./types.js";
+import { ARCHIVED_AT_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { planWithLlm } from "./planner.js";
@@ -17,6 +18,7 @@ import { appendResult, storePaths } from "./store.js";
 import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadScoreboard, saveScoreboard } from "./benchmark.js";
 import { decide, decisionReport, entryFromCells } from "./score.js";
 import { evaluateState } from "./evaluate.js";
+import { entrySourceOf } from "./source.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
@@ -24,6 +26,8 @@ const USAGE = `Usage:
   /evolve history [global] show applied refinements (rollback ids)
   /evolve rollback <id> [global]  deterministically revert a refinement
   /evolve plan [msg]       run the LLM planner against the current store
+  /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
+  /evolve unarchive <id> [global] restore an archived entry
   /evolve export [global] <path>  backup a store to a JSON file
   /evolve import [global] <path>  restore a store from an export file
   /evolve mount <skillId>    hot-mount a skill entry as a live cordis plugin
@@ -106,6 +110,22 @@ export function stripAngleBrackets(value: string): string {
 	return value.replace(/^<|>$/g, "");
 }
 
+/**
+ * Locate an entry by id across every kind of a store. Ids are only unique
+ * within a kind, so the lookup scans all four and returns the first match
+ * (kind + entry) or undefined. Used by archive/unarchive, which take a bare
+ * id from the user.
+ */
+export function findEntryById(state: HarnessState, id: string): [RefinementKind, HarnessEntry] | undefined {
+	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
+		const entry = state.entries[kind][id];
+		if (entry) {
+			return [kind, entry];
+		}
+	}
+	return undefined;
+}
+
 async function executeEvolveCommand(
 	ctx: Context,
 	engine: EvolutionEngine,
@@ -139,6 +159,39 @@ async function executeEvolveCommand(
 					return error(`rollback requires a refinement id.\n${USAGE}`);
 				}
 				const result = engine.rollback(scope, sessionId, id);
+				return success(renderResult(result));
+			}
+			case "archive":
+			case "unarchive": {
+				const { scope, rest: after } = scopeArg(rest);
+				const id = stripAngleBrackets(after[0] ?? "");
+				if (!id) {
+					return error(`${sub} requires an entry id.\n${USAGE}`);
+				}
+				const state = engine.load(scope, sessionId);
+				const found = findEntryById(state, id);
+				if (!found) {
+					return error(`entry ${id} not found in the ${scope} store`);
+				}
+				const [kind, entry] = found;
+				const metadata = { ...entry.metadata };
+				if (sub === "archive") {
+					metadata[ARCHIVED_AT_KEY] = new Date().toISOString();
+				} else {
+					delete metadata[ARCHIVED_AT_KEY];
+				}
+				const archived = sub === "archive";
+				const result = engine.apply(
+					scope,
+					sessionId,
+					{
+						summary: `${archived ? "Archive" : "Unarchive"} entry ${kind}:${id}`,
+						rationale: "Human-invoked archive/unarchive via the /evolve command.",
+						expectedOutcome: `Entry ${archived ? "is hidden from injection (data kept, restorable)" : "is injected again"}.`,
+						edits: [{ action: "update", kind, id, title: entry.title, content: entry.content, metadata }],
+					},
+					{ scope },
+				);
 				return success(renderResult(result));
 			}
 			case "export": {
@@ -212,7 +265,11 @@ async function executeEvolveCommand(
 						`/evolve plan global 将应用 ${proposal.edits.length} 条编辑到跨会话 store：${proposal.summary}`,
 					);
 				}
-				const result = engine.apply(scope, sessionId, proposal, { scope, baselineState: state });
+				const result = engine.apply(scope, sessionId, proposal, {
+					scope,
+					baselineState: state,
+					...(entrySourceOf(invocation.agent, sessionId) ? { source: entrySourceOf(invocation.agent, sessionId) } : {}),
+				});
 				return success(renderResult(result));
 			}
 			case "goal": {

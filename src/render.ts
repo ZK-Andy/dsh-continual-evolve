@@ -4,6 +4,7 @@
  * matter how large the store grows.
  */
 import type { HarnessEntry, HarnessRefinementEvent, HarnessState, RefinementResult } from "./types.js";
+import { SOURCE_SESSION_KEY, SOURCE_SEQS_KEY, isArchived } from "./types.js";
 
 const DEFAULT_MAX_ENTRIES_PER_KIND = 6;
 const DEFAULT_MAX_REFINEMENTS = 5;
@@ -26,7 +27,20 @@ export function entryLine(entry: HarnessEntry, maxContentLength: number): string
 		entry.kind === "skill" && Object.keys(entry.reference).length > 0
 			? ` ref=${compactText(JSON.stringify(entry.reference), maxContentLength)}`
 			: "";
-	return `- [${entry.scope}:${entry.id}] ${entry.title} (${entry.path}, v${entry.version})${referenceText}${argumentsText}: ${compactText(entry.content, maxContentLength)}`;
+	const citationText = citationSuffix(entry);
+	const archivedText = isArchived(entry) ? " [archived]" : "";
+	return `- [${entry.scope}:${entry.id}] ${entry.title} (${entry.path}, v${entry.version})${archivedText}${referenceText}${argumentsText}${citationText}: ${compactText(entry.content, maxContentLength)}`;
+}
+
+/** Trajectory citation suffix (` src=sessionId:1,2`), empty when uncited. */
+function citationSuffix(entry: HarnessEntry): string {
+	const sessionId = entry.metadata[SOURCE_SESSION_KEY];
+	if (typeof sessionId !== "string" || sessionId.length === 0) {
+		return "";
+	}
+	const seqs = entry.metadata[SOURCE_SEQS_KEY];
+	const seqText = Array.isArray(seqs) && seqs.length > 0 ? `:${seqs.join(",")}` : "";
+	return ` src=${sessionId}${seqText}`;
 }
 
 /** Render the full merged state as a bounded overview for the system prompt. */

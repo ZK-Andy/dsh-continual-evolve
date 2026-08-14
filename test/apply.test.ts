@@ -122,6 +122,105 @@ describe("applyRefinementProposal", () => {
 		expect(state.entries.memory["x"]).toBeUndefined();
 		expect(result.appliedEdits[0]?.before?.title).toBe("old");
 	});
+
+	it("stamps the trajectory citation into created entries", () => {
+		const state = emptyHarnessState();
+		const result = applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value" }],
+			},
+			{ id: "refine_src", scope: "local", source: { sessionId: "session-abc", seqs: [12, 15] } },
+		);
+		expect(result.appliedEdits[0]?.applied).toBe(true);
+		const entry = state.entries.memory["cited"];
+		expect(entry?.metadata["sourceSession"]).toBe("session-abc");
+		expect(entry?.metadata["sourceSeqs"]).toEqual([12, 15]);
+	});
+
+	it("omits the seqs key when the citation has no seqs", () => {
+		const state = emptyHarnessState();
+		applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value" }],
+			},
+			{ id: "refine_src2", source: { sessionId: "session-abc" } },
+		);
+		const entry = state.entries.memory["cited"];
+		expect(entry?.metadata["sourceSession"]).toBe("session-abc");
+		expect(entry?.metadata["sourceSeqs"]).toBeUndefined();
+	});
+
+	it("writes no citation without a source and keeps it on update", () => {
+		const state = emptyHarnessState();
+		applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Uncited", content: "value" }],
+			},
+			{ id: "refine_src3" },
+		);
+		expect(state.entries.memory["uncited"]?.metadata).toEqual({});
+		// An update does not re-stamp and does not wipe the original citation.
+		applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value" }],
+			},
+			{ id: "refine_src4", source: { sessionId: "session-abc", seqs: [12] } },
+		);
+		const entry = state.entries.memory["cited"]!;
+		applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "update", kind: "memory", id: "cited", content: "new value" }],
+			},
+			{ id: "refine_src5", source: { sessionId: "session-other" } },
+		);
+		expect(entry.metadata["sourceSession"]).toBe("session-abc");
+		expect(entry.metadata["sourceSeqs"]).toEqual([12]);
+	});
+
+	it("keeps model-supplied metadata on top of the citation", () => {
+		const state = emptyHarnessState();
+		applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [
+					{
+						action: "create",
+						kind: "memory",
+						title: "Meta",
+						content: "value",
+						metadata: { note: "model provided" },
+					},
+				],
+			},
+			{ id: "refine_src6", source: { sessionId: "session-abc", seqs: [1] } },
+		);
+		const entry = state.entries.memory["meta"];
+		expect(entry?.metadata["note"]).toBe("model provided");
+		expect(entry?.metadata["sourceSession"]).toBe("session-abc");
+	});
 });
 
 describe("rollbackProposal", () => {

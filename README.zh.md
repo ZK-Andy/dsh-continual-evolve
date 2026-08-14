@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-117%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -77,11 +77,12 @@ dsh-continual-evolve/
 │   ├── command.ts        # /evolve 命令（含 benchmark 子命令）
 │   ├── planner.ts        # ctx.llm 规划器
 │   ├── render.ts         # 有界提示词渲染
-│   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格）
-│   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计）
+│   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格，打分排序注入）
+│   ├── source.ts         # 轨迹引用（沉淀条目的 sessionId + 事件 seq）
+│   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计，global 感知视图）
 │   ├── notify.ts         # 门禁可见性——approved 自动沉淀后发送可见通知
 │   ├── goal.ts           # goal 驱动的进化轮次（/evolve goal）
-│   ├── review.ts         # 门禁 LLM 判断
+│   ├── review.ts         # 门禁 LLM 判断（拒绝 global 已覆盖主题的 local 重复沉淀）
 │   ├── approval.ts       # 全局写入人工审批
 │   ├── skill.ts          # 技能物化（$DSH_HOME/skills/）
 │   ├── mount.ts          # 技能热挂载插件（loader.create + 启动恢复）
@@ -91,7 +92,7 @@ dsh-continual-evolve/
 │   ├── evaluate.ts       # 评估矩阵执行器（结构化输出子代理）
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 17 个文件，117 个测试
+└── test/                 # 18 个文件，151 个测试
 ```
 
 ## 会话内用法（安装后）
@@ -101,9 +102,11 @@ dsh-continual-evolve/
 /evolve list [global]         列出条目
 /evolve history               已应用的 refinement（回滚用 id）
 /evolve rollback <id>         确定性回滚某个 refinement
+/evolve plan [msg]            LLM 规划器
+/evolve archive <id>          归档条目——不再注入（数据保留，可恢复）
+/evolve unarchive <id>        恢复已归档条目
 /evolve export <path>         备份局部 store 为 JSON
 /evolve import <path>         从导出文件恢复 store
-/evolve plan [msg]            LLM 规划器
 /evolve mount <skillId>       热挂载 skill 条目为实时 cordis 插件（工具：skill_<name>）
 /evolve mount list            列出热挂载插件（重启自动恢复）
 /evolve unmount <id>          移除热挂载插件
@@ -113,6 +116,15 @@ dsh-continual-evolve/
 ```
 
 模型工具：`evolve_list`、`evolve_add`、`evolve_update`、`evolve_delete`、`evolve_rollback`。
+
+## 记忆层
+
+在持久 store 之外，四项增强让注入的记忆在条目增多时依然"懂你"（对照 Mem0 / Letta / Zep / LangMem 的差距分析；不引入外部服务——全部是纯函数）：
+
+- **打分排序注入**——某类条目超过 6 条封顶时，注入块不再固定取前 6 条：先按与 agent 最近直接用户消息的相关度打分（关键词/BM25 级别，标题命中权重 2×），再按新鲜度排序（`updated_at`，30 天半衰期），让"最新 + 最相关"的条目填满封顶。空 store 零 token 行为不变。
+- **轨迹引用**——每条新沉淀条目都会记录 `metadata.sourceSession` + `metadata.sourceSeqs`，指向它蒸馏自的直接用户消息（DSH 会话是事件溯源、seq 连续，引用可展开回持久会话日志）。列表显示 `src=<sessionId>:<seqs>`；旧条目不迁移也不报错。
+- **归档**——`/evolve archive <id>` 让条目不再注入（`metadata.archivedAt`，数据保留、与快照/回滚兼容），`/evolve unarchive <id>` 恢复。归档条目在 `evolve_list` 中标记 `[archived]`，注入跳过，溢出计数不含它们。
+- **global 感知门禁**——自动 review 门禁与规划器评审的是合并后的 global + local 状态，每条条目标注真实 scope；global 已覆盖的主题会被 declined，不再重复沉淀为 local 条目。
 
 ## benchmark 驱动验证（Phase 3）
 

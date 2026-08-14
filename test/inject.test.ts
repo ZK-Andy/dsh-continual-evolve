@@ -12,12 +12,18 @@ import { emptyHarnessState } from "../src/types.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { storePaths } from "../src/store.js";
 import { saveHarnessState } from "../src/state.js";
+import { entryLine } from "../src/render.js";
 import {
 	MAX_INJECTED_ENTRIES_PER_KIND,
 	entriesSectionText,
 	formatPromptEntriesSection,
 	formatSubagentSpecsSection,
 	nearestLocalStateWithEntries,
+	rankEntries,
+	recentUserText,
+	recencyScore,
+	relevanceHits,
+	tokenize,
 } from "../src/inject.js";
 
 function entry(overrides: Partial<HarnessEntry> & { id: string; kind: HarnessEntry["kind"]; title: string }): HarnessEntry {
@@ -74,6 +80,64 @@ describe("formatPromptEntriesSection", () => {
 
 	it("renders nothing for an empty list", () => {
 		expect(formatPromptEntriesSection([])).toBe("");
+	});
+
+	it("shows the trajectory citation when the entry carries one", () => {
+		const cited = entry({
+			id: "p0",
+			kind: "prompt",
+			title: "Cited note",
+			metadata: { sourceSession: "session-abc", sourceSeqs: [12, 15] },
+		});
+		expect(formatPromptEntriesSection([cited])).toContain("src=session-abc:12,15");
+	});
+});
+
+describe("archived entries", () => {
+	it("hides archived entries from the injected block", () => {
+		const entries = [
+			entry({ id: "live", kind: "prompt", title: "Live", content: "x" }),
+			entry({
+				id: "gone",
+				kind: "prompt",
+				title: "Gone",
+				content: "x",
+				metadata: { archivedAt: "2026-08-15T00:00:00.000Z" },
+			}),
+		];
+		const text = formatPromptEntriesSection(entries);
+		expect(text).toContain("[local:live]");
+		expect(text).not.toContain("[local:gone]");
+	});
+
+	it("renders '' when every entry is archived", () => {
+		const text = formatPromptEntriesSection([
+			entry({ id: "gone", kind: "prompt", title: "Gone", content: "x", metadata: { archivedAt: "2026-08-15T00:00:00.000Z" } }),
+		]);
+		expect(text).toBe("");
+	});
+
+	it("excludes archived entries from the overflow count", () => {
+		const entries = Array.from({ length: 7 }, (_, i) =>
+			entry({ id: `p${i}`, kind: "prompt", title: `Note ${i}`, content: "x" }),
+		);
+		entries.push(
+			entry({ id: "gone", kind: "prompt", title: "Gone", content: "x", metadata: { archivedAt: "2026-08-15T00:00:00.000Z" } }),
+		);
+		const text = formatPromptEntriesSection(entries);
+		expect(text).toContain("+1 more prompt notes");
+		expect(text).not.toContain("[local:gone]");
+	});
+
+	it("marks archived entries with [archived] in listings", () => {
+		const line = entryLine(
+			entry({ id: "gone", kind: "memory", title: "Gone", content: "x", metadata: { archivedAt: "2026-08-15T00:00:00.000Z" } }),
+			180,
+		);
+		expect(line).toContain("[archived]");
+		expect(
+			entryLine(entry({ id: "live", kind: "memory", title: "Live", content: "x" }), 180),
+		).not.toContain("[archived]");
 	});
 });
 
@@ -208,6 +272,195 @@ describe("entriesSectionText", () => {
 		} finally {
 			cleanup(engine);
 		}
+	});
+
+	it("injects the most recently updated entries when the store exceeds the cap", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			const many = Array.from({ length: 9 }, (_, i) =>
+				entry({
+					id: `p${i}`,
+					kind: "prompt",
+					title: `Note ${i}`,
+					content: "x",
+					updated_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+					created_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+				}),
+			);
+			saveState(engine, "local", "session-main", stateWith(many));
+			const text = entriesSectionText(engine, { id: "session-main" });
+			// Newest six (p8..p3) fill the cap, not the fixed first six (p0..p5).
+			for (const id of ["p8", "p7", "p6", "p5", "p4", "p3"]) {
+				expect(text).toContain(`[local:${id}]`);
+			}
+			expect(text).not.toContain("[local:p0]");
+			expect(text).not.toContain("[local:p1]");
+			expect(text).not.toContain("[local:p2]");
+		} finally {
+			cleanup(engine);
+		}
+	});
+
+	it("ranks injected entries by the agent's recent messages", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			const many = Array.from({ length: 9 }, (_, i) =>
+				entry({
+					id: `p${i}`,
+					kind: "prompt",
+					title: `Note ${i}`,
+					content: i === 0 ? "always run the linter before writing code" : "x",
+					updated_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+					created_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+				}),
+			);
+			saveState(engine, "local", "session-main", stateWith(many));
+			const agent = {
+				id: "session-main",
+				session: {
+					events: [{ type: "user/message", data: { content: "lint before you write code", source: { kind: "user" } } }],
+				},
+			};
+			const text = entriesSectionText(engine, agent);
+			// p0 is the oldest entry but matches the recent user message, so it
+			// must lead the injected block even though the five newest entries
+			// (p8..p4) still fill the rest of the cap; p1 is old and irrelevant
+			// and must be dropped.
+			const lines = text.split("\n").filter((l) => l.startsWith("- ["));
+			expect(lines[0]).toContain("[local:p0]");
+			expect(lines).toHaveLength(MAX_INJECTED_ENTRIES_PER_KIND);
+			expect(text).not.toContain("[local:p1]");
+		} finally {
+			cleanup(engine);
+		}
+	});
+
+	it("skips archived entries in the injected block", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			saveState(
+				engine,
+				"local",
+				"session-main",
+				stateWith([
+					entry({ id: "live", kind: "prompt", title: "Live", content: "still injectable" }),
+					entry({
+						id: "gone",
+						kind: "prompt",
+						title: "Gone",
+						content: "hidden",
+						metadata: { archivedAt: "2026-08-15T00:00:00.000Z" },
+					}),
+				]),
+			);
+			const text = entriesSectionText(engine, { id: "session-main" });
+			expect(text).toContain("still injectable");
+			expect(text).not.toContain("[local:gone]");
+		} finally {
+			cleanup(engine);
+		}
+	});
+});
+
+describe("rankEntries", () => {
+	const NOW = Date.parse("2026-08-15T00:00:00.000Z");
+
+	function dated(id: string, updatedAt: string, title = `Note ${id}`, content = "body"): HarnessEntry {
+		return entry({ id, kind: "prompt", title, content, updated_at: updatedAt, created_at: updatedAt });
+	}
+
+	it("ranks by recency (newest first) when there is no query", () => {
+		const entries = [
+			dated("old", "2026-07-01T00:00:00.000Z"),
+			dated("new", "2026-08-14T00:00:00.000Z"),
+			dated("mid", "2026-08-01T00:00:00.000Z"),
+		];
+		expect(rankEntries(entries, undefined, NOW).map((e) => e.id)).toEqual(["new", "mid", "old"]);
+	});
+
+	it("ranks relevant entries above newer irrelevant ones when a query is given", () => {
+		const entries = [
+			dated("old-relevant", "2026-07-01T00:00:00.000Z", "Lint before code", "run oxlint"),
+			dated("new-irrelevant", "2026-08-14T00:00:00.000Z", "Baking notes", "oven temperature"),
+		];
+		const ranked = rankEntries(entries, "lint", NOW);
+		expect(ranked[0]!.id).toBe("old-relevant");
+		expect(ranked[1]!.id).toBe("new-irrelevant");
+	});
+
+	it("breaks recency ties with the stable dictionary order", () => {
+		const entries = [
+			dated("zeta", "2026-08-01T00:00:00.000Z"),
+			dated("alpha", "2026-08-01T00:00:00.000Z"),
+		];
+		expect(rankEntries(entries, undefined, NOW).map((e) => e.id)).toEqual(["alpha", "zeta"]);
+	});
+
+	it("does not mutate the input array", () => {
+		const entries = [dated("a", "2026-07-01T00:00:00.000Z"), dated("b", "2026-08-01T00:00:00.000Z")];
+		const before = entries.map((e) => e.id);
+		rankEntries(entries, undefined, NOW);
+		expect(entries.map((e) => e.id)).toEqual(before);
+	});
+});
+
+describe("tokenize / relevanceHits / recencyScore", () => {
+	it("tokenizes lowercase words and keeps CJK runs intact", () => {
+		expect(tokenize("Run OXlint 记忆 before code!")).toEqual(["run", "oxlint", "记忆", "before", "code"]);
+	});
+
+	it("weighs title hits twice as much as content hits", () => {
+		const inTitle = entry({ id: "t", kind: "prompt", title: "Lint first", content: "x" });
+		const inBody = entry({ id: "b", kind: "prompt", title: "Notes", content: "lint everything" });
+		expect(relevanceHits(inTitle, "lint")).toBe(2);
+		expect(relevanceHits(inBody, "lint")).toBe(1);
+	});
+
+	it("scores recent entries 1 and decays to 0 after the half life", () => {
+		const fresh = entry({ id: "f", kind: "prompt", title: "x", updated_at: "2026-08-15T00:00:00.000Z" });
+		const ancient = entry({ id: "a", kind: "prompt", title: "x", updated_at: "2020-01-01T00:00:00.000Z" });
+		expect(recencyScore(fresh, Date.parse("2026-08-15T00:00:00.000Z"))).toBe(1);
+		expect(recencyScore(ancient, Date.parse("2026-08-15T00:00:00.000Z"))).toBe(0);
+	});
+});
+
+describe("recentUserText", () => {
+	const userEvent = (content: unknown) => ({ type: "user/message", data: { content, source: { kind: "user" } } });
+
+	it("joins the most recent direct user messages", () => {
+		const agent = {
+			id: "s",
+			session: {
+				events: [
+					userEvent([{ type: "text", text: "first" }]),
+					{ type: "assistant/message", data: { message: {} } },
+					userEvent("second direct"),
+					{ type: "user/message", data: { content: "injected", source: { kind: "plugin", plugin: "x" } } },
+				],
+			},
+		};
+		expect(recentUserText(agent)).toBe("first second direct");
+	});
+
+	it("returns '' when there are no qualifying messages", () => {
+		expect(recentUserText(undefined)).toBe("");
+		expect(
+			recentUserText({
+				id: "s",
+				session: { events: [{ type: "user/message", data: { content: "injected", source: { kind: "tool" } } }] },
+			}),
+		).toBe("");
+	});
+
+	it("caps messages and chars", () => {
+		const agent = {
+			id: "s",
+			session: {
+				events: [userEvent("one"), userEvent("two"), userEvent("three")],
+			},
+		};
+		expect(recentUserText(agent, { maxMessages: 2 })).toBe("two three");
+		expect(recentUserText(agent, { maxChars: 5 })).toBe("one t");
 	});
 });
 

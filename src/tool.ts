@@ -9,12 +9,13 @@ import type { HarnessScope, RefinementEdit, RefinementKind } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt } from "./render.js";
 import { requireGlobalApproval } from "./approval.js";
+import { entrySourceOf } from "./source.js";
 
 const SCOPES: HarnessScope[] = ["local", "global"];
 
 /** Minimal structural view of the tool execution context (agent is optional). */
 interface ToolExec {
-	agent?: { id: string };
+	agent?: { id: string; session?: { events?: readonly unknown[] } };
 }
 
 /** Accept both the boolean tool parameter (`global: true`) and the string form. */
@@ -92,7 +93,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				if (args.path !== undefined) edit.path = args.path;
 				if (args.reference !== undefined) edit.reference = args.reference;
 				if (args.arguments !== undefined) edit.arguments = args.arguments;
-				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit]));
+				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));
 			},
 		}),
 	);
@@ -120,7 +121,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				const edit: RefinementEdit = { action: "update", kind: args.kind as RefinementKind, id: args.id };
 				if (args.title !== undefined) edit.title = args.title;
 				if (args.content !== undefined) edit.content = args.content;
-				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit]));
+				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));
 			},
 		}),
 	);
@@ -144,7 +145,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_delete ${args.kind}:${args.id} → 跨会话全局 store`);
 				}
 				const edit: RefinementEdit = { action: "delete", kind: args.kind as RefinementKind, id: args.id };
-				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit]));
+				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));
 			},
 		}),
 	);
@@ -172,13 +173,29 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 	);
 }
 
-function applyEditsText(engine: EvolutionEngine, scope: HarnessScope, sessionId: string | undefined, edits: RefinementEdit[]): string {
-	const result = engine.apply(scope, sessionId, {
-		summary: "Direct tool edit",
-		rationale: "Model-invoked single edit via evolve_* tool.",
-		expectedOutcome: "Entry is created, updated, or deleted as requested.",
-		edits,
-	});
+function applyEditsText(
+	engine: EvolutionEngine,
+	scope: HarnessScope,
+	sessionId: string | undefined,
+	edits: RefinementEdit[],
+	agent?: ToolExec["agent"],
+): string {
+	const result = engine.apply(
+		scope,
+		sessionId,
+		{
+			summary: "Direct tool edit",
+			rationale: "Model-invoked single edit via evolve_* tool.",
+			expectedOutcome: "Entry is created, updated, or deleted as requested.",
+			edits,
+		},
+		agent
+			? {
+					scope,
+					...(entrySourceOf(agent, sessionId) ? { source: entrySourceOf(agent, sessionId) } : {}),
+				}
+			: { scope },
+	);
 	const applied = result.appliedEdits.filter((e) => e.applied);
 	const failed = result.appliedEdits.filter((e) => !e.applied);
 	const lines = [`refinement ${result.id}: ${applied.length} applied, ${failed.length} failed`];

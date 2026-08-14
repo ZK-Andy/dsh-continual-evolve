@@ -3,7 +3,7 @@
  * Every mutation path goes through here so snapshot-before-write, apply
  * accounting, persistence, and result history are enforced in one place.
  */
-import type { HarnessScope, RefinementProposal, RefinementResult } from "./types.js";
+import type { EntrySource, HarnessScope, RefinementProposal, RefinementResult } from "./types.js";
 import { applyRefinementProposal } from "./apply.js";
 import { rollbackProposal } from "./rollback.js";
 import { loadHarnessState, saveHarnessState } from "./state.js";
@@ -14,6 +14,8 @@ export interface ApplyContext {
 	sessionId?: string;
 	/** When set, optimistic-concurrency checks reject edits whose entries changed since this baseline. */
 	baselineState?: Parameters<typeof applyRefinementProposal>[0];
+	/** Trajectory citation stamped into newly created entries (see apply.ts). */
+	source?: EntrySource | undefined;
 }
 
 export interface EvolutionHooks {
@@ -35,6 +37,7 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		const result = applyRefinementProposal(state, proposal, {
 			id,
 			scope,
+			...(context?.source ? { source: context.source } : {}),
 			...(context?.baselineState ? { baselineState: context.baselineState } : {}),
 		});
 		saveHarnessState(paths.stateDir, state);

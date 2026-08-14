@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-117%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -98,11 +98,12 @@ dsh-continual-evolve/
 │   ├── command.ts        # /evolve command (incl. benchmark subcommands)
 │   ├── planner.ts        # ctx.llm planner
 │   ├── render.ts         # bounded prompt rendering
-│   ├── inject.ts         # dynamic system-prompt section (prompt notes + delegation specs)
-│   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit)
+│   ├── inject.ts         # dynamic system-prompt section (prompt notes + delegation specs, ranked injection)
+│   ├── source.ts         # trajectory citations (sessionId + event seqs of distilled entries)
+│   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit, global-aware view)
 │   ├── notify.ts         # gate visibility — follow-up notice after an approved auto-refine
 │   ├── goal.ts           # goal-driven evolution rounds (/evolve goal)
-│   ├── review.ts         # gate LLM judgment
+│   ├── review.ts         # gate LLM judgment (declines local duplicates of globally covered topics)
 │   ├── approval.ts       # human approval for global edits
 │   ├── skill.ts          # skill materialization ($DSH_HOME/skills/)
 │   ├── mount.ts          # hot-mounted skill plugins (loader.create + boot restore)
@@ -112,7 +113,7 @@ dsh-continual-evolve/
 │   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
 │   ├── store.ts          # store layout + snapshots + result history
 │   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 17 files, 117 tests
+└── test/                 # 18 files, 151 tests
 ```
 
 ## In-session usage (after restart)
@@ -123,6 +124,8 @@ dsh-continual-evolve/
 /evolve history          applied refinements (ids for rollback)
 /evolve rollback <id>    deterministically revert a refinement
 /evolve plan [msg]       LLM planner against the current store
+/evolve archive <id>     hide an entry from injection (data kept, restorable)
+/evolve unarchive <id>   restore an archived entry
 /evolve export <path>    backup the local store to JSON
 /evolve import <path>    restore a store from an export file
 /evolve mount <skillId>  hot-mount a skill entry as a live cordis plugin (tool: skill_<name>)
@@ -134,6 +137,34 @@ dsh-continual-evolve/
 ```
 
 Model-facing tools: `evolve_list`, `evolve_add`, `evolve_update`, `evolve_delete`, `evolve_rollback`.
+
+## Memory layer
+
+Beyond the persisted store itself, three features keep injected memory
+"understanding you" as entries grow (gap analysis vs. Mem0 / Letta / Zep /
+LangMem; no external services — everything is pure functions):
+
+- **Ranked injection** — when a kind holds more than the 6-entry cap, the
+  injected block no longer shows the fixed first six: entries are scored by
+  relevance to the agent's most recent direct user messages (keyword/BM25
+  level: title hits weigh 2×) and then by recency (`updated_at`, 30-day
+  half-life), so the freshest *and most relevant* entries fill the cap. The
+  empty-store zero-token behavior is unchanged.
+- **Trajectory citations** — every newly created entry records
+  `metadata.sourceSession` + `metadata.sourceSeqs` pointing at the direct
+  user messages it was distilled from (DSH sessions are event-sourced with
+  contiguous seqs, so the citation expands back into the durable session
+  log). Listings show `src=<sessionId>:<seqs>`; old entries are not migrated
+  and never error.
+- **Archive** — `/evolve archive <id>` hides an entry from injection
+  (`metadata.archivedAt`, data kept, rollback-compatible) and
+  `/evolve unarchive <id>` restores it. Archived entries are marked
+  `[archived]` in `evolve_list` and skipped by injection; the overflow count
+  excludes them.
+- **Global-aware gate** — the auto-review gate and planner judge the merged
+  global + local state with every entry's real scope labeled, so a topic
+  already covered by a global entry is declined instead of being re-sedimented
+  as a local duplicate.
 
 ## Benchmark-driven validation (Phase 3)
 

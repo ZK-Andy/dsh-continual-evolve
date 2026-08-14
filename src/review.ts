@@ -36,13 +36,18 @@ export interface ReviewOptions {
 	budgetTokens?: number;
 }
 
-const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
+export const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
 
 Decide whether this checkpoint should run /evolve. Auto /evolve writes local
 harness state by default, so approve when the trajectory contains evidence
 useful to this session's future turns: a repeated failure, a reusable tactic,
 a repeated delegation role, a durable fact or preference, a user correction
 that should persist, or a narrow behavioral policy.
+
+The current harness state below includes GLOBAL entries (scope=global) plus
+this session's local entries (scope=local). When a topic is already covered
+by a global entry, do NOT approve a local duplicate of it — decline and say
+in the rationale that the topic is already covered globally.
 
 Reject one-off noise, unsupported hypotheses, transient tool outputs, and
 requests that carry no reusable content.

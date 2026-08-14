@@ -19,11 +19,14 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { HarnessState } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
 import { goalServiceOf } from "./goal.js";
 import { notifyAutoReview } from "./notify.js";
+import { entrySourceOf } from "./source.js";
+import { mergeHarnessStates } from "./state.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -170,6 +173,19 @@ function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 	return state;
 }
 
+/**
+ * The state view the gate and planner judge: the session's local entries
+ * merged with the global store, each entry carrying its real scope. Without
+ * the global half the gate cannot see that a topic is already covered
+ * cross-session and happily re-sediments a local duplicate of it.
+ *
+ * The merged view is read-only context — applying still targets the raw
+ * local state (baseline checks compare local entries only).
+ */
+export function loadGateHarnessView(engine: EvolutionEngine, sessionId: string): HarnessState {
+	return mergeHarnessStates(engine.load("global", undefined), engine.load("local", sessionId));
+}
+
 async function runGate(
 	ctx: Context,
 	engine: EvolutionEngine,
@@ -193,7 +209,11 @@ async function runGate(
 		return;
 	}
 
-	const harnessState = engine.load("local", sessionId);
+	// The gate judges the merged view (global + local, scopes labeled) so it
+	// can recognize topics already covered globally and decline duplicates;
+	// applying still targets the raw local store.
+	const localState = engine.load("local", sessionId);
+	const harnessState = loadGateHarnessView(engine, sessionId);
 	const history = engine.history("local", sessionId);
 	const review = await reviewAutoRefine(ctx, {
 		agent,
@@ -218,7 +238,12 @@ async function runGate(
 		...(review.instructions ? { instructions: review.instructions } : {}),
 		global: false,
 	});
-	const result = engine.apply("local", sessionId, proposal, { scope: "local", baselineState: harnessState });
+	const source = entrySourceOf(agent, sessionId);
+	const result = engine.apply("local", sessionId, proposal, {
+		scope: "local",
+		baselineState: localState,
+		...(source ? { source } : {}),
+	});
 	logger.info(
 		`auto-review approved (${reason}) after ${turnsSinceLastReview} turns; auto-refine ${result.id}: ${result.appliedEdits.filter((e) => e.applied).length} applied, ${result.appliedEdits.filter((e) => !e.applied).length} failed — ${review.rationale}`,
 	);
