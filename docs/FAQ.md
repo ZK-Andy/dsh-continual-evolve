@@ -30,6 +30,13 @@ output: { schema: { type: "object", properties: { text: { type: "string" } }, re
 output: { schema: { type: "object", properties: { text: { type: "string", required: true } } } }
 ```
 
+**例外（mount 裸 register 路径）**：`/evolve mount` 生成的插件用 `ctx.tools.register()` 直接注册，`parameters` 会被 dsh-llm **原样**发给 API，不再经过 `compilePropertyMap`——此时 `required` 必须写成**根级数组**（属性内 `required: true` 会让 DeepSeek API 报 `Invalid schema for function ...: true is not of type "array"`，每轮请求都失败）：
+
+```ts
+// ✅ mount 插件 parameters（原样发 API，必须是标准 JSON Schema）
+parameters: { type: "object", properties: { message: { type: "string" } }, required: ["message"] }
+```
+
 ## 3. benchmark 评估报 `unit failed: text.trim is not a function`
 
 **症状**：评估单元全部记 0 分，cells 的 notes 是 `unit failed: text.trim is not a function`。

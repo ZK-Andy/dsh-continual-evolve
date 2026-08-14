@@ -61,7 +61,11 @@ describe("renderMountPackage", () => {
 		expect(source).toContain('name: "skill_code_reviewer"');
 		expect(source).toContain("Review the diff strictly.");
 		expect(source).toContain('"strictness"');
-		expect(source).toContain('"required": true');
+		// requiredness is a root-level array (JSON.stringify pretty-print form);
+		// the raw register path sends `parameters` verbatim to the API, which
+		// rejects per-property `required: true` ("true is not of type array").
+		expect(source).toContain('"required": [\n    "strictness"\n  ]');
+		expect(source).not.toContain('"required": true');
 		expect(source).toContain("Python reference:");
 		expect(source).toContain("reviewer");
 		// output value-schema must not carry `required` on the string property
@@ -71,7 +75,7 @@ describe("renderMountPackage", () => {
 });
 
 describe("renderParameters", () => {
-	it("maps required contract entries to per-property DSL flags", () => {
+	it("maps required contract entries to a root-level required array", () => {
 		const parameters = renderParameters(
 			skillEntry({
 				arguments: {
@@ -81,13 +85,15 @@ describe("renderParameters", () => {
 			}),
 		);
 		const props = (parameters["properties"] as Record<string, Record<string, unknown>>) ?? {};
-		expect(props["path"]?.["required"]).toBe(true);
+		expect(parameters["required"]).toEqual(["path"]);
+		expect(props["path"]?.["required"]).toBeUndefined();
 		expect(props["depth"]?.["required"]).toBeUndefined();
 	});
 
 	it("tolerates a missing arguments contract", () => {
 		const parameters = renderParameters(skillEntry({ arguments: {} }));
 		expect(parameters["properties"]).toEqual({});
+		expect(parameters["required"]).toBeUndefined();
 	});
 });
 

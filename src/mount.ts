@@ -118,24 +118,31 @@ export function apply(ctx) {
 `;
 }
 
-/** Map a skill entry's arguments contract to the tool-parameter DSL (per-property `required`). */
+/**
+ * Map a skill entry's arguments contract to the tool-parameter schema.
+ * Requiredness goes in a root-level `required` array (valid JSON Schema):
+ * the mounted plugin registers via raw `ctx.tools.register`, and dsh-llm
+ * sends `parameters` verbatim to the API, which rejects per-property
+ * `required: true` ("true is not of type array").
+ */
 export function renderParameters(entry: HarnessEntry): Record<string, unknown> {
 	const contract = entry.arguments ?? {};
 	const properties: Record<string, unknown> = {};
+	const required: string[] = [];
 	for (const [key, spec] of Object.entries(contract)) {
 		const record = typeof spec === "object" && spec !== null && !Array.isArray(spec) ? (spec as Record<string, unknown>) : {};
 		const type = typeof record["type"] === "string" ? record["type"] : "string";
 		const description = typeof record["description"] === "string" ? record["description"] : key;
-		const property: Record<string, unknown> = { type, description };
+		properties[key] = { type, description };
 		if (record["required"] === true) {
-			property["required"] = true;
+			required.push(key);
 		}
-		properties[key] = property;
 	}
 	return {
 		type: "object",
 		additionalProperties: false,
 		properties,
+		...(required.length > 0 ? { required } : {}),
 	};
 }
 
