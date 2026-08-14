@@ -7,19 +7,21 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
 [![Tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)]()
-[![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
+[![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
 
-> **Status: all phases complete.** Phase 2 adds a real system-prompt section:
-> `prompt` entries are injected as additive prompt notes and `subagent`
-> entries as reusable delegation specs — both capped (6/kind, 180 chars),
-> inherited by subagents through the parent-session chain, and dropped
-> entirely when the store is empty (zero token cost). On top of that,
-> Phase 3's evaluation matrix runner (host-plane `subagents`, frozen
-> runtime, structured-output cells) feeds a code-owned scoreboard; the
-> non-regressive acceptance rule decides accept/reject with no model-written
-> aggregates.
+> **Status: all phases complete; in long-term maintenance.** Phases 1–3
+> shipped the full evolution loop: the pure-core engine, model tools and
+> the `/evolve` command, the automatic review gate (turn-interval +
+> compaction checkpoints, human approval for global edits), real
+> system-prompt injection (prompt notes + delegation specs, zero token
+> cost when empty), and the benchmark-driven validation loop (code-owned
+> scoring, non-regressive acceptance, rubric ACL). Since then the plugin
+> keeps growing with usage-driven enhancements — the memory layer (ranked
+> injection, trajectory citations, archive), per-installation rubric keys,
+> and plugin-owned file logging. See the Roadmap for the full shipped and
+> candidate lists.
 
 ## Background
 
@@ -267,10 +269,21 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
 
 ## Roadmap
 
-- **Phase 1 (done)**: pure-core engine — state model, validation, apply, rollback, proposal parsing; tested.
-- **Phase 1b (done)**: `evolve_*` tools, `/evolve` command, and the `ctx.llm` planner; installed into the web profile.
-- **Phase 2 (done)**: ✅ auto-refine review gate (turn-interval checkpoints; approved runs with applied edits surface a visible follow-up notice — nothing persists silently); ✅ compaction checkpoint (`compaction/start`); ✅ global-scope approval gate (userQuestions); ✅ executable skills (materialize to `$DSH_HOME/skills/`); ✅ prompt entries injected as a real system-prompt section (additive, capped 6/kind, inherited by subagents through the parent chain); ✅ subagent entries rendered as reusable delegation specs at the delegation seam.
-- **Phase 3 (done)**: ✅ benchmark-driven validation loop — evaluation matrix via the workflow engine, code-owned scoreboard aggregation, non-regressive acceptance rule, rubric isolation by construction; ✅ rubric ACL (rubric plaintext never on disk — AES-256-GCM envelopes, decrypted only by the evaluation runner); ✅ hot-mounted skill plugins (`/evolve mount <skillId>`, live loader entry, restored on boot); ✅ goal-driven evolution rounds (`/evolve goal` — an active goal drives the review gate every round). (Future: automated rollback on rejection.)
+**Shipped**
+
+- **Phases 1–3 (done)**: pure-core engine (state model, validation, apply, rollback, proposal parsing) → `evolve_*` tools + `/evolve` command + `ctx.llm` planner → auto-refine review gate (turn-interval + compaction checkpoints, visible follow-up notices), global-scope human approval, executable skills, real system-prompt injection (prompt notes + delegation specs, inherited by subagents), benchmark-driven validation loop (code-owned scoreboard, non-regressive acceptance, rubric isolation by construction), hot-mounted skill plugins, goal-driven evolution rounds.
+- **2026-08 maintenance wave (done)**:
+  - **memory layer** — ranked injection (relevance + recency scoring fills the per-kind cap), trajectory citations (`metadata.sourceSession` + `sourceSeqs`, shown as `src=session:seqs`), archive/unarchive (`/evolve archive <id>`, injection skips archived entries), global-aware gate (declines local duplicates of globally covered topics)
+  - **per-installation rubric key** — auto-generated local key file (`<dshHome>/evolve/rubric.key`, 0600); no more publicly known dev key
+  - **plugin-owned file logging** — every cordis log message lands in `<dshHome>/evolve/plugin.log` (JSONL, 0600, rotated), viewable via `/evolve log`; works with any launch method, no extra component to install
+
+**Planned / candidates** (low priority; driven by real usage)
+
+- automated rollback on benchmark rejection (human in the loop today)
+- CI matrix with Node 24
+- `/evolve plan` consuming the session trajectory (today: state + history + instructions)
+- gate-proposed archiving of long-unused entries (memory-layer phase 2)
+- per-session filtering for the file log
 
 ## License
 

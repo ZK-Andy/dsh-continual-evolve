@@ -7,11 +7,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
 [![Tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)]()
-[![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
+[![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
-> **状态：全部阶段完成。** Phase 2 补齐了真实系统提示词段：`prompt` 条目注入为 additive 提示词补充、`subagent` 条目注入为可复用委派规格——均封顶（每类 6 条、180 字符）、沿父会话链被子代理继承、store 为空时整段丢弃（零 token 成本）。之上，Phase 3 的评估矩阵执行器（host 平面 `subagents`、冻结运行时、结构化输出单元）驱动代码所有的计分板；非退化接受规则决定接受/拒绝，模型从不直接写聚合值。
+> **状态：全部阶段完成，进入长期维护。** Phase 1–3 交付了完整进化闭环：纯核心引擎、模型工具与 `/evolve` 命令、自动 review 门禁（回合间隔 + 压缩检查点、全局写入人工审批）、真实系统提示词注入（prompt 补充 + 委派规格，空 store 零 token 成本）、benchmark 驱动验证闭环（代码所有计分、非退化接受、rubric ACL）。此后插件随真实使用持续增强——记忆层（排序注入、轨迹引用、归档）、每安装实例独立的 rubric 密钥、插件自带文件日志。已交付与候选清单见"路线图"。
 
 ## 背景
 
@@ -219,10 +219,21 @@ pnpm lint           # oxlint src test
 
 ## 路线图
 
-- **Phase 1（完成）**：纯核心引擎——状态模型、校验、应用、回滚、提案解析；已测试。
-- **Phase 1b（完成）**：`evolve_*` 工具、`/evolve` 命令、`ctx.llm` 规划器；已装入 web profile。
-- **Phase 2（完成）**：✅ 自动 review 门禁（回合间隔；approved 且应用了编辑后会在会话中排出可见通知——没有任何沉淀是静默发生的）；✅ 压缩检查点（`compaction/start`）；✅ 全局人工审批门禁（userQuestions）；✅ 可执行技能（物化到 `$DSH_HOME/skills/`）；✅ prompt 条目注入为真实系统提示词段（additive、每类封顶 6 条、沿父链被子代理继承）；✅ subagent 条目渲染为委派接缝上的可复用委派规格。
-- **Phase 3（完成）**：✅ benchmark 驱动验证闭环——评估矩阵、代码所有计分板聚合、非退化接受规则、rubric 构造性隔离；✅ rubric ACL（明文永不着盘——AES-256-GCM 信封，仅评估执行器解密）；✅ 技能热挂载插件（`/evolve mount <skillId>`，实时 loader 条目，重启自动恢复）；✅ goal 驱动的进化轮次（`/evolve goal`——active goal 让 review 门禁每轮触发）。（未来：拒绝自动回滚。）
+**已交付**
+
+- **Phase 1–3（完成）**：纯核心引擎（状态模型、校验、应用、回滚、提案解析）→ `evolve_*` 工具 + `/evolve` 命令 + `ctx.llm` 规划器 → 自动 review 门禁（回合间隔 + 压缩检查点、approved 后可见通知）、全局人工审批、可执行技能、真实系统提示词注入（prompt 补充 + 委派规格，子代理沿父链继承）、benchmark 驱动验证闭环（代码所有计分板、非退化接受、rubric 构造性隔离）、技能热挂载插件、goal 驱动的进化轮次。
+- **2026-08 维护期增强（完成）**：
+  - **记忆层**——排序注入（相关度 + 新鲜度打分填满每类封顶）、轨迹引用（`metadata.sourceSession` + `sourceSeqs`，显示为 `src=session:seqs`）、归档/恢复（`/evolve archive <id>`，注入跳过归档条目）、global 感知门禁（拒绝 global 已覆盖主题的 local 重复沉淀）
+  - **每安装独立 rubric 密钥**——自动生成本地密钥文件（`<dshHome>/evolve/rubric.key`，0600）；不再有全世界公开的 dev 键
+  - **插件自带文件日志**——所有 cordis 日志消息写入 `<dshHome>/evolve/plugin.log`（JSONL、0600、自动轮转），`/evolve log` 查看；与启动方式无关、无需安装额外组件
+
+**规划中/候选**（低优先级；随真实使用驱动）
+
+- benchmark 拒绝时自动回滚（当前人工在环）
+- CI 增加 Node 24 矩阵
+- `/evolve plan` 接入会话轨迹（当前只吃 state + history + instructions）
+- 门禁提议归档"长期未命中"条目（记忆层二期）
+- 文件日志按会话过滤
 
 ## License
 
