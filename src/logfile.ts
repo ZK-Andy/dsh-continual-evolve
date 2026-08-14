@@ -15,6 +15,7 @@
  *   disturbs the agent loop
  */
 import type { Context } from "@deepseek-ai/cordis";
+import { Logger } from "@deepseek-ai/cordis";
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -59,25 +60,49 @@ export function logRecord(message: {
 	name: string;
 	args: readonly unknown[];
 }): string {
+	// `message` is the printf-rendered text (cordis handles %s/%o/...), so
+	// humans and machines both get a usable line; `args` keeps the raw
+	// payload for tooling. Errors render as their stack (JSON.stringify of
+	// an Error is just {}).
+	const rendered = Logger.format(
+		{
+			formatters: {
+				o: (value: unknown) => (value instanceof Error ? value.stack ?? value.message : JSON.stringify(value)),
+			},
+			maxLength: 10240,
+			export: () => {},
+		},
+		{
+		sn: 0,
+		ts: message.ts,
+		name: message.name,
+		type: message.type as "error" | "info" | "warn" | "debug",
+		level: 0,
+		args: message.args as unknown[],
+	});
 	return JSON.stringify({
 		ts: new Date(message.ts).toISOString(),
 		type: message.type,
 		name: message.name,
 		args: renderArgs(message.args),
+		message: rendered,
 	});
 }
 
 /** Human-readable rendering of one stored JSONL line (unparseable lines pass through). */
 export function formatLogLine(line: string): string {
 	try {
-		const record = JSON.parse(line) as { ts?: string; type?: string; name?: string; args?: unknown[] };
+		const record = JSON.parse(line) as { ts?: string; type?: string; name?: string; args?: unknown[]; message?: string };
 		const ts = record.ts ?? "";
 		const type = record.type ? `[${record.type[0]?.toUpperCase() ?? "?"}]` : "[?]";
 		const name = record.name ?? "";
-		const args = Array.isArray(record.args)
-			? record.args.map((arg) => (typeof arg === "object" && arg !== null ? JSON.stringify(arg) : String(arg))).join(" ")
-			: "";
-		return `${ts} ${type} ${name} ${args}`.trimEnd();
+		const body = typeof record.message === "string" && record.message.length > 0 ? record.message : "";
+		const args = body
+			? ""
+			: Array.isArray(record.args)
+				? record.args.map((arg) => (typeof arg === "object" && arg !== null ? JSON.stringify(arg) : String(arg))).join(" ")
+				: "";
+		return `${ts} ${type} ${name} ${body || args}`.trimEnd();
 	} catch {
 		return line;
 	}

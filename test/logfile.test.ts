@@ -38,6 +38,14 @@ describe("logRecord / renderArgs", () => {
 		expect(record["type"]).toBe("info");
 		expect(record["name"]).toBe("continual-evolve");
 		expect(record["args"]).toEqual(["mounted", { baseDir: "/tmp" }]);
+		expect(record["message"]).toBe('mounted {"baseDir":"/tmp"}');
+	});
+
+	it("renders printf placeholders (%o, %s) into the message field", () => {
+		const record = JSON.parse(
+			logRecord({ ts: 1, type: "info", name: "hmr", args: ["watching %o", []] }),
+		) as Record<string, unknown>;
+		expect(record["message"]).toBe("watching []");
 	});
 
 	it("renders errors with name, message, and stack", () => {
@@ -113,10 +121,17 @@ describe("registerFileLogger", () => {
 
 describe("formatLogLine", () => {
 	it("renders stored records back to human-readable lines", () => {
-		const line = logRecord(message({ type: "error", args: ["failed", new Error("x")] }));
+		const line = logRecord(message({ type: "error", args: ["failed", new Error("boom")] }));
 		const out = formatLogLine(line);
 		expect(out).toContain("[E] continual-evolve failed");
-		expect(out).toContain('"message":"x"');
+		expect(out).toContain("boom");
+	});
+
+	it("prefers the rendered message field over raw args", () => {
+		const line = logRecord({ ts: 1, type: "info", name: "hmr", args: ["watching %o", []] });
+		const out = formatLogLine(line);
+		expect(out).toContain("[I] hmr watching []");
+		expect(out).not.toContain("%o");
 	});
 
 	it("passes unparseable lines through unchanged", () => {
