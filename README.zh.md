@@ -226,12 +226,12 @@ pnpm lint           # oxlint src test
   - **记忆层**——排序注入（相关度 + 新鲜度打分填满每类封顶）、轨迹引用（`metadata.sourceSession` + `sourceSeqs`，显示为 `src=session:seqs`）、归档/恢复（`/evolve archive <id>`，注入跳过归档条目）、global 感知门禁（拒绝 global 已覆盖主题的 local 重复沉淀）
   - **每安装独立 rubric 密钥**——自动生成本地密钥文件（`<dshHome>/evolve/rubric.key`，0600）；不再有全世界公开的 dev 键
   - **插件自带文件日志**——所有 cordis 日志消息写入 `<dshHome>/evolve/plugin.log`（JSONL、0600、自动轮转），`/evolve log` 查看；与启动方式无关、无需安装额外组件
+  - **轨迹接地规划**——`/evolve plan`（及所有规划调用，含门禁 refine 步骤）现在读取会话轨迹：从调用方会话日志提取最近直接用户消息，作为 `<session_trajectory>` 块喂给规划器，提案以用户真实说过的话为依据（显式 `trajectory` 覆盖；空轨迹省略、零成本）
 
 **规划中/候选**（低优先级；随真实使用驱动）
 
 - benchmark 拒绝时自动回滚（当前人工在环）
 - CI 增加 Node 24 矩阵
-- `/evolve plan` 接入会话轨迹（当前只吃 state + history + instructions）
 - 门禁提议归档"长期未命中"条目（记忆层二期）
 - 文件日志按会话过滤
 

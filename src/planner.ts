@@ -12,6 +12,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementProposal, RefinementResult } from "./types.js";
 import { parseProposal } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
+import { recentUserText } from "./inject.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the /evolve continual harness subsystem.
 
@@ -26,6 +27,9 @@ Rules:
   skill = repeatable procedures (must carry a python reference {type:"python", import, callable}
   and an arguments object); subagent = reusable delegation roles.
 - Local edits are session-scoped; global edits persist across sessions.
+- Ground every edit in evidence: the session trajectory (recent direct user
+  messages) is provided when available; prefer edits backed by it over
+  speculation, and never invent preferences the user did not express.
 - Output JSON only, exactly this shape:
 {
   "summary": "one sentence",
@@ -52,6 +56,13 @@ export interface PlanOptions {
 	state: HarnessState;
 	history: readonly RefinementResult[];
 	instructions?: string;
+	/**
+	 * Explicit session-trajectory text (recent direct user messages). When
+	 * omitted, it is extracted from the agent's own session log via
+	 * `recentUserText` — the same extraction the injection ranking uses — so
+	 * every planning call is grounded in what the user actually said.
+	 */
+	trajectory?: string;
 	global?: boolean;
 	signal?: AbortSignal;
 	maxOutputTokens?: number;
@@ -66,10 +77,16 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		? "Requested scope: global. Only propose stable cross-session lessons, durable preferences, reusable skills/subagents, or explicitly project-qualified facts."
 		: "Requested scope: local. Prefer session-scoped edits for current task progress; global entries are read-only context — do not propose update/delete for them.";
 
+	// Ground the plan in the caller's session: the trajectory block is the
+	// most recent direct user messages ("" when none qualify — the block is
+	// then omitted entirely, keeping an empty trajectory zero-cost).
+	const trajectory = options.trajectory ?? recentUserText(agent);
+
 	const userPrompt = [
 		`<current_harness_state>\n${formatHarnessStateForPrompt(state)}\n</current_harness_state>`,
 		`<refinement_history>\n${historyForPrompt(history)}\n</refinement_history>`,
 		`<scope_policy>\n${scopeInstruction}\n</scope_policy>`,
+		trajectory ? `<session_trajectory>\n${trajectory}\n</session_trajectory>` : "",
 		options.instructions ? `<user_instructions>\n${options.instructions}\n</user_instructions>` : "",
 		"Return only JSON edits. If no useful edit is justified, return an empty edits array with a rationale.",
 	]

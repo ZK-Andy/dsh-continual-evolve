@@ -276,12 +276,12 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **memory layer** — ranked injection (relevance + recency scoring fills the per-kind cap), trajectory citations (`metadata.sourceSession` + `sourceSeqs`, shown as `src=session:seqs`), archive/unarchive (`/evolve archive <id>`, injection skips archived entries), global-aware gate (declines local duplicates of globally covered topics)
   - **per-installation rubric key** — auto-generated local key file (`<dshHome>/evolve/rubric.key`, 0600); no more publicly known dev key
   - **plugin-owned file logging** — every cordis log message lands in `<dshHome>/evolve/plugin.log` (JSONL, 0600, rotated), viewable via `/evolve log`; works with any launch method, no extra component to install
+  - **trajectory-grounded planning** — `/evolve plan` (and every planner call, including the gate's refine step) now reads the session trajectory: the caller's recent direct user messages are extracted from the session log and fed to the planner as a `<session_trajectory>` block, so proposals are grounded in what the user actually said (explicit `trajectory` overrides; empty trajectory is omitted at zero cost)
 
 **Planned / candidates** (low priority; driven by real usage)
 
 - automated rollback on benchmark rejection (human in the loop today)
 - CI matrix with Node 24
-- `/evolve plan` consuming the session trajectory (today: state + history + instructions)
 - gate-proposed archiving of long-unused entries (memory-layer phase 2)
 - per-session filtering for the file log
 
