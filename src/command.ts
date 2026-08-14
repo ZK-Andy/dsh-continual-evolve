@@ -9,7 +9,7 @@ import { ARCHIVED_AT_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { planWithLlm } from "./planner.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { requireGlobalApproval } from "./approval.js";
 import { saveHarnessState } from "./state.js";
 import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
@@ -19,6 +19,7 @@ import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loa
 import { decide, decisionReport, entryFromCells } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 import { entrySourceOf } from "./source.js";
+import { formatLogLine, pluginLogFilePath } from "./logfile.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
@@ -28,6 +29,7 @@ const USAGE = `Usage:
   /evolve plan [msg]       run the LLM planner against the current store
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
+  /evolve log [tail N]            show the recent plugin log (default 50 lines)
   /evolve export [global] <path>  backup a store to a JSON file
   /evolve import [global] <path>  restore a store from an export file
   /evolve mount <skillId>    hot-mount a skill entry as a live cordis plugin
@@ -193,6 +195,22 @@ async function executeEvolveCommand(
 					{ scope },
 				);
 				return success(renderResult(result));
+			}
+			case "log": {
+				const tailArg = rest[0] ?? "";
+				const tail = tailArg ? Math.min(Math.max(parsePositiveInt(tailArg, "tail"), 1), 1000) : 50;
+				const path = pluginLogFilePath(engine.baseDir);
+				if (!existsSync(path)) {
+					return success(`(no plugin log yet — ${path} is created on the first log message)`);
+				}
+				const lines = readFileSync(path, "utf8").trimEnd().split("\n").filter((line) => line.length > 0);
+				if (lines.length === 0) {
+					return success(`(empty plugin log: ${path})`);
+				}
+				const shown = lines.slice(-tail);
+				return success(
+					`plugin log ${path} (${lines.length} lines, showing last ${shown.length}):\n${shown.map(formatLogLine).join("\n")}`,
+				);
 			}
 			case "export": {
 				const { scope, rest: after } = scopeArg(rest);

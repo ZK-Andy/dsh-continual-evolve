@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-164%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -108,12 +108,13 @@ dsh-continual-evolve/
 │   ├── skill.ts          # skill materialization ($DSH_HOME/skills/)
 │   ├── mount.ts          # hot-mounted skill plugins (loader.create + boot restore)
 │   ├── benchmark.ts      # benchmark store
-│   ├── rubric.ts         # rubric ACL (AES-256-GCM envelopes)
+│   ├── rubric.ts         # rubric ACL (AES-256-GCM envelopes, auto-generated local key)
+│   ├── logfile.ts        # plugin-owned file logging (JSONL exporter + rotation)
 │   ├── score.ts          # code-owned aggregation + acceptance rule
 │   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
 │   ├── store.ts          # store layout + snapshots + result history
 │   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 18 files, 151 tests
+└── test/                 # 19 files, 164 tests
 ```
 
 ## In-session usage (after restart)
@@ -126,6 +127,7 @@ dsh-continual-evolve/
 /evolve plan [msg]       LLM planner against the current store
 /evolve archive <id>     hide an entry from injection (data kept, restorable)
 /evolve unarchive <id>   restore an archived entry
+/evolve log [tail N]     show the recent plugin log (default 50 lines)
 /evolve export <path>    backup the local store to JSON
 /evolve import <path>    restore a store from an export file
 /evolve mount <skillId>  hot-mount a skill entry as a live cordis plugin (tool: skill_<name>)
@@ -165,6 +167,23 @@ LangMem; no external services — everything is pure functions):
   global + local state with every entry's real scope labeled, so a topic
   already covered by a global entry is declined instead of being re-sedimented
   as a local duplicate.
+
+## Logging
+
+Plugin-owned file logging: every cordis log message (from this plugin or any
+other) is appended to `<dshHome>/evolve/plugin.log` as JSONL (0600, rotated to
+`plugin.log.1` past `logMaxBytes`). It works no matter how `dsh web` is
+launched — no extra component to install, no startup-script dependency.
+View the tail with `/evolve log [tail N]`, or read the file directly:
+
+```bash
+tail -f ~/.dsh/evolve/plugin.log          # live
+/evolve log 100                            # last 100 lines in the chat
+```
+
+For live output in a foreground terminal, the official
+`@deepseek-ai/cordis-plugin-logger-console` plugin can be added to the
+profile (optional; the file log remains the baseline that always exists).
 
 ## Benchmark-driven validation (Phase 3)
 
@@ -219,6 +238,9 @@ where the baseline was already perfect).
 | `requireGlobalApproval` | `true` | cross-session (global) edits ask the user for "批准" before applying |
 | `skillsDir` | `<dshHome>/skills` | root where skill entries materialize as SKILL.md bundles |
 | `rubricKey` | auto-generated local key file (`<dshHome>/evolve/rubric.key`, 0600) → dev fallback | passphrase for AES-256-GCM rubric encryption (benchmark rubrics never touch the disk in plaintext). When unset, the plugin generates a random per-installation key file on first use — every install gets its own key, no setup needed; `DSH_EVOLVE_RUBRIC_KEY` is the environment-variable override |
+| `logToFile` | `true` | write all cordis log messages to `<dshHome>/evolve/plugin.log` (JSONL, 0600) — plugin-owned logging works with any launch method, no extra component to install |
+| `logLevel` | `1` | file log level: 0=error, 1=info, 2=warn, 3=debug |
+| `logMaxBytes` | 5 MiB | rotate the log to `plugin.log.1` when it exceeds this size |
 
 Example (profile `cordis.patch.yml`):
 

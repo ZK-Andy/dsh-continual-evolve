@@ -6,7 +6,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-164%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -87,12 +87,13 @@ dsh-continual-evolve/
 │   ├── skill.ts          # 技能物化（$DSH_HOME/skills/）
 │   ├── mount.ts          # 技能热挂载插件（loader.create + 启动恢复）
 │   ├── benchmark.ts      # benchmark 存储
-│   ├── rubric.ts         # rubric ACL（AES-256-GCM 密文信封）
+│   ├── rubric.ts         # rubric ACL（AES-256-GCM 密文信封，自动生成本地密钥）
+│   ├── logfile.ts        # 插件自带文件日志（JSONL exporter + 轮转）
 │   ├── score.ts          # 代码所有聚合 + 接受规则
 │   ├── evaluate.ts       # 评估矩阵执行器（结构化输出子代理）
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 18 个文件，151 个测试
+└── test/                 # 19 个文件，164 个测试
 ```
 
 ## 会话内用法（安装后）
@@ -105,6 +106,7 @@ dsh-continual-evolve/
 /evolve plan [msg]            LLM 规划器
 /evolve archive <id>          归档条目——不再注入（数据保留，可恢复）
 /evolve unarchive <id>        恢复已归档条目
+/evolve log [tail N]          查看最近插件日志（默认 50 行）
 /evolve export <path>         备份局部 store 为 JSON
 /evolve import <path>         从导出文件恢复 store
 /evolve mount <skillId>       热挂载 skill 条目为实时 cordis 插件（工具：skill_<name>）
@@ -125,6 +127,17 @@ dsh-continual-evolve/
 - **轨迹引用**——每条新沉淀条目都会记录 `metadata.sourceSession` + `metadata.sourceSeqs`，指向它蒸馏自的直接用户消息（DSH 会话是事件溯源、seq 连续，引用可展开回持久会话日志）。列表显示 `src=<sessionId>:<seqs>`；旧条目不迁移也不报错。
 - **归档**——`/evolve archive <id>` 让条目不再注入（`metadata.archivedAt`，数据保留、与快照/回滚兼容），`/evolve unarchive <id>` 恢复。归档条目在 `evolve_list` 中标记 `[archived]`，注入跳过，溢出计数不含它们。
 - **global 感知门禁**——自动 review 门禁与规划器评审的是合并后的 global + local 状态，每条条目标注真实 scope；global 已覆盖的主题会被 declined，不再重复沉淀为 local 条目。
+
+## 日志
+
+插件自带文件日志：所有 cordis 日志消息（本插件或其他插件）追加写入 `<dshHome>/evolve/plugin.log`（JSONL、0600，超过 `logMaxBytes` 轮转到 `plugin.log.1`）。与 `dsh web` 的启动方式无关——无需安装额外组件、不依赖启动脚本。查看方式：
+
+```bash
+tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
+/evolve log 100                            # 在对话里看最近 100 行
+```
+
+前台终端想要实时输出时，可（可选）在 profile 加官方 `@deepseek-ai/cordis-plugin-logger-console` 插件；文件日志始终是默认存在的基础。
 
 ## benchmark 驱动验证（Phase 3）
 
@@ -167,6 +180,9 @@ dsh-continual-evolve/
 | `requireGlobalApproval` | `true` | 跨会话（全局）编辑需用户批准"批准"后才应用 |
 | `skillsDir` | `<dshHome>/skills` | 技能条目物化为 SKILL.md 包的根目录 |
 | `rubricKey` | 自动生成的本地密钥文件（`<dshHome>/evolve/rubric.key`，0600）→ dev 兜底 | rubric 加密（AES-256-GCM）口令：benchmark rubric 明文永不着盘。未配置时插件首次使用自动生成随机密钥文件——每台安装实例一把独立密钥，零配置；`DSH_EVOLVE_RUBRIC_KEY` 为环境变量覆盖项 |
+| `logToFile` | `true` | 所有 cordis 日志消息写入 `<dshHome>/evolve/plugin.log`（JSONL、0600）——插件自带日志，与启动方式无关、无需安装额外组件 |
+| `logLevel` | `1` | 文件日志级别：0=error、1=info、2=warn、3=debug |
+| `logMaxBytes` | 5 MiB | 超过该大小轮转到 `plugin.log.1` |
 
 示例（profile `cordis.patch.yml`）：
 

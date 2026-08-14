@@ -117,7 +117,9 @@ for await (const chunk of ctx.llm.stream({
 
 **原因**（源码实证，`vendor/cordis/src/logger.ts`）：cordis 4.x 的 logger 是 exporter 架构，**默认只有一个内存 buffer exporter**（1000 条，无处输出）——必须有人注册 exporter 才有输出。dsh web 没有接任何 exporter（无 logLevel 配置、无日志文件、无 /api/logs、GUI 无面板）。
 
-**修复**：在 profile 的 `cordis.patch.yml` 加载官方插件 `@deepseek-ai/cordis-plugin-logger-console`（仓库 `vendor/logger-console`，npm `1.0.1`）：
+**修复**（两层）：
+1. **插件自带文件日志（开箱即用，`src/logfile.ts`）**：插件加载时自动注册一个文件 exporter，所有 cordis 日志消息写入 `<baseDir>/evolve/plugin.log`（JSONL、0600、超 `logMaxBytes` 轮转到 `.1`）——与 `dsh web` 启动方式无关，无需安装任何额外组件。查看：`/evolve log [tail N]` 或 `tail -f ~/.dsh/evolve/plugin.log`。配置：`logToFile`（默认 true）、`logLevel`（默认 1=info；3=debug 全开）、`logMaxBytes`（默认 5MiB）。
+2. **可选：官方 console exporter 实时看**——前台终端想要实时输出时，在 profile 的 `cordis.patch.yml` 加官方插件 `@deepseek-ai/cordis-plugin-logger-console`（仓库 `vendor/logger-console`，npm `1.0.1`）：
 ```yaml
 - insert:
     - id: logger-console
@@ -127,5 +129,5 @@ for await (const chunk of ctx.llm.stream({
         levels:
           default: 3
 ```
-输出到 stdout（终端或 `restart-dsh.sh` 落盘 `~/.dsh/web-restart.log`，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。级别按 logger 名配 `levels`（3=debug 全开，2=warn+）。
+输出到 stdout（终端或重定向文件，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。级别按 logger 名配 `levels`（3=debug 全开，2=warn+）。
 
