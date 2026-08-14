@@ -85,3 +85,14 @@ for await (const chunk of ctx.llm.stream({
 })) { assembler.push(chunk); }
 ```
 
+## 8. 验证 system-prompt 注入：子代理摘录 + 会话日志双法；local store 按会话 id 分目录
+
+**症状**：改了 `src/inject.ts` 的 section 注入，不知道渲染结果对不对；或把验证条目写进了错误的会话 store。
+
+**原因**：`request/header` 事件的 `system` 字段经常为空（该字段非必填），从会话 JSONL 拿不到渲染后的系统提示词；且 `~/.dsh/evolve/local/` 按**会话 id**（`Agent.id`）分目录，GUI 会话 id 与直觉可能不符（本会话是 `session-8ba460f0`，旧会话是 `session-a3e5e3c0`），写错目录 = 注入看不到。
+
+**修复**（两个可靠方法）：
+- **子代理逐字摘录法**（最可靠）：委派一个子代理，让它把系统提示词里 `# Continual Harness — Prompt Notes` / `# Continual Harness — Delegation Specs` 段**逐字摘录**回来——子代理 assembly 实时发生（父链继承也一起验证），摘录与 `node` 直跑 `lib/inject.js` 的 `entriesSectionText` 模拟输出逐字对比
+- 会话归属确认：`zstd -dc ~/.dsh/sessions/--mnt-work-work--/<id>/session.jsonl.zstd` 看最近动作属于哪个会话；子代理会话的 header 有 `parentSession` 字段
+- 重启 dsh web 用 setsid 延迟脚本（避免 kill 父进程连坐）：先 `sleep` 再 `kill` 旧 PID 再 `nohup node ~/.local/bin/dsh web`，日志 `~/.dsh/web-restart.log`
+
