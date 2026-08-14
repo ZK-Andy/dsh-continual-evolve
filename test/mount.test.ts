@@ -94,7 +94,7 @@ describe("mountSkill / unmountSkill", () => {
 			const ctx = {} as never; // no loader -> package + ledger only
 			const record = await mountSkill(ctx, base, skillEntry());
 			expect(record.id).toBe("code_reviewer");
-			expect(record.entryId).toBe("evolve:code-reviewer");
+			expect(record.entryId).toBe("evolve-mount-code-reviewer");
 			expect(loadLedger(base).mounted).toHaveLength(1);
 			expect(existsSync(join(record.path, "index.js"))).toBe(true);
 		} finally {
