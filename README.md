@@ -121,6 +121,12 @@ dsh-continual-evolve/
 /evolve plan [msg]       LLM planner against the current store
 /evolve export <path>    backup the local store to JSON
 /evolve import <path>    restore a store from an export file
+/evolve mount <skillId>  hot-mount a skill entry as a live cordis plugin (tool: skill_<name>)
+/evolve mount list       list hot-mounted plugins (restored on boot)
+/evolve unmount <id>     remove a hot-mounted plugin
+/evolve goal             show the evolution goal (round-driven auto-review)
+/evolve goal <objective> create/update the evolution goal — while active, the review gate runs EVERY round
+/evolve goal done        complete the evolution goal
 ```
 
 Model-facing tools: `evolve_list`, `evolve_add`, `evolve_update`, `evolve_delete`, `evolve_rollback`.

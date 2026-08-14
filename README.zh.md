@@ -100,6 +100,12 @@ dsh-continual-evolve/
 /evolve export <path>         备份局部 store 为 JSON
 /evolve import <path>         从导出文件恢复 store
 /evolve plan [msg]            LLM 规划器
+/evolve mount <skillId>       热挂载 skill 条目为实时 cordis 插件（工具：skill_<name>）
+/evolve mount list            列出热挂载插件（重启自动恢复）
+/evolve unmount <id>          移除热挂载插件
+/evolve goal                  查看进化 goal（轮次驱动自动 review）
+/evolve goal <objective>      创建/更新进化 goal——active 时 review 门禁每轮触发
+/evolve goal done             完成进化 goal
 ```
 
 模型工具：`evolve_list`、`evolve_add`、`evolve_update`、`evolve_delete`、`evolve_rollback`。

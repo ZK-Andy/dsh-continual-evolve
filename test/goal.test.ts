@@ -26,8 +26,8 @@ function view(overrides: Partial<GoalViewLike> = {}): GoalViewLike {
 	};
 }
 
-function fakeCtx(goals: GoalServiceLike | undefined): { goals?: GoalServiceLike } {
-	return { goals };
+function fakeCtx(goals: GoalServiceLike | undefined): { get(name: string): unknown } {
+	return { get: (name) => (name === "goals" ? goals : undefined) };
 }
 
 const agent = { id: "session-x" } as unknown as Agent;

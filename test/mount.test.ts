@@ -101,7 +101,7 @@ describe("mountSkill / unmountSkill", () => {
 	it("writes the package and ledger without a loader service", async () => {
 		const base = makeBase();
 		try {
-			const ctx = {} as never; // no loader -> package + ledger only
+			const ctx = { get: () => undefined } as never; // no loader -> package + ledger only
 			const record = await mountSkill(ctx, base, skillEntry());
 			expect(record.id).toBe("code_reviewer");
 			expect(record.entryId).toBe("evolve-mount-code-reviewer");
@@ -115,7 +115,7 @@ describe("mountSkill / unmountSkill", () => {
 	it("remounting the same id replaces the ledger record", async () => {
 		const base = makeBase();
 		try {
-			const ctx = {} as never;
+			const ctx = { get: () => undefined } as never;
 			await mountSkill(ctx, base, skillEntry({ version: 1 }));
 			await mountSkill(ctx, base, skillEntry({ version: 2 }));
 			const ledger = loadLedger(base);
@@ -129,7 +129,7 @@ describe("mountSkill / unmountSkill", () => {
 	it("unmount removes the ledger record and the package", async () => {
 		const base = makeBase();
 		try {
-			const ctx = {} as never;
+			const ctx = { get: () => undefined } as never;
 			await mountSkill(ctx, base, skillEntry());
 			const record = await unmountSkill(ctx, base, "code_reviewer");
 			expect(record?.id).toBe("code_reviewer");
@@ -143,7 +143,7 @@ describe("mountSkill / unmountSkill", () => {
 	it("unmount of an unknown id is a no-op returning undefined", async () => {
 		const base = makeBase();
 		try {
-			const record = await unmountSkill({} as never, base, "nope");
+			const record = await unmountSkill({ get: () => undefined } as never, base, "nope");
 			expect(record).toBeUndefined();
 		} finally {
 			rmSync(base, { recursive: true, force: true });
