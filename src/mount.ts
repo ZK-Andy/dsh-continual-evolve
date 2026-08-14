@@ -140,11 +140,13 @@ export function renderParameters(entry: HarnessEntry): Record<string, unknown> {
  */
 export async function mountSkill(ctx: Context, baseDir: string, entry: HarnessEntry): Promise<MountRecord> {
 	const dir = renderMountPackage(baseDir, entry);
-	const entryId = `evolve:${skillNameOf(entry.id)}`;
+	const entryId = `evolve-mount-${skillNameOf(entry.id)}`;
 	const loader = (ctx as unknown as { loader?: LoaderLike }).loader;
 	if (loader) {
 		try {
-			await loader.create({ id: entryId, name: `evolve-skill-${skillNameOf(entry.id)}`, path: dir });
+			// EntryOptions: {id, name (module specifier), config, group, disabled, inject} —
+			// `name` is the specifier to import, so it points at the generated package dir.
+			await loader.create({ id: entryId, name: dir });
 		} catch (cause) {
 			throw new Error(`hot mount failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 		}
@@ -197,7 +199,7 @@ export async function restoreMounted(ctx: Context, baseDir: string): Promise<voi
 			continue;
 		}
 		try {
-			await loader.create({ id: record.entryId, name: `evolve-skill-${record.id.replace(/_/g, "-")}`, path: record.path });
+			await loader.create({ id: record.entryId, name: record.path });
 		} catch (cause) {
 			ctx.logger("continual-evolve").warn(
 				`mount restore failed for ${record.id}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -207,7 +209,7 @@ export async function restoreMounted(ctx: Context, baseDir: string): Promise<voi
 }
 
 interface LoaderLike {
-	create(options: { id: string; name: string; path: string }): Promise<string>;
+	create(options: { id: string; name: string }): Promise<string>;
 	remove(id: string): Promise<void>;
 }
 
