@@ -101,7 +101,9 @@ export function apply(ctx) {
     description: ${JSON.stringify(description)},
     parameters: ${JSON.stringify(parameters, null, 2)},
     output: {
-      schema: { type: "object", additionalProperties: false, properties: { text: { type: "string", required: true } } },
+      // No \`required\` on the string property: the direct-register value-schema
+      // path rejects it ("required is not supported on type string").
+      schema: { type: "object", additionalProperties: false, properties: { text: { type: "string" } } },
       render: (_args, value) => [{ type: "text", text: value?.text ?? "" }],
     },
     execute: async (args) => ({

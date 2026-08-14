@@ -64,6 +64,9 @@ describe("renderMountPackage", () => {
 		expect(source).toContain('"required": true');
 		expect(source).toContain("Python reference:");
 		expect(source).toContain("reviewer");
+		// output value-schema must not carry `required` on the string property
+		// (direct register rejects it — FAQ #2 compileValueSchema path).
+		expect(source).not.toContain('text: { type: "string", required: true }');
 	});
 });
 
