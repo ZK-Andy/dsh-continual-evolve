@@ -79,6 +79,7 @@ dsh-continual-evolve/
 │   ├── render.ts         # 有界提示词渲染
 │   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格）
 │   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计）
+│   ├── notify.ts         # 门禁可见性——approved 自动沉淀后发送可见通知
 │   ├── goal.ts           # goal 驱动的进化轮次（/evolve goal）
 │   ├── review.ts         # 门禁 LLM 判断
 │   ├── approval.ts       # 全局写入人工审批
@@ -150,6 +151,7 @@ dsh-continual-evolve/
 | `reviewIntervalTurns` | 6 | 距上次 review 满这么多回合时触发门禁 |
 | `maxReviewInputChars` | 40000 | 交给门禁的轨迹切片 |
 | `reviewBudgetTokens` | 4096 | 门禁调用的输出预算 |
+| `notifyOnAutoReview` | `true` | 门禁 approved 且实际应用了编辑后，在会话中排一条可见通知（沉淀条目 + 回滚命令） |
 | `requireGlobalApproval` | `true` | 跨会话（全局）编辑需用户批准"批准"后才应用 |
 | `skillsDir` | `<dshHome>/skills` | 技能条目物化为 SKILL.md 包的根目录 |
 | `rubricKey` | `DSH_EVOLVE_RUBRIC_KEY` → dev 键 | rubric 加密（AES-256-GCM）口令：benchmark rubric 明文永不着盘 |
@@ -191,7 +193,7 @@ pnpm lint           # oxlint src test
 
 - **Phase 1（完成）**：纯核心引擎——状态模型、校验、应用、回滚、提案解析；已测试。
 - **Phase 1b（完成）**：`evolve_*` 工具、`/evolve` 命令、`ctx.llm` 规划器；已装入 web profile。
-- **Phase 2（完成）**：✅ 自动 review 门禁（回合间隔）；✅ 压缩检查点（`compaction/start`）；✅ 全局人工审批门禁（userQuestions）；✅ 可执行技能（物化到 `$DSH_HOME/skills/`）；✅ prompt 条目注入为真实系统提示词段（additive、每类封顶 6 条、沿父链被子代理继承）；✅ subagent 条目渲染为委派接缝上的可复用委派规格。
+- **Phase 2（完成）**：✅ 自动 review 门禁（回合间隔；approved 且应用了编辑后会在会话中排出可见通知——没有任何沉淀是静默发生的）；✅ 压缩检查点（`compaction/start`）；✅ 全局人工审批门禁（userQuestions）；✅ 可执行技能（物化到 `$DSH_HOME/skills/`）；✅ prompt 条目注入为真实系统提示词段（additive、每类封顶 6 条、沿父链被子代理继承）；✅ subagent 条目渲染为委派接缝上的可复用委派规格。
 - **Phase 3（完成）**：✅ benchmark 驱动验证闭环——评估矩阵、代码所有计分板聚合、非退化接受规则、rubric 构造性隔离；✅ rubric ACL（明文永不着盘——AES-256-GCM 信封，仅评估执行器解密）；✅ 技能热挂载插件（`/evolve mount <skillId>`，实时 loader 条目，重启自动恢复）；✅ goal 驱动的进化轮次（`/evolve goal`——active goal 让 review 门禁每轮触发）。（未来：拒绝自动回滚。）
 
 ## License

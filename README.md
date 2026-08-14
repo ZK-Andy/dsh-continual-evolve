@@ -100,6 +100,7 @@ dsh-continual-evolve/
 │   ├── render.ts         # bounded prompt rendering
 │   ├── inject.ts         # dynamic system-prompt section (prompt notes + delegation specs)
 │   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit)
+│   ├── notify.ts         # gate visibility — follow-up notice after an approved auto-refine
 │   ├── goal.ts           # goal-driven evolution rounds (/evolve goal)
 │   ├── review.ts         # gate LLM judgment
 │   ├── approval.ts       # human approval for global edits
@@ -183,6 +184,7 @@ where the baseline was already perfect).
 | `reviewIntervalTurns` | 6 | gate runs when this many turns passed since the last review |
 | `maxReviewInputChars` | 40000 | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | 4096 | output budget for the gate call |
+| `notifyOnAutoReview` | `true` | after an approved gate run that applied edits, queue a visible follow-up notice in the session (persisted entries + rollback command) |
 | `requireGlobalApproval` | `true` | cross-session (global) edits ask the user for "批准" before applying |
 | `skillsDir` | `<dshHome>/skills` | root where skill entries materialize as SKILL.md bundles |
 | `rubricKey` | `DSH_EVOLVE_RUBRIC_KEY` → dev key | passphrase for AES-256-GCM rubric encryption (benchmark rubrics never touch the disk in plaintext) |
@@ -214,7 +216,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
 
 - **Phase 1 (done)**: pure-core engine — state model, validation, apply, rollback, proposal parsing; tested.
 - **Phase 1b (done)**: `evolve_*` tools, `/evolve` command, and the `ctx.llm` planner; installed into the web profile.
-- **Phase 2 (done)**: ✅ auto-refine review gate (turn-interval checkpoints); ✅ compaction checkpoint (`compaction/start`); ✅ global-scope approval gate (userQuestions); ✅ executable skills (materialize to `$DSH_HOME/skills/`); ✅ prompt entries injected as a real system-prompt section (additive, capped 6/kind, inherited by subagents through the parent chain); ✅ subagent entries rendered as reusable delegation specs at the delegation seam.
+- **Phase 2 (done)**: ✅ auto-refine review gate (turn-interval checkpoints; approved runs with applied edits surface a visible follow-up notice — nothing persists silently); ✅ compaction checkpoint (`compaction/start`); ✅ global-scope approval gate (userQuestions); ✅ executable skills (materialize to `$DSH_HOME/skills/`); ✅ prompt entries injected as a real system-prompt section (additive, capped 6/kind, inherited by subagents through the parent chain); ✅ subagent entries rendered as reusable delegation specs at the delegation seam.
 - **Phase 3 (done)**: ✅ benchmark-driven validation loop — evaluation matrix via the workflow engine, code-owned scoreboard aggregation, non-regressive acceptance rule, rubric isolation by construction; ✅ rubric ACL (rubric plaintext never on disk — AES-256-GCM envelopes, decrypted only by the evaluation runner); ✅ hot-mounted skill plugins (`/evolve mount <skillId>`, live loader entry, restored on boot); ✅ goal-driven evolution rounds (`/evolve goal` — an active goal drives the review gate every round). (Future: automated rollback on rejection.)
 
 ## License

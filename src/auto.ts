@@ -23,11 +23,14 @@ import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
 import { goalServiceOf } from "./goal.js";
+import { notifyAutoReview } from "./notify.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
 	maxInputChars: number;
 	budgetTokens: number;
+	/** Queue a visible follow-up notice after an approved, applied gate run. */
+	notifyOnAutoReview: boolean;
 }
 
 export interface GateState {
@@ -220,6 +223,13 @@ async function runGate(
 		`auto-review approved (${reason}) after ${turnsSinceLastReview} turns; auto-refine ${result.id}: ${result.appliedEdits.filter((e) => e.applied).length} applied, ${result.appliedEdits.filter((e) => !e.applied).length} failed — ${review.rationale}`,
 	);
 	record({ sessionId, reason, turnsSinceLastReview, outcome: "approved", rationale: review.rationale, refinementId: result.id });
+	// Visibility: tell the user what the gate just persisted. Only the
+	// turn-interval path notifies — a compaction-triggered gate must not wake
+	// the agent mid-compaction — and only when something was actually applied
+	// (a notice for zero edits is noise). Failure is contained in notifyAutoReview.
+	if (config.notifyOnAutoReview && reason === "turn_interval" && result.appliedEdits.some((e) => e.applied)) {
+		notifyAutoReview(ctx, agent, result, turnsSinceLastReview);
+	}
 }
 
 async function readTrajectory(ctx: Context, agent: Agent, maxChars: number): Promise<string> {

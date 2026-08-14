@@ -40,6 +40,8 @@ export const Config = z.object({
 	maxReviewInputChars: z.natural().default(40000),
 	/** Output budget for the cheap gate call. */
 	reviewBudgetTokens: z.natural().default(4096),
+	/** After an approved gate run with applied edits, queue a visible follow-up notice. */
+	notifyOnAutoReview: z.boolean().default(true),
 	/** Cross-session (global) edits require an explicit human approval. */
 	requireGlobalApproval: z.boolean().default(true),
 	/** Skills root for materialized skill entries; defaults to <dshHome>/skills. */
@@ -56,6 +58,7 @@ export interface EvolveConfig {
 	reviewIntervalTurns?: number;
 	maxReviewInputChars?: number;
 	reviewBudgetTokens?: number;
+	notifyOnAutoReview?: boolean;
 	requireGlobalApproval?: boolean;
 	skillsDir?: string;
 	rubricKey?: string;
@@ -113,6 +116,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			intervalTurns: config.reviewIntervalTurns ?? 6,
 			maxInputChars: config.maxReviewInputChars ?? 40000,
 			budgetTokens: config.reviewBudgetTokens ?? 4096,
+			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
 		});
 		ctx.logger("continual-evolve").info(
 			`continual-evolve auto-review enabled (every ${config.reviewIntervalTurns ?? 6} turns)`,
