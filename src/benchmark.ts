@@ -16,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { encryptRubric, DEV_RUBRIC_KEY, deriveKey } from "./rubric.js";
+import type { EvolutionEngine } from "./service.js";
 
 export interface BenchmarkCase {
 	id: string;
@@ -55,6 +56,40 @@ export interface Scoreboard {
 	reference?: EvaluationEntry;
 	candidates: EvaluationEntry[];
 	decisions: { candidateLabel: string; refinementId?: string; accepted: boolean; reasons: string[]; createdAt: string }[];
+}
+
+export interface AutoRollbackOutcome {
+	rolledBack: boolean;
+	message: string;
+}
+
+/**
+ * Close the acceptance loop: when the code-owned decision rejects a
+ * candidate refinement, revert it deterministically. The rollback is the
+ * same engine path as `/evolve rollback` (inverse edits rebuilt from the
+ * applied result — no LLM re-guessing), so it snapshots, versions, and
+ * audits like any other mutation. Failures (e.g. the refinement belongs to
+ * another session's history) are reported, never thrown: the command shows
+ * the manual fallback instead.
+ */
+export function rollbackRejectedCandidate(
+	engine: EvolutionEngine,
+	sessionId: string | undefined,
+	candidateId: string,
+): AutoRollbackOutcome {
+	try {
+		const result = engine.rollback("local", sessionId, candidateId);
+		const applied = result.appliedEdits.filter((edit) => edit.applied).length;
+		return {
+			rolledBack: true,
+			message: `auto-rollback: reverted refinement ${candidateId} — ${applied} edits restored to the pre-refinement snapshot`,
+		};
+	} catch (cause) {
+		return {
+			rolledBack: false,
+			message: `auto-rollback failed: ${cause instanceof Error ? cause.message : String(cause)} — roll back manually with /evolve rollback <${candidateId}>`,
+		};
+	}
 }
 
 export function benchmarkDir(baseDir: string, bid: string): string {

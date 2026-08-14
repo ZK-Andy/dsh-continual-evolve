@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { decryptRubric, deriveKey, DEV_RUBRIC_KEY } from "../src/rubric.js";
+import { createEvolutionEngine } from "../src/service.js";
 import {
 	addCase,
 	createBenchmark,
@@ -13,6 +14,7 @@ import {
 	listCases,
 	loadBenchmark,
 	loadScoreboard,
+	rollbackRejectedCandidate,
 	saveScoreboard,
 	sanitizeId,
 } from "../src/benchmark.js";
@@ -91,6 +93,65 @@ describe("benchmark store", () => {
 			const reloaded = loadScoreboard(base, def.id);
 			expect(reloaded.decisions).toHaveLength(1);
 			expect(reloaded.decisions[0]?.accepted).toBe(false);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("rollbackRejectedCandidate", () => {
+	it("reverts a rejected refinement through the engine rollback path", () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const result = engine.apply("local", "session-x", {
+				summary: "candidate",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Doomed entry", content: "value" }],
+			});
+			expect(engine.load("local", "session-x").entries.memory["doomed_entry"]).toBeDefined();
+			const outcome = rollbackRejectedCandidate(engine, "session-x", result.id);
+			expect(outcome.rolledBack).toBe(true);
+			expect(outcome.message).toContain("auto-rollback");
+			expect(outcome.message).toContain(result.id);
+			expect(engine.load("local", "session-x").entries.memory["doomed_entry"]).toBeUndefined();
+			// the rollback itself is audited as a new refinement
+			expect(engine.history("local", "session-x")).toHaveLength(2);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("reports instead of throwing when the refinement is not in this session's history", () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const outcome = rollbackRejectedCandidate(engine, "session-x", "evolve_ghost");
+			expect(outcome.rolledBack).toBe(false);
+			expect(outcome.message).toMatch(/auto-rollback failed/);
+			expect(outcome.message).toMatch(/not found/);
+			expect(outcome.message).toMatch(/\/evolve rollback/);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("scopes the rollback to the session the candidate refinement belongs to", () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const result = engine.apply("local", "session-a", {
+				summary: "candidate",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Only in A", content: "value" }],
+			});
+			// same refinement id, different session: not found there
+			const wrongSession = rollbackRejectedCandidate(engine, "session-b", result.id);
+			expect(wrongSession.rolledBack).toBe(false);
+			// and it still exists in session-a
+			expect(engine.load("local", "session-a").entries.memory["only_in_a"]).toBeDefined();
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}

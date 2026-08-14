@@ -15,7 +15,7 @@ import { saveHarnessState } from "./state.js";
 import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
 import { blockEvolutionGoal, completeEvolutionGoal, goalServiceOf, goalStatusText, upsertEvolutionGoal } from "./goal.js";
 import { appendResult, storePaths } from "./store.js";
-import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadScoreboard, saveScoreboard } from "./benchmark.js";
+import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadScoreboard, rollbackRejectedCandidate, saveScoreboard } from "./benchmark.js";
 import { decide, decisionReport, entryFromCells } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 import { entrySourceOf } from "./source.js";
@@ -45,6 +45,8 @@ export interface CommandGateOptions {
 
 export interface CommandRuntimeOptions {
 	rubricKey: Buffer;
+	/** When a benchmark decision rejects a candidate, roll the refinement back automatically. */
+	autoRollbackOnReject: boolean;
 }
 
 export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
@@ -510,6 +512,10 @@ async function executeBenchmarkCommand(
 					lines.push(...decisionReport(board.reference, entry, decision));
 					if (!decision.accepted) {
 						lines.push(`Consider rolling back the candidate: /evolve rollback <${candidateId}>`);
+						if (runtime.autoRollbackOnReject) {
+							const outcome = rollbackRejectedCandidate(engine, sessionId, candidateId);
+							lines.push(outcome.message);
+						}
 					}
 				}
 			} else {

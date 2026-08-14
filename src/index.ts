@@ -55,6 +55,8 @@ export const Config = z.object({
 	logLevel: z.natural().default(1),
 	/** Rotate the file log when it exceeds this many bytes. */
 	logMaxBytes: z.natural().default(5 * 1024 * 1024),
+	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
+	autoRollbackOnReject: z.boolean().default(true),
 });
 
 /** Structurally typed resolved config (loader passes the validated object). */
@@ -75,6 +77,8 @@ export interface EvolveConfig {
 	logLevel?: number;
 	/** Rotate the file log when it exceeds this many bytes. */
 	logMaxBytes?: number;
+	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
+	autoRollbackOnReject?: boolean;
 }
 
 export interface EvolutionService {
@@ -119,6 +123,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 	registerEvolveTools(ctx, engine, gate);
 	registerEvolveCommand(ctx, engine, gate, {
 		rubricKey: resolveRubricKey(baseDir, config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m)),
+		autoRollbackOnReject: config.autoRollbackOnReject ?? true,
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in
