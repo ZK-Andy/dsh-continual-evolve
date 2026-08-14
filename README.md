@@ -281,9 +281,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **automatic rollback on benchmark rejection** — the acceptance loop is closed: when the code-owned decision rejects a candidate, the refinement is reverted automatically through the same engine path as `/evolve rollback` (deterministic inverse edits, snapshotted and audited; configurable via `autoRollbackOnReject`, on by default). Failures report the manual fallback instead of throwing
   - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
 
-**Planned / candidates** (low priority; driven by real usage)
-
-- CI matrix with Node 24
+The planned/candidates list is empty for now — future work is driven by real usage.
 
 ## License
 

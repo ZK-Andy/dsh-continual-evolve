@@ -231,9 +231,7 @@ pnpm lint           # oxlint src test
   - **benchmark 拒绝自动回滚**——接受闭环已闭合：代码所有决策拒绝候选时，refinement 经与 `/evolve rollback` 相同的引擎路径自动撤销（确定性逆编辑、快照 + 审计；`autoRollbackOnReject` 配置，默认开）。失败时给出手动回滚提示而不是抛错
   - **日志按会话过滤**——`/evolve log [tail N] [session <id>]` 只保留提及指定会话 id 的行（精确 token 匹配，取自渲染消息与原始 args）；门禁记录的行现在携带会话 id
 
-**规划中/候选**（低优先级；随真实使用驱动）
-
-- CI 增加 Node 24 矩阵
+规划中/候选清单暂时为空——后续工作随真实使用驱动。
 
 ## License
 
