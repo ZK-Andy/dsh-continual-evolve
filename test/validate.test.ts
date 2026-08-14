@@ -36,6 +36,16 @@ describe("validateEdit", () => {
 		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", title: "t", content: "" }), undefined)).toMatch(/title and content/);
 	});
 
+	it("accepts archive with only kind + id, rejects it without id", () => {
+		expect(validateEdit(edit({ action: "archive", kind: "memory", id: "x" }), undefined)).toBeUndefined();
+		expect(validateEdit(edit({ action: "archive", kind: "memory" }), undefined)).toMatch(/requires id/);
+	});
+
+	it("rejects archive of the base system prompt", () => {
+		const e = edit({ action: "archive", kind: "prompt", id: BASE_SYSTEM_PROMPT_ID });
+		expect(validateEdit(e, undefined)).toMatch(/not editable/);
+	});
+
 	it("accepts a valid memory create", () => {
 		expect(validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c" }), undefined)).toBeUndefined();
 	});

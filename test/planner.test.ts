@@ -9,7 +9,15 @@ import { describe, expect, it } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import type { HarnessState } from "../src/types.js";
 import type { StreamChunk } from "@deepseek-ai/dsh-llm";
-import { planWithLlm, type PlanOptions } from "../src/planner.js";
+import { PLANNER_SYSTEM_PROMPT, planWithLlm, type PlanOptions } from "../src/planner.js";
+
+describe("PLANNER_SYSTEM_PROMPT", () => {
+	it("tells the planner to propose archive instead of delete for stale entries", () => {
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/archive/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/stale/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/instead of\s+"delete"/i);
+	});
+});
 
 const emptyState: HarnessState = {
 	schema: 1,

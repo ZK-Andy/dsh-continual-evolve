@@ -13,7 +13,7 @@
 export type RefinementKind = "prompt" | "memory" | "skill" | "subagent";
 
 /** How an entry changes. */
-export type RefinementAction = "create" | "update" | "delete";
+export type RefinementAction = "create" | "update" | "delete" | "archive";
 
 /** Where an entry lives: session-scoped or cross-session. */
 export type HarnessScope = "local" | "global";

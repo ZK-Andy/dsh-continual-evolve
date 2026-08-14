@@ -6,7 +6,7 @@
  */
 import type { PythonReference, RefinementEdit, RefinementKind } from "./types.js";
 
-const ACTIONS = new Set(["create", "update", "delete"]);
+const ACTIONS = new Set(["create", "update", "delete", "archive"]);
 const KINDS = new Set<RefinementKind>(["prompt", "memory", "skill", "subagent"]);
 export const BASE_SYSTEM_PROMPT_ID = "base_system_prompt";
 
@@ -23,6 +23,11 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 	}
 	if (edit.action !== "create" && !edit.id) {
 		return `${edit.action} requires id`;
+	}
+	// Archive only names an existing entry: no title/content payload, and the
+	// base system prompt stays immutable under every action.
+	if (edit.action === "archive") {
+		return undefined;
 	}
 	if (edit.action !== "delete" && (!edit.title || !edit.content)) {
 		return `${edit.action} requires title and content`;

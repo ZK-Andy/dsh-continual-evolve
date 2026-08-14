@@ -277,12 +277,12 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **per-installation rubric key** — auto-generated local key file (`<dshHome>/evolve/rubric.key`, 0600); no more publicly known dev key
   - **plugin-owned file logging** — every cordis log message lands in `<dshHome>/evolve/plugin.log` (JSONL, 0600, rotated), viewable via `/evolve log`; works with any launch method, no extra component to install
   - **trajectory-grounded planning** — `/evolve plan` (and every planner call, including the gate's refine step) now reads the session trajectory: the caller's recent direct user messages are extracted from the session log and fed to the planner as a `<session_trajectory>` block, so proposals are grounded in what the user actually said (explicit `trajectory` overrides; empty trajectory is omitted at zero cost)
+  - **gate-proposed archiving** — stale entries are a first-class refine target: the planner can emit `action: "archive"` (kind + id only), which stamps `metadata.archivedAt` through the normal apply path — snapshot, version bump, audit event, and a deterministic rollback inverse that restores the pre-archive state. Archive hides from injection but never deletes; re-archiving an archived entry is rejected, and the base system prompt stays immutable
 
 **Planned / candidates** (low priority; driven by real usage)
 
 - automated rollback on benchmark rejection (human in the loop today)
 - CI matrix with Node 24
-- gate-proposed archiving of long-unused entries (memory-layer phase 2)
 - per-session filtering for the file log
 
 ## License

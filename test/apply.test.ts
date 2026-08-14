@@ -223,6 +223,86 @@ describe("applyRefinementProposal", () => {
 	});
 });
 
+describe("archive action", () => {
+	it("stamps archivedAt, bumps version, and keeps all other fields", () => {
+		const state = stateWith({ id: "x", title: "old" });
+		const before = state.entries.memory["x"]!;
+		const result = applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "archive", kind: "memory", id: "x" }],
+			},
+			{ id: "refine_archive_1" },
+		);
+		const after = state.entries.memory["x"];
+		expect(after?.metadata.archivedAt).toBeDefined();
+		expect(after?.version).toBe(before.version + 1);
+		expect(after?.title).toBe("old");
+		expect(after?.content).toBe("old content");
+		expect(after?.created_at).toBe(before.created_at);
+		expect(result.appliedEdits[0]?.applied).toBe(true);
+		expect(result.appliedEdits[0]?.before?.metadata.archivedAt).toBeUndefined();
+	});
+
+	it("fails when the entry does not exist", () => {
+		const state = emptyHarnessState();
+		const result = applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "archive", kind: "memory", id: "missing" }],
+			},
+			{ id: "refine_archive_2" },
+		);
+		expect(result.appliedEdits[0]?.applied).toBe(false);
+		expect(result.appliedEdits[0]?.error).toMatch(/entry not found/);
+	});
+
+	it("fails on a second archive (no silent no-op)", () => {
+		const state = stateWith({ id: "x", title: "old" });
+		const archiveOnce = (refinementId: string) =>
+			applyRefinementProposal(
+				state,
+				{
+					summary: "s",
+					rationale: "r",
+					expectedOutcome: "o",
+					edits: [{ action: "archive", kind: "memory", id: "x" }],
+				},
+				{ id: refinementId },
+			);
+		expect(archiveOnce("refine_archive_3").appliedEdits[0]?.applied).toBe(true);
+		const second = archiveOnce("refine_archive_4");
+		expect(second.appliedEdits[0]?.applied).toBe(false);
+		expect(second.appliedEdits[0]?.error).toMatch(/already archived/);
+	});
+
+	it("rolls back by restoring the pre-archive snapshot (stamp cleared)", () => {
+		const state = stateWith({ id: "x", title: "old" });
+		const applied = applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "archive", kind: "memory", id: "x" }],
+			},
+			{ id: "refine_archive_5" },
+		);
+		expect(state.entries.memory["x"]?.metadata.archivedAt).toBeDefined();
+		const inverse = rollbackProposal(applied);
+		expect(inverse.edits[0]?.action).toBe("update");
+		applyRefinementProposal(state, inverse, { id: "refine_archive_6" });
+		expect(state.entries.memory["x"]?.metadata.archivedAt).toBeUndefined();
+		expect(state.entries.memory["x"]?.version).toBe(3);
+	});
+});
+
 describe("rollbackProposal", () => {
 	it("restores an updated entry to its before snapshot", () => {
 		const state = stateWith({ id: "x", title: "old" });

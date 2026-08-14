@@ -30,6 +30,10 @@ Rules:
 - Ground every edit in evidence: the session trajectory (recent direct user
   messages) is provided when available; prefer edits backed by it over
   speculation, and never invent preferences the user did not express.
+- Stale entries (superseded by newer ones, never referenced in recent
+  trajectories, obsolete facts): propose action "archive" instead of
+  "delete" — archive hides the entry from injection while keeping its data
+  restorable; it requires only kind + id.
 - Output JSON only, exactly this shape:
 {
   "summary": "one sentence",

@@ -227,12 +227,12 @@ pnpm lint           # oxlint src test
   - **每安装独立 rubric 密钥**——自动生成本地密钥文件（`<dshHome>/evolve/rubric.key`，0600）；不再有全世界公开的 dev 键
   - **插件自带文件日志**——所有 cordis 日志消息写入 `<dshHome>/evolve/plugin.log`（JSONL、0600、自动轮转），`/evolve log` 查看；与启动方式无关、无需安装额外组件
   - **轨迹接地规划**——`/evolve plan`（及所有规划调用，含门禁 refine 步骤）现在读取会话轨迹：从调用方会话日志提取最近直接用户消息，作为 `<session_trajectory>` 块喂给规划器，提案以用户真实说过的话为依据（显式 `trajectory` 覆盖；空轨迹省略、零成本）
+  - **门禁提议归档**——过时条目是一等 refine 目标：规划器可输出 `action: "archive"`（仅需 kind + id），代码经正常 apply 通道盖 `metadata.archivedAt` 戳——快照、版本 +1、审计事件、以及恢复归档前状态的确定性回滚逆编辑。归档隐藏于注入但绝不删除；重复归档被拒绝；基础系统提示词保持不可变
 
 **规划中/候选**（低优先级；随真实使用驱动）
 
 - benchmark 拒绝时自动回滚（当前人工在环）
 - CI 增加 Node 24 矩阵
-- 门禁提议归档"长期未命中"条目（记忆层二期）
 - 文件日志按会话过滤
 
 ## License

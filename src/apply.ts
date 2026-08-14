@@ -13,7 +13,7 @@ import type {
 	RefinementProposal,
 	RefinementResult,
 } from "./types.js";
-import { SOURCE_SESSION_KEY, SOURCE_SEQS_KEY, cloneEntry, slug } from "./types.js";
+import { SOURCE_SESSION_KEY, SOURCE_SEQS_KEY, ARCHIVED_AT_KEY, cloneEntry, isArchived, slug } from "./types.js";
 import { entryChangedSince } from "./state.js";
 import { validateEdit } from "./validate.js";
 
@@ -72,6 +72,33 @@ export function applyRefinementProposal(
 			delete records[id];
 			touched.add(entryKey);
 			appliedEdits.push({ ...edit, id, before, applied: true });
+			continue;
+		}
+
+		if (edit.action === "archive") {
+			// Archive hides an entry from injection but never deletes it:
+			// metadata.archivedAt is stamped through the normal apply path, so
+			// the edit gets a before/after snapshot, a version bump, and a
+			// rollback inverse like any other edit (restoring the snapshot
+			// clears the stamp). Idempotency is explicit: re-archiving an
+			// already-archived entry is an error, not a silent no-op.
+			if (!before) {
+				appliedEdits.push({ ...edit, id, applied: false, error: "entry not found" });
+				continue;
+			}
+			if (isArchived(before)) {
+				appliedEdits.push({ ...edit, id, before, applied: false, error: "entry already archived" });
+				continue;
+			}
+			const after: HarnessEntry = {
+				...before,
+				metadata: { ...before.metadata, [ARCHIVED_AT_KEY]: now },
+				updated_at: now,
+				version: before.version + 1,
+			};
+			records[id] = after;
+			touched.add(entryKey);
+			appliedEdits.push({ ...edit, id, before, after: cloneEntry(after) ?? after, applied: true });
 			continue;
 		}
 

@@ -11,6 +11,12 @@ describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/already covered\s+by a global entry/i);
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/decline/i);
 	});
+
+	it("tells the gate stale entries are a valid refine target (archive, not delete)", () => {
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/stale/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/archive/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/rather than delete/i);
+	});
 });
 
 describe("parseAutoRefineReview", () => {

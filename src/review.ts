@@ -52,6 +52,11 @@ in the rationale that the topic is already covered globally.
 Reject one-off noise, unsupported hypotheses, transient tool outputs, and
 requests that carry no reusable content.
 
+Stale local entries (superseded, long-unused, obsolete facts) are a valid
+refine target: approve with instructions naming the entry ids, and tell the
+planner to archive them (archive hides from injection, data stays restorable)
+rather than delete.
+
 Return JSON only:
 {
   "shouldRefine": true|false,
