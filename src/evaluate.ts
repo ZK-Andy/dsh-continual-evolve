@@ -17,7 +17,7 @@ import type { BenchmarkCase, CellScore } from "./benchmark.js";
 import { mapPool } from "./pool.js";
 import { decryptRubric, deriveKey, DEV_RUBRIC_KEY } from "./rubric.js";
 
-/** Key used when the caller did not resolve one: mirrors resolveRubricKey's dev fallback. */
+/** Key used when the caller did not resolve one: mirrors resolveRubricKey's last-resort dev fallback. */
 function devRubricKey(): Buffer {
 	return deriveKey(DEV_RUBRIC_KEY);
 }

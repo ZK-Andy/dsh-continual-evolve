@@ -103,3 +103,29 @@ for await (const chunk of ctx.llm.stream({
 - 会话归属确认：`zstd -dc ~/.dsh/sessions/--mnt-work-work--/<id>/session.jsonl.zstd` 看最近动作属于哪个会话；子代理会话的 header 有 `parentSession` 字段
 - 重启 dsh web 用 setsid 延迟脚本（避免 kill 父进程连坐）：先 `sleep` 再 `kill` 旧 PID 再 `nohup node ~/.local/bin/dsh web`，日志 `~/.dsh/web-restart.log`
 
+## 9. 启动日志出现 `[W] rubric encryption: ... using the development key`（dev key 是什么）
+
+**症状**：dsh web 启动时（接了 console exporter 后可见）警告 rubric 加密在用 development key。
+
+**原因**：rubric ACL 用 AES-256-GCM 加密评分标准，明文永不着盘。密钥解析优先级（`src/rubric.ts` `resolveRubricKey`）：① 插件配置 `rubricKey` → ② 环境变量 `DSH_EVOLVE_RUBRIC_KEY` → ③ **本地密钥文件** → ④ dev 兜底。老版本没有第 ③ 档，未配置时直接回退到代码里写死的公开 dev key——所有不配置的用户共用同一把全世界公开的钥匙，密文形同虚设（虚假安全感），而且每个新用户都会看到一条需要自己搞懂的警告（2026-08-15 真实教训：方案讨论不能只考虑本机开发者，插件是公开的，要面向所有安装者）。
+
+**修复**（v0.1.x 起）：第 ③ 档自动生成本地密钥文件 `<baseDir>/evolve/rubric.key`（0600，每台安装实例随机独立密钥）——**零配置、无警告、无公开钥匙**；config/env 保留为高级覆盖项，dev key 仅在密钥文件读写失败（病态环境）时兜底。注意：**换密钥（删文件或配置 config/env）后旧密文 rubric 无法解密**，需重新 `/evolve benchmark add-case`。
+
+## 10. cordis logger 不输出任何日志（`ctx.logger` 静默）
+
+**症状**：插件里 `ctx.logger(...)` 的 info/warn/error 全都不出现，调试只能看源码猜或临时埋点。
+
+**原因**（源码实证，`vendor/cordis/src/logger.ts`）：cordis 4.x 的 logger 是 exporter 架构，**默认只有一个内存 buffer exporter**（1000 条，无处输出）——必须有人注册 exporter 才有输出。dsh web 没有接任何 exporter（无 logLevel 配置、无日志文件、无 /api/logs、GUI 无面板）。
+
+**修复**：在 profile 的 `cordis.patch.yml` 加载官方插件 `@deepseek-ai/cordis-plugin-logger-console`（仓库 `vendor/logger-console`，npm `1.0.1`）：
+```yaml
+- insert:
+    - id: logger-console
+      name: '@deepseek-ai/cordis-plugin-logger-console'
+      config:
+        colors: false
+        levels:
+          default: 3
+```
+输出到 stdout（终端或 `restart-dsh.sh` 落盘 `~/.dsh/web-restart.log`，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。级别按 logger 名配 `levels`（3=debug 全开，2=warn+）。
+

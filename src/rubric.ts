@@ -11,13 +11,30 @@
  * Key resolution (first match wins):
  *   1. plugin config `rubricKey`
  *   2. environment `DSH_EVOLVE_RUBRIC_KEY`
- *   3. a fixed development key (warns; production deployments should set one)
+ *   3. a per-installation local key file at `<baseDir>/evolve/rubric.key`
+ *      (auto-generated with 0600 permissions on first use — every install
+ *      gets its own random key, so no user setup is needed and no publicly
+ *      known key protects anyone's rubrics)
+ *   4. a fixed development key as a last-resort fallback when the key file
+ *      can neither be read nor written (warns; only reachable in
+ *      pathological environments, since the plugin's stores live under the
+ *      same directory)
  * The key string is derived to 32 bytes with SHA-256, so any passphrase works.
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-/** The development fallback key — deployments should configure a real one. */
+/** The development fallback key — reachable only when the local key file is unusable. */
 export const DEV_RUBRIC_KEY = "dsh-continual-evolve-dev-key";
+
+/** Name of the per-installation key file under `<baseDir>/evolve/`. */
+export const RUBRIC_KEY_FILE_NAME = "rubric.key";
+
+/** Full path of the per-installation rubric key file. */
+export function rubricKeyFilePath(baseDir: string): string {
+	return join(baseDir, "evolve", RUBRIC_KEY_FILE_NAME);
+}
 
 export interface RubricCipher {
 	iv: string;
@@ -33,7 +50,12 @@ export function deriveKey(passphrase: string): Buffer {
 }
 
 /** Resolve the effective rubric key with the documented precedence. */
-export function resolveRubricKey(configKey: string | undefined, env: NodeJS.ProcessEnv = process.env, warn?: (message: string) => void): Buffer {
+export function resolveRubricKey(
+	baseDir: string,
+	configKey: string | undefined,
+	env: NodeJS.ProcessEnv = process.env,
+	warn?: (message: string) => void,
+): Buffer {
 	if (configKey && configKey.length > 0) {
 		return deriveKey(configKey);
 	}
@@ -41,8 +63,33 @@ export function resolveRubricKey(configKey: string | undefined, env: NodeJS.Proc
 	if (envKey && envKey.length > 0) {
 		return deriveKey(envKey);
 	}
-	warn?.("rubric encryption: no rubricKey configured and DSH_EVOLVE_RUBRIC_KEY unset — using the development key");
-	return deriveKey(DEV_RUBRIC_KEY);
+	return loadOrCreateLocalKey(baseDir, warn);
+}
+
+/**
+ * Load the per-installation key file, generating a fresh random key (0600)
+ * on first use. Falls back to the development key with a warning when the
+ * file can neither be read nor written.
+ */
+function loadOrCreateLocalKey(baseDir: string, warn?: (message: string) => void): Buffer {
+	const path = rubricKeyFilePath(baseDir);
+	try {
+		if (existsSync(path)) {
+			const content = readFileSync(path, "utf8").trim();
+			if (content.length > 0) {
+				return deriveKey(content);
+			}
+		}
+		const key = randomBytes(32).toString("hex");
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, `${key}\n`, { encoding: "utf8", mode: 0o600 });
+		return deriveKey(key);
+	} catch (cause) {
+		warn?.(
+			`rubric encryption: cannot read/write the local key file (${path}): ${cause instanceof Error ? cause.message : String(cause)} — using the development key`,
+		);
+		return deriveKey(DEV_RUBRIC_KEY);
+	}
 }
 
 /** Encrypt rubric plaintext into the `v1:` envelope (never written raw). */

@@ -104,7 +104,9 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 
 	const gate = { requireGlobalApproval: config.requireGlobalApproval ?? true };
 	registerEvolveTools(ctx, engine, gate);
-	registerEvolveCommand(ctx, engine, gate, { rubricKey: resolveRubricKey(config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m)) });
+	registerEvolveCommand(ctx, engine, gate, {
+		rubricKey: resolveRubricKey(baseDir, config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m)),
+	});
 
 	// v2 optional: restore hot-mounted skill plugins after a restart.
 	void restoreMounted(ctx, baseDir).catch((cause) => {

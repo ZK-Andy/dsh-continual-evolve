@@ -218,7 +218,7 @@ where the baseline was already perfect).
 | `notifyOnAutoReview` | `true` | after an approved gate run that applied edits, queue a visible follow-up notice in the session (persisted entries + rollback command) |
 | `requireGlobalApproval` | `true` | cross-session (global) edits ask the user for "批准" before applying |
 | `skillsDir` | `<dshHome>/skills` | root where skill entries materialize as SKILL.md bundles |
-| `rubricKey` | `DSH_EVOLVE_RUBRIC_KEY` → dev key | passphrase for AES-256-GCM rubric encryption (benchmark rubrics never touch the disk in plaintext) |
+| `rubricKey` | auto-generated local key file (`<dshHome>/evolve/rubric.key`, 0600) → dev fallback | passphrase for AES-256-GCM rubric encryption (benchmark rubrics never touch the disk in plaintext). When unset, the plugin generates a random per-installation key file on first use — every install gets its own key, no setup needed; `DSH_EVOLVE_RUBRIC_KEY` is the environment-variable override |
 
 Example (profile `cordis.patch.yml`):
 

@@ -122,8 +122,9 @@ export function addCase(baseDir: string, bid: string, title: string, statement: 
 	}
 	mkdirSync(caseDir, { recursive: true });
 	writeFileSync(join(caseDir, "statement.md"), statement, "utf8");
-	// Rubric plaintext never touches the disk; without a key it is written
-	// encrypted under the development key (see resolveRubricKey).
+	// Rubric plaintext never touches the disk; callers pass a resolved key
+	// (config → env → per-installation key file → dev fallback, see
+	// resolveRubricKey) and the dev key here is only a defensive last resort.
 	const stored = rubricKey ? encryptRubric(rubric, rubricKey) : encryptRubric(rubric, deriveKey(DEV_RUBRIC_KEY));
 	writeFileSync(join(caseDir, "rubric.json"), `${JSON.stringify(stored, null, 2)}\n`, "utf8");
 	return { id, title: title.trim(), statement, rubric };

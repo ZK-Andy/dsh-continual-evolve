@@ -166,7 +166,7 @@ dsh-continual-evolve/
 | `notifyOnAutoReview` | `true` | 门禁 approved 且实际应用了编辑后，在会话中排一条可见通知（沉淀条目 + 回滚命令） |
 | `requireGlobalApproval` | `true` | 跨会话（全局）编辑需用户批准"批准"后才应用 |
 | `skillsDir` | `<dshHome>/skills` | 技能条目物化为 SKILL.md 包的根目录 |
-| `rubricKey` | `DSH_EVOLVE_RUBRIC_KEY` → dev 键 | rubric 加密（AES-256-GCM）口令：benchmark rubric 明文永不着盘 |
+| `rubricKey` | 自动生成的本地密钥文件（`<dshHome>/evolve/rubric.key`，0600）→ dev 兜底 | rubric 加密（AES-256-GCM）口令：benchmark rubric 明文永不着盘。未配置时插件首次使用自动生成随机密钥文件——每台安装实例一把独立密钥，零配置；`DSH_EVOLVE_RUBRIC_KEY` 为环境变量覆盖项 |
 
 示例（profile `cordis.patch.yml`）：
 
