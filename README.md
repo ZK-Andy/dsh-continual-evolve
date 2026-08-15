@@ -3,6 +3,7 @@
 [中文](README.zh.md) | English
 
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![npm](https://img.shields.io/npm/v/dsh-continual-evolve)](https://www.npmjs.com/package/dsh-continual-evolve)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
@@ -119,6 +120,18 @@ dsh-continual-evolve/
 │   └── service.ts        # evolution engine (onApplied hook)
 └── test/                 # 20 files, 184 tests
 ```
+
+## Install
+
+```bash
+# from npm (installs and activates — ships its own bundle patch)
+dsh plugin --profile web add dsh-continual-evolve
+
+# or from source (first GitHub installs require approving the allowBuilds build step)
+dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
+```
+
+Swap `web` for your profile name (`headless`, or a custom profile).
 
 ## In-session usage (after restart)
 

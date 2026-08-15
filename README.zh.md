@@ -3,6 +3,7 @@
 [English](README.md) | 中文
 
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![npm](https://img.shields.io/npm/v/dsh-continual-evolve)](https://www.npmjs.com/package/dsh-continual-evolve)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
@@ -203,8 +204,8 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 # 从 npm 安装（安装即激活，自带 bundle patch）
 dsh plugin --profile web add dsh-continual-evolve
 
-# 或从源码安装
-dsh plugin --profile web add /path/to/dsh-continual-evolve
+# 或从源码安装（首次 GitHub 安装需按提示授权 allowBuilds 构建步骤）
+dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 ```
 
 ## 开发
