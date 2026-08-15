@@ -98,6 +98,18 @@ dsh-continual-evolve/
 └── test/                 # 20 个文件，184 个测试
 ```
 
+## 安装
+
+```bash
+# 从 npm 安装（安装即激活，自带 bundle patch）
+dsh plugin --profile web add dsh-continual-evolve
+
+# 或从源码安装（首次 GitHub 安装需按提示授权 allowBuilds 构建步骤）
+dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
+```
+
+将 `web` 换成你的 profile 名（`headless`，或自定义 profile）。
+
 ## 会话内用法（安装后）
 
 ```
@@ -144,7 +156,7 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 ## benchmark 驱动验证（Phase 3）
 
 ```
-/evolve benchmark new <title>                         创建 benchmark
+/evolve benchmark new <title> [runs]                   创建 benchmark（runs = 每个 case 重复次数，默认 1）
 /evolve benchmark add-case <bid> <title> <statement> <rubric>
 /evolve benchmark list                                列出 benchmark
 /evolve benchmark status <bid>                        查看计分板 + 决策
@@ -196,16 +208,6 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
       config:
         autoReview: true
         reviewIntervalTurns: 6
-```
-
-## 安装
-
-```bash
-# 从 npm 安装（安装即激活，自带 bundle patch）
-dsh plugin --profile web add dsh-continual-evolve
-
-# 或从源码安装（首次 GitHub 安装需按提示授权 allowBuilds 构建步骤）
-dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 ```
 
 ## 开发

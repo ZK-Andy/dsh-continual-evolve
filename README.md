@@ -158,7 +158,7 @@ Model-facing tools: `evolve_list`, `evolve_add`, `evolve_update`, `evolve_delete
 
 ## Memory layer
 
-Beyond the persisted store itself, three features keep injected memory
+Beyond the persisted store itself, four features keep injected memory
 "understanding you" as entries grow (gap analysis vs. Mem0 / Letta / Zep /
 LangMem; no external services — everything is pure functions):
 
@@ -274,13 +274,13 @@ Example (profile `cordis.patch.yml`):
 
 ```bash
 pnpm install        # install dev deps
+pnpm dev            # tsc --watch
 pnpm build          # tsc -> lib/
 pnpm test           # vitest run
 pnpm lint           # oxlint src test
 ```
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
-
 
 ## Roadmap
 
