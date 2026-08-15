@@ -29,7 +29,8 @@ export function entryLine(entry: HarnessEntry, maxContentLength: number): string
 			: "";
 	const citationText = citationSuffix(entry);
 	const archivedText = isArchived(entry) ? " [archived]" : "";
-	return `- [${entry.scope}:${entry.id}] ${entry.title} (${entry.path}, v${entry.version})${archivedText}${referenceText}${argumentsText}${citationText}: ${compactText(entry.content, maxContentLength)}`;
+	const formText = entry.kind === "skill" && entry.skill_kind === "guidance" ? " [guidance]" : "";
+	return `- [${entry.scope}:${entry.id}] ${entry.title} (${entry.path}, v${entry.version})${archivedText}${formText}${referenceText}${argumentsText}${citationText}: ${compactText(entry.content, maxContentLength)}`;
 }
 
 /** Trajectory citation suffix (` src=sessionId:1,2`), empty when uncited. */

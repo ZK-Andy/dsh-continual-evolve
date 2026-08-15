@@ -38,6 +38,14 @@ Rules:
   information, verifiable completion criteria). Self-check every proposed
   skill against the 7 structural features and state the result in its
   reason field.
+- Repeated multi-step workflows (session start/end routines, recurring
+  wrap-up or handoff procedures) may be proposed as guidance skills:
+  kind=skill, skill_kind="guidance", content = a SKILL.md document (no
+  python reference — executable skills keep requiring reference +
+  arguments). Only propose with repeated evidence in the trajectory, never
+  for one-off flows. Guidance skills materialize as discoverable SKILL.md
+  files under <skillsRoot>/<kebab-name>/SKILL.md and are always offered to
+  the user for a decision before they land.
 - Local edits are session-scoped; global edits persist across sessions.
 - Ground every edit in evidence: the session trajectory (recent direct user
   messages) is provided when available; prefer edits backed by it over
@@ -61,6 +69,7 @@ Rules:
       "path": "optional grouping path",
       "reference": {"type":"python","import":"pkg.mod","callable":"fn"} ,
       "arguments": {"name": {"type":"string","required":true,"description":"..."}},
+      "skill_kind": "executable|guidance (optional; skill kind only — guidance = SKILL.md document without reference)",
       "metadata": {},
       "reason": "why this edit is useful"
     }

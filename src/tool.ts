@@ -65,14 +65,15 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 		defineTool({
 			name: "evolve_add",
 			description:
-				"Create one harness entry (prompt/memory/skill/subagent). Skills require reference {type:python, import, callable} and an arguments contract. Snapshot, version, and history are handled automatically.",
+				"Create one harness entry (prompt/memory/skill/subagent). Executable skills require reference {type:python, import, callable} and an arguments contract; guidance skills (skill_kind=guidance) are SKILL.md documents — recurring multi-step workflows — and must NOT carry a reference. Snapshot, version, and history are handled automatically.",
 			parameters: {
 				kind: { type: "string", enum: ["prompt", "memory", "skill", "subagent"], required: true, description: "Entry kind." },
 				title: { type: "string", required: true, description: "Stable title." },
 				content: { type: "string", required: true, description: "Entry body." },
 				path: { type: "string", description: "Optional grouping path." },
-				reference: { type: "object", additionalProperties: true, description: "For skills: {type:'python', import, callable}." },
-				arguments: { type: "object", additionalProperties: true, description: "For skills: accepted input contract." },
+				skill_kind: { type: "string", enum: ["executable", "guidance"], description: "For skills: executable (python reference, default) or guidance (SKILL.md document, no reference)." },
+				reference: { type: "object", additionalProperties: true, description: "For executable skills: {type:'python', import, callable}." },
+				arguments: { type: "object", additionalProperties: true, description: "For executable skills: accepted input contract." },
 				global: { type: "boolean", description: "Set true to write the cross-session store (requires human approval; only for durable, reusable lessons)." },
 			},
 			output: {
@@ -91,6 +92,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 					content: args.content,
 				};
 				if (args.path !== undefined) edit.path = args.path;
+				if (args.skill_kind !== undefined) edit.skill_kind = args.skill_kind;
 				if (args.reference !== undefined) edit.reference = args.reference;
 				if (args.arguments !== undefined) edit.arguments = args.arguments;
 				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));

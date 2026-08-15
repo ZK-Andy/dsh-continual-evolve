@@ -52,6 +52,15 @@ describe("renderSkillMarkdown", () => {
 	});
 });
 
+describe("renderSkillMarkdown (guidance)", () => {
+	it("renders a guidance skill without Invocation or Arguments sections", () => {
+		const md = renderSkillMarkdown(skillEntry({ skill_kind: "guidance", reference: {}, arguments: {} }));
+		expect(md).toContain("name: lint-before-writing-code");
+		expect(md).not.toContain("## Invocation");
+		expect(md).not.toContain("## Arguments");
+	});
+});
+
 describe("syncSkillsFromResult", () => {
 	it("writes SKILL.md on create and removes it on delete", () => {
 		const root = tmpRoot();

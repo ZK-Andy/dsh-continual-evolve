@@ -29,6 +29,25 @@ function stateWith(entry: { id: string; title: string; version?: number }): Harn
 }
 
 describe("applyRefinementProposal", () => {
+	it("persists skill_kind=guidance on skill creates", () => {
+		const state = emptyHarnessState();
+		const result = applyRefinementProposal(
+			state,
+			{
+				summary: "s",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [
+					{ action: "create", kind: "skill", title: "Session handoff process", content: "# Handoff\n\nbody", skill_kind: "guidance" },
+				],
+			},
+			{ id: "refine_skill", scope: "local" },
+		);
+		const entry = state.entries.skill["session_handoff_process"];
+		expect(entry?.skill_kind).toBe("guidance");
+		expect(result.appliedEdits[0]?.applied).toBe(true);
+	});
+
 	it("creates entries with computed ids and version 1", () => {
 		const state = emptyHarnessState();
 		const result = applyRefinementProposal(

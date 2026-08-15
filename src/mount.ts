@@ -152,6 +152,11 @@ export function renderParameters(entry: HarnessEntry): Record<string, unknown> {
  * the ledger records the entry for the next boot.
  */
 export async function mountSkill(ctx: Context, baseDir: string, entry: HarnessEntry): Promise<MountRecord> {
+	// Guidance skills are SKILL.md documents with no python reference — there
+	// is no function to mount as a tool; only executable skills can hot-mount.
+	if (entry.skill_kind === "guidance" || Object.keys(entry.reference ?? {}).length === 0) {
+		throw new Error(`skill ${entry.id} has no python reference (guidance skills cannot be mounted — load them with the skill tool instead)`);
+	}
 	const dir = renderMountPackage(baseDir, entry);
 	const entryId = `evolve-mount-${skillNameOf(entry.id)}`;
 	const loader = (ctx as unknown as { get(name: string): unknown }).get("loader") as LoaderLike | undefined;

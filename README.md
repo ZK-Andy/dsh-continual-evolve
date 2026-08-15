@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-221%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -119,7 +119,7 @@ dsh-continual-evolve/
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 21 files, 221 tests
+└── test/                 # 21 files, 238 tests
 ```
 
 ## Install
@@ -211,6 +211,17 @@ single source of truth on disk, nothing is copied:
   references may not escape the skill directory. After materialization the
   rendered SKILL.md is re-checked and dangling `references/`/`scripts/`
   links are logged as warnings.
+- **Two skill forms** — `executable` skills keep the python reference
+  contract (hot-mountable as tools); `guidance` skills are SKILL.md
+  documents with no reference, the form for recurring multi-step workflows
+  (session start/end routines, handoff procedures). Code enforces the
+  split: a guidance skill must NOT carry a reference or arguments contract.
+- **User-governed skill creation** — the gate never writes a skill
+  silently: when the planner proposes skill edits, the user is asked
+  (固化/不固化) before they land; a rejected candidate is not offered
+  again within a cooldown window. The rest of a proposal proceeds
+  regardless, so memory/prompt distillation is never blocked by a skill
+  decision.
 
 ## Logging
 
@@ -323,7 +334,8 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **gate-proposed archiving** — stale entries are a first-class refine target: the planner can emit `action: "archive"` (kind + id only), which stamps `metadata.archivedAt` through the normal apply path — snapshot, version bump, audit event, and a deterministic rollback inverse that restores the pre-archive state. Archive hides from injection but never deletes; re-archiving an archived entry is rejected, and the base system prompt stays immutable
   - **automatic rollback on benchmark rejection** — the acceptance loop is closed: when the code-owned decision rejects a candidate, the refinement is reverted automatically through the same engine path as `/evolve rollback` (deterministic inverse edits, snapshotted and audited; configurable via `autoRollbackOnReject`, on by default). Failures report the manual fallback instead of throwing
   - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
-  - **skill standard in the loop** — the planner and gate now author and judge skill entries against the skill-creator/skill-audit standard (author-distilled from the official deepseek-harness 11 skills): every plan call injects the `template.md` facts (builtin distilled guide as fallback) as `<skill_quality_standard>`; apply code-enforces the frontmatter mechanics (no shadowing `---`, no escaping resource refs); materialized SKILL.md files are re-checked and dangling resource references are logged
+  - **skill standard in the loop** — the planner and gate now author and judge skill entries against the skill-creator/skill-audit standard (author-distilled from the official deepseek-harness 11 skills): every plan call injects the `template.md` facts (builtin distilled guide as fallback) as `<skill_quality_standard>`; apply code-enforces the frontmatter mechanics (no shadowing `---`, no escaping resource refs); materialized SKILL.md files are re-checked and dangling resource references are logged;
+  - **guidance skills + user-governed creation** — a second skill form (SKILL.md documents without a python reference) lets recurring workflows be proposed as skills; the gate offers every auto-created skill to the user (固化/不固化) before it lands, with a rejection cooldown — skills grow under governance, never silently
 
 The upcoming/candidates list is empty for now — future work is driven by real usage.
 

@@ -2,19 +2,29 @@
  * Tests for the gate turn counter: completed turns are counted from
  * running → idle transitions only, and the gate's harness view merges the
  * global store so it can recognize topics already covered cross-session.
+ * Skill proposals are governed: the gate offers them to the user (consult)
+ * before applying, with a rejection cooldown.
  */
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
-import { advanceGateState, loadGateHarnessView, type GateState } from "../src/auto.js";
+import {
+	advanceGateState,
+	consultSkillEdits,
+	loadGateHarnessView,
+	SKILL_CONSULT_COOLDOWN_TURNS,
+	splitSkillEdits,
+	type GateState,
+} from "../src/auto.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
-import { emptyHarnessState, type HarnessEntry } from "../src/types.js";
+import { emptyHarnessState, type HarnessEntry, type RefinementProposal } from "../src/types.js";
+import type { Context } from "@deepseek-ai/cordis";
 
 function fresh(): GateState {
-	return { turns: 0, lastReviewAt: 0, running: false };
+	return { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map() };
 }
 
 function fullEntry(id: string, kind: HarnessEntry["kind"], title: string): HarnessEntry {
@@ -110,5 +120,104 @@ describe("loadGateHarnessView", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+function proposalWith(edits: RefinementProposal["edits"]): RefinementProposal {
+	return { summary: "s", rationale: "r", expectedOutcome: "o", edits };
+}
+
+const skillEdit = {
+	action: "create",
+	kind: "skill" as const,
+	title: "会话交接流程",
+	content: "# 交接流程\n\nbody",
+	skill_kind: "guidance" as const,
+};
+
+const memoryEdit = { action: "create", kind: "memory" as const, title: "m", content: "c" };
+
+describe("splitSkillEdits", () => {
+	it("separates skill edits from the rest of a proposal", () => {
+		const { skillEdits, otherEdits } = splitSkillEdits(proposalWith([skillEdit, memoryEdit]));
+		expect(skillEdits).toHaveLength(1);
+		expect(skillEdits[0]?.kind).toBe("skill");
+		expect(otherEdits).toHaveLength(1);
+		expect(otherEdits[0]?.kind).toBe("memory");
+	});
+
+	it("handles proposals without skill edits", () => {
+		const { skillEdits, otherEdits } = splitSkillEdits(proposalWith([memoryEdit]));
+		expect(skillEdits).toHaveLength(0);
+		expect(otherEdits).toHaveLength(1);
+	});
+});
+
+function fakeCtx(answer: "固化" | "不固化" | "throw" | "missing"): {
+	ctx: Context;
+	askCount: () => number;
+} {
+	let calls = 0;
+	const ctx = {
+		userQuestions:
+			answer === "missing"
+				? undefined
+				: {
+						ask: async () => {
+							calls += 1;
+							if (answer === "throw") throw new Error("aborted");
+							return { answers: [{ id: "evolve-skill-consult", selected: [answer] }] };
+						},
+					},
+	} as unknown as Context;
+	return { ctx, askCount: () => calls };
+}
+
+const fakeAgent = { id: "session-consult" } as never;
+
+describe("consultSkillEdits", () => {
+	it("returns true immediately when there are no skill edits", async () => {
+		const { ctx } = fakeCtx("missing");
+		expect(await consultSkillEdits(ctx, fakeAgent, [], fresh())).toBe(true);
+	});
+
+	it("consents when the user chooses 固化, without recording a rejection", async () => {
+		const { ctx, askCount } = fakeCtx("固化");
+		const gate = fresh();
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(true);
+		expect(askCount()).toBe(1);
+		expect(gate.skillRejects.size).toBe(0);
+	});
+
+	it("declines when the user chooses 不固化 and records the cooldown", async () => {
+		const { ctx } = fakeCtx("不固化");
+		const gate = fresh();
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
+		expect(gate.skillRejects.size).toBe(1);
+	});
+
+	it("does not re-ask a candidate rejected within the cooldown window", async () => {
+		const { ctx, askCount } = fakeCtx("不固化");
+		const gate = fresh();
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
+		expect(askCount()).toBe(1);
+		// same candidate again, inside the cooldown: silent skip, no question
+		gate.turns = SKILL_CONSULT_COOLDOWN_TURNS - 1;
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
+		expect(askCount()).toBe(1);
+		// after the cooldown elapses the candidate is offered again
+		gate.turns = SKILL_CONSULT_COOLDOWN_TURNS + 1;
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
+		expect(askCount()).toBe(2);
+	});
+
+	it("never writes a skill silently without the question service", async () => {
+		const { ctx } = fakeCtx("missing");
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], fresh())).toBe(false);
+	});
+
+	it("is conservative when the question call fails", async () => {
+		const { ctx } = fakeCtx("throw");
+		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], fresh())).toBe(false);
 	});
 });

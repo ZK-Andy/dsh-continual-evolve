@@ -24,6 +24,14 @@ describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/REAL trigger scenario/i);
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/skill-creator/i);
 	});
+
+	it("treats repeated multi-step workflows as a refine target (guidance skill)", () => {
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/repeated multi-step workflows/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/guidance skill/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/skill_kind=guidance/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/never\s+for\s+one-off flows/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/offered to the user/i);
+	});
 });
 
 describe("parseAutoRefineReview", () => {

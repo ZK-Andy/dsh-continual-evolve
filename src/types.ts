@@ -12,6 +12,15 @@
 /** What a harness entry can be. */
 export type RefinementKind = "prompt" | "memory" | "skill" | "subagent";
 
+/**
+ * Skill-entry form: `executable` skills carry a python reference contract
+ * and can be hot-mounted as tools; `guidance` skills are SKILL.md documents
+ * (no python reference) that materialize as discoverable skills for the
+ * `skill` tool — the form for recurring multi-step workflows. Absent means
+ * `executable` (backwards compatible with pre-guidance stores).
+ */
+export type SkillKind = "executable" | "guidance";
+
 /** How an entry changes. */
 export type RefinementAction = "create" | "update" | "delete" | "archive";
 
@@ -69,6 +78,8 @@ export interface HarnessEntry {
 	reference: Record<string, unknown>;
 	/** Skill entries declare their accepted inputs here. */
 	arguments: Record<string, unknown>;
+	/** Skill form: "executable" (default) or "guidance" (SKILL.md document). */
+	skill_kind?: SkillKind;
 	metadata: Record<string, unknown>;
 	source: "evolve";
 	created_at: string;
@@ -105,6 +116,8 @@ export interface RefinementEdit {
 	path?: string;
 	reference?: Record<string, unknown>;
 	arguments?: Record<string, unknown>;
+	/** Skill form: "guidance" for SKILL.md document skills; absent = executable. */
+	skill_kind?: SkillKind;
 	metadata?: Record<string, unknown>;
 	reason?: string;
 }

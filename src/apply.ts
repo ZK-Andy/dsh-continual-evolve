@@ -123,6 +123,7 @@ export function applyRefinementProposal(
 							: {}),
 					}
 				: {};
+		const skillKind = edit.skill_kind ?? before?.skill_kind;
 		const after: HarnessEntry = {
 			id,
 			kind: edit.kind,
@@ -132,6 +133,7 @@ export function applyRefinementProposal(
 			scope: before?.scope ?? options.scope ?? "local",
 			reference: edit.reference ?? before?.reference ?? {},
 			arguments: edit.arguments ?? before?.arguments ?? {},
+			...(skillKind !== undefined ? { skill_kind: skillKind } : {}),
 			metadata: { ...sourceMetadata, ...(edit.metadata ?? before?.metadata ?? {}) },
 			source: "evolve",
 			created_at: before?.created_at ?? now,

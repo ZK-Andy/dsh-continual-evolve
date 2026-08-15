@@ -66,6 +66,14 @@ resulting skill would meet the standard; otherwise decline and say in the
 rationale what must improve — drafting follows skill-creator, and the
 planner receives the standard as its <skill_quality_standard> block.
 
+Repeated multi-step workflows (session start/end routines, recurring
+wrap-up or handoff procedures) are a valid refine target: approve with
+instructions telling the planner to propose a guidance skill (kind=skill,
+skill_kind=guidance — a SKILL.md document, no python reference). Only
+propose when the same workflow recurs in the trajectory — never for
+one-off flows. Auto-created skills are always offered to the user for a
+decision before they land; the gate never writes a skill silently.
+
 Return JSON only:
 {
   "shouldRefine": true|false,

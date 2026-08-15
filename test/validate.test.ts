@@ -140,4 +140,63 @@ describe("validateEdit", () => {
 			),
 		).toMatch(/escapes the skill directory/);
 	});
+
+	it("accepts a guidance skill without a python reference", () => {
+		expect(
+			validateEdit(
+				edit({
+					action: "create",
+					kind: "skill",
+					id: "handoff",
+					title: "会话交接流程",
+					content: "# 交接流程\n\n开始读交接文档，结束写交接文档。",
+					skill_kind: "guidance",
+				}),
+				undefined,
+			),
+		).toBeUndefined();
+	});
+
+	it("rejects a guidance skill carrying a python reference", () => {
+		expect(
+			validateEdit(
+				edit({
+					action: "create",
+					kind: "skill",
+					id: "s",
+					title: "t",
+					content: "body",
+					skill_kind: "guidance",
+					reference: { type: "python", import: "pkg.mod", callable: "run" },
+				}),
+				undefined,
+			),
+		).toMatch(/guidance skill must not carry a python reference/);
+	});
+
+	it("rejects a guidance skill carrying an arguments contract", () => {
+		expect(
+			validateEdit(
+				edit({
+					action: "create",
+					kind: "skill",
+					id: "s",
+					title: "t",
+					content: "body",
+					skill_kind: "guidance",
+					arguments: { input: { type: "string", required: true } },
+				}),
+				undefined,
+			),
+		).toMatch(/guidance skill must not carry an arguments contract/);
+	});
+
+	it("keeps the executable contract mandatory for skills without skill_kind", () => {
+		expect(
+			validateEdit(
+				edit({ action: "create", kind: "skill", id: "s", title: "t", content: "body", arguments: {} }),
+				undefined,
+			),
+		).toMatch(/requires python reference/);
+	});
 });

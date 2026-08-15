@@ -16,9 +16,11 @@
  *   experiences about to be summarized away are persisted first.
  */
 import { appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";import type { Context } from "@deepseek-ai/cordis";
+import { join } from "node:path";
+import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { HarnessState } from "./types.js";
+import type { HarnessState, RefinementEdit, RefinementProposal } from "./types.js";
+import { slug } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
@@ -26,6 +28,7 @@ import { goalServiceOf } from "./goal.js";
 import { notifyAutoReview } from "./notify.js";
 import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
+import type { QuestionService } from "./approval.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -39,7 +42,16 @@ export interface GateState {
 	turns: number;
 	lastReviewAt: number;
 	running: boolean;
+	/**
+	 * Per-candidate turn at which the user last rejected a skill proposal;
+	 * consulted skill proposals are not offered again within the cooldown
+	 * window (skills are governed resources — no nagging).
+	 */
+	skillRejects: Map<string, number>;
 }
+
+/** Turns a rejected skill candidate stays silent before being offered again. */
+export const SKILL_CONSULT_COOLDOWN_TURNS = 10;
 
 interface ReviewRecord {
 	timestamp: string;
@@ -166,7 +178,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 	let state = map.get(sessionId);
 	if (!state) {
-		state = { turns: 0, lastReviewAt: 0, running: false };
+		state = { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map() };
 		map.set(sessionId, state);
 	}
 	return state;
@@ -240,8 +252,28 @@ async function runGate(
 		// guide) so skill proposals follow the standard.
 		skillsRoot: join(engine.baseDir, "skills"),
 	});
+	// Skills are governed resources: an auto-created skill is OFFERED to the
+	// user for a decision (固化/不固化) before it lands — the gate never
+	// writes a skill silently. Without consent the skill edits are withheld
+	// and the rest of the proposal proceeds as usual.
+	const { skillEdits, otherEdits } = splitSkillEdits(proposal);
+	const skillConsented = await consultSkillEdits(ctx, agent, skillEdits, state);
+	const finalProposal = skillConsented
+		? proposal
+		: {
+				...proposal,
+				edits: otherEdits,
+				summary:
+					skillEdits.length > 0 ? `${proposal.summary} (skill edits withheld — pending user decision)` : proposal.summary,
+			};
+	if (finalProposal.edits.length === 0) {
+		const withheld = skillEdits.length > 0 ? " (skill proposal withheld — user not consulted or declined)" : "";
+		logger.info(`auto-review declined (${reason}) [${sessionId}] after ${turnsSinceLastReview} turns: no consented edits${withheld} — ${review.rationale}`);
+		record({ sessionId, reason, turnsSinceLastReview, outcome: "declined", rationale: `${review.rationale}${withheld}` });
+		return;
+	}
 	const source = entrySourceOf(agent, sessionId);
-	const result = engine.apply("local", sessionId, proposal, {
+	const result = engine.apply("local", sessionId, finalProposal, {
 		scope: "local",
 		baselineState: localState,
 		...(source ? { source } : {}),
@@ -266,4 +298,73 @@ async function readTrajectory(ctx: Context, agent: Agent, maxChars: number): Pro
 	}
 	const snapshot = await sessionQuery.readSurface(agent.id);
 	return serializeSurface(snapshot.events, maxChars);
+}
+
+/**
+ * Split a proposal into skill edits and everything else. Skill edits are the
+ * governed part: they need explicit user consent before the gate applies
+ * them, while the remaining edits flow through the normal auto path.
+ */
+export function splitSkillEdits(proposal: RefinementProposal): {
+	skillEdits: RefinementEdit[];
+	otherEdits: RefinementEdit[];
+} {
+	return {
+		skillEdits: proposal.edits.filter((edit) => edit.kind === "skill"),
+		otherEdits: proposal.edits.filter((edit) => edit.kind !== "skill"),
+	};
+}
+
+/**
+ * Ask the user whether to solidify proposed skill edits (guidance or
+ * executable) into the harness. Returns true when every skill edit is
+ * consented. Never writes a skill silently:
+ * - no question service available → false (conservative);
+ * - the same candidate was rejected within the cooldown window → false
+ *   without asking again (no nagging);
+ * - the user declines → false and the rejection is recorded for cooldown;
+ * - the question call fails/aborts → false (conservative).
+ */
+export async function consultSkillEdits(
+	ctx: Context,
+	agent: Agent,
+	skillEdits: RefinementEdit[],
+	gate: GateState,
+): Promise<boolean> {
+	if (skillEdits.length === 0) return true;
+	const key = skillEdits.map((edit) => edit.id ?? slug(edit.title ?? edit.kind, edit.kind)).join("|");
+	const lastReject = gate.skillRejects.get(key);
+	if (lastReject !== undefined && gate.turns - lastReject < SKILL_CONSULT_COOLDOWN_TURNS) {
+		return false;
+	}
+	const userQuestions = (ctx as unknown as { userQuestions?: QuestionService }).userQuestions;
+	if (!userQuestions) {
+		return false;
+	}
+	const description = skillEdits
+		.map((edit) => {
+			const form = edit.skill_kind === "guidance" ? "guidance 技能（SKILL.md 文档）" : "可执行技能";
+			return `- ${edit.action}「${edit.title ?? edit.id}」(${form})`;
+		})
+		.join("\n");
+	try {
+		const answer = await userQuestions.ask({
+			questions: [
+				{
+					id: "evolve-skill-consult",
+					question: `自进化检测到反复出现的流程/技能候选，建议沉淀：\n\n${description}\n\n是否固化？`,
+					options: [{ label: "固化" }, { label: "不固化" }],
+				},
+			],
+			agent,
+		});
+		const item = answer.answers?.find((entry) => entry.id === "evolve-skill-consult");
+		const consented = item?.selected?.includes("固化") ?? false;
+		if (!consented) {
+			gate.skillRejects.set(key, gate.turns);
+		}
+		return consented;
+	} catch {
+		return false;
+	}
 }

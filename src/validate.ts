@@ -34,8 +34,20 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 		return `${edit.action} requires title and content`;
 	}
 	if (edit.action !== "delete" && edit.kind === "skill") {
-		const contractError = validateSkillContract(edit);
-		if (contractError) return contractError;
+		// Guidance skills are SKILL.md documents: no python reference (a
+		// reference on a guidance skill would be an invented contract) and
+		// no arguments contract. Executable skills keep the full contract.
+		if (edit.skill_kind === "guidance") {
+			if (edit.reference !== undefined && Object.keys(edit.reference).length > 0) {
+				return "guidance skill must not carry a python reference (it is a SKILL.md document, not an executable)";
+			}
+			if (edit.arguments !== undefined && Object.keys(edit.arguments).length > 0) {
+				return "guidance skill must not carry an arguments contract (only executable skills declare inputs)";
+			}
+		} else {
+			const contractError = validateSkillContract(edit);
+			if (contractError) return contractError;
+		}
 		// The entry body materializes as a SKILL.md under generated
 		// frontmatter; content-level mechanics (no shadowing `---`, no
 		// escaping resource refs) are code-enforced so a bad body never

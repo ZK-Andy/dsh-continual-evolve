@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-221%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -96,7 +96,7 @@ dsh-continual-evolve/
 │   ├── pool.ts           # 评估运行的有界并发工作池
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 21 个文件，221 个测试
+└── test/                 # 21 个文件，238 个测试
 ```
 
 ## 安装
@@ -150,6 +150,8 @@ dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 - **每次规划调用注入 `<skill_quality_standard>` 块**：`skill-creator/references/template.md` 事实（技能已安装时，位于 `<dshHome>/skills/`），否则用内置精华版兜底（约 1KB，低频调用）。规划器必须把技能提案锚定在轨迹中的**真实触发场景**、不得重复官方 11 技能或已有条目，并逐条自检 7 条结构特征。
 - **门禁按 skill-audit 维度评审**技能相关轨迹（frontmatter 路由、结构特征、段落骨架、防重复），不达标的提案 declined 并说明改进方向。
 - **机械 frontmatter 规则代码强制**（移植 `validate-frontmatter.mjs`）：技能正文不得以第二个 `---` 块开头（会遮蔽自动生成的 frontmatter）、资源引用不得越出技能目录；物化后对渲染产物复检，悬空 `references/`/`scripts/` 引用记 warn 日志。
+- **两种技能形态**——`executable`（可执行，保留 python reference 契约，可热挂载为工具）与 `guidance`（指导型：SKILL.md 文档、无 reference，用于反复出现的多步流程，如会话开始/结束、交接流程）。代码强制区分：guidance 技能**不得**携带 reference 或 arguments 契约。
+- **用户治理的技能创建**——门禁绝不静默写技能：规划器提议技能编辑时，先问用户（固化/不固化）再落地；被拒候选在冷却窗口内不再打扰。提案其余部分（记忆/提示词沉淀）不受影响照常进行——技能决策永不阻塞普通沉淀。
 
 ## 日志
 
@@ -244,7 +246,8 @@ pnpm lint           # oxlint src test
   - **门禁提议归档**——过时条目是一等 refine 目标：规划器可输出 `action: "archive"`（仅需 kind + id），代码经正常 apply 通道盖 `metadata.archivedAt` 戳——快照、版本 +1、审计事件、以及恢复归档前状态的确定性回滚逆编辑。归档隐藏于注入但绝不删除；重复归档被拒绝；基础系统提示词保持不可变
   - **benchmark 拒绝自动回滚**——接受闭环已闭合：代码所有决策拒绝候选时，refinement 经与 `/evolve rollback` 相同的引擎路径自动撤销（确定性逆编辑、快照 + 审计；`autoRollbackOnReject` 配置，默认开）。失败时给出手动回滚提示而不是抛错
   - **日志按会话过滤**——`/evolve log [tail N] [session <id>]` 只保留提及指定会话 id 的行（精确 token 匹配，取自渲染消息与原始 args）；门禁记录的行现在携带会话 id
-  - **自进化环中的技能标准**——规划器与门禁现在按 skill-creator/skill-audit 标准（作者蒸馏自官方 deepseek-harness 11 技能）创作与评审技能条目：每次规划注入 `template.md` 事实（内置精华版兜底）为 `<skill_quality_standard>`；apply 代码强制 frontmatter 机械规则（禁止遮蔽 `---`、禁止越界资源引用）；物化后的 SKILL.md 复检，悬空资源引用记日志
+  - **自进化环中的技能标准**——规划器与门禁现在按 skill-creator/skill-audit 标准（作者蒸馏自官方 deepseek-harness 11 技能）创作与评审技能条目：每次规划注入 `template.md` 事实（内置精华版兜底）为 `<skill_quality_standard>`；apply 代码强制 frontmatter 机械规则（禁止遮蔽 `---`、禁止越界资源引用）；物化后的 SKILL.md 复检，悬空资源引用记日志;
+  - **guidance 技能形态 + 用户治理创建**——第二种技能形态（无 python reference 的 SKILL.md 文档技能）让反复出现的流程可以被提议为技能；门禁把每次自动创建的技能先交给用户决定（固化/不固化）再落地，带拒绝冷却——技能在治理下生长，绝不静默写入
 
 候选/待办清单暂时为空——后续工作随真实使用驱动。
 

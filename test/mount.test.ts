@@ -98,6 +98,18 @@ describe("renderParameters", () => {
 });
 
 describe("mountSkill / unmountSkill", () => {
+	it("refuses to mount a guidance skill (no python reference)", async () => {
+		const base = makeBase();
+		try {
+			const ctx = { get: () => undefined } as never;
+			const guidance = skillEntry({ skill_kind: "guidance", reference: {}, arguments: {} });
+			await expect(mountSkill(ctx, base, guidance)).rejects.toThrow(/guidance skills cannot be mounted/);
+			expect(loadLedger(base).mounted).toHaveLength(0);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
 	it("writes the package and ledger without a loader service", async () => {
 		const base = makeBase();
 		try {

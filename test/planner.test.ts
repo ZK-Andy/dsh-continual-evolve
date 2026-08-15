@@ -26,6 +26,14 @@ describe("PLANNER_SYSTEM_PROMPT", () => {
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/7 structural features/i);
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/<skill_quality_standard>/);
 	});
+
+	it("allows recurring workflows to be proposed as guidance skills", () => {
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/guidance skills/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/skill_kind="guidance"/);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/no\s+python reference/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/repeated evidence/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/offered to\s+the user/i);
+	});
 });
 
 const emptyState: HarnessState = {

@@ -7,7 +7,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 
-interface QuestionService {
+export interface QuestionService {
 	ask(request: {
 		questions: { id: string; question: string; options?: { label: string; description?: string }[] }[];
 		agent?: Agent;
