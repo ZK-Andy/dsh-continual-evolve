@@ -5,6 +5,7 @@
  * contract skill entries must carry.
  */
 import type { PythonReference, RefinementEdit, RefinementKind } from "./types.js";
+import { validateSkillEntryContent } from "./skillquality.js";
 
 const ACTIONS = new Set(["create", "update", "delete", "archive"]);
 const KINDS = new Set<RefinementKind>(["prompt", "memory", "skill", "subagent"]);
@@ -33,7 +34,16 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 		return `${edit.action} requires title and content`;
 	}
 	if (edit.action !== "delete" && edit.kind === "skill") {
-		return validateSkillContract(edit);
+		const contractError = validateSkillContract(edit);
+		if (contractError) return contractError;
+		// The entry body materializes as a SKILL.md under generated
+		// frontmatter; content-level mechanics (no shadowing `---`, no
+		// escaping resource refs) are code-enforced so a bad body never
+		// reaches the store (mirrors skill-creator's validate-frontmatter).
+		const contentProblems = validateSkillEntryContent(edit.content ?? "");
+		if (contentProblems.length > 0) {
+			return contentProblems.join("; ");
+		}
 	}
 	return undefined;
 }

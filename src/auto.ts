@@ -16,8 +16,7 @@
  *   experiences about to be summarized away are persisted first.
  */
 import { appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import type { Context } from "@deepseek-ai/cordis";
+import { join } from "node:path";import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
@@ -237,6 +236,9 @@ async function runGate(
 		history,
 		...(review.instructions ? { instructions: review.instructions } : {}),
 		global: false,
+		// Read the official skill-creator template facts (fallback: builtin
+		// distilled guide) so skill proposals follow the official standard.
+		skillsRoot: join(engine.baseDir, "skills"),
 	});
 	const source = entrySourceOf(agent, sessionId);
 	const result = engine.apply("local", sessionId, proposal, {

@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-221%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -109,6 +109,7 @@ dsh-continual-evolve/
 │   ├── review.ts         # gate LLM judgment (declines local duplicates of globally covered topics)
 │   ├── approval.ts       # human approval for global edits
 │   ├── skill.ts          # skill materialization ($DSH_HOME/skills/)
+│   ├── skillquality.ts   # official skill standard in the loop (skill-creator template reading + frontmatter code checks)
 │   ├── mount.ts          # hot-mounted skill plugins (loader.create + boot restore)
 │   ├── benchmark.ts      # benchmark store
 │   ├── rubric.ts         # rubric ACL (AES-256-GCM envelopes, auto-generated local key)
@@ -118,7 +119,7 @@ dsh-continual-evolve/
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 20 files, 184 tests
+└── test/                 # 21 files, 221 tests
 ```
 
 ## Install
@@ -183,6 +184,31 @@ LangMem; no external services — everything is pure functions):
   global + local state with every entry's real scope labeled, so a topic
   already covered by a global entry is declined instead of being re-sedimented
   as a local duplicate.
+
+## Official skill standard in the loop
+
+The planner and the auto-review gate are raw `ctx.llm` calls — they do not
+live in an agent session, so they cannot load skills through the `skill`
+tool. To keep self-evolved skills on the official quality bar, the plugin
+references the official **skill-creator** / **skill-audit** skills at
+runtime (they stay the single source of truth on disk — nothing is copied):
+
+- Every planning call receives a `<skill_quality_standard>` block: the
+  official `skill-creator/references/template.md` facts when the official
+  skills are installed (`<dshHome>/skills/`), or a builtin distilled guide
+  otherwise (~1KB, low-frequency calls). The planner must ground skill
+  proposals in a REAL trigger scenario from the trajectory, must not
+  duplicate the official 11 skills or existing entries, and self-checks
+  every proposed skill against the 7 structural features.
+- The gate judges skill-related trajectories against the skill-audit
+  dimensions (frontmatter routing, structural features, paragraph skeleton,
+  duplication) and declines proposals that would not meet the standard.
+- The mechanical frontmatter rules of `validate-frontmatter.mjs` are
+  code-enforced at apply time: skill bodies must not open with a second
+  `---` block (it would shadow the generated frontmatter), and resource
+  references may not escape the skill directory. After materialization the
+  rendered SKILL.md is re-checked and dangling `references/`/`scripts/`
+  links are logged as warnings.
 
 ## Logging
 
@@ -295,6 +321,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **gate-proposed archiving** — stale entries are a first-class refine target: the planner can emit `action: "archive"` (kind + id only), which stamps `metadata.archivedAt` through the normal apply path — snapshot, version bump, audit event, and a deterministic rollback inverse that restores the pre-archive state. Archive hides from injection but never deletes; re-archiving an archived entry is rejected, and the base system prompt stays immutable
   - **automatic rollback on benchmark rejection** — the acceptance loop is closed: when the code-owned decision rejects a candidate, the refinement is reverted automatically through the same engine path as `/evolve rollback` (deterministic inverse edits, snapshotted and audited; configurable via `autoRollbackOnReject`, on by default). Failures report the manual fallback instead of throwing
   - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
+  - **official skill standard in the loop** — the planner and gate now author and judge skill entries against the official skill-creator/skill-audit standard: every plan call injects the official `template.md` facts (builtin distilled guide as fallback) as `<skill_quality_standard>`; apply code-enforces the frontmatter mechanics (no shadowing `---`, no escaping resource refs); materialized SKILL.md files are re-checked and dangling resource references are logged
 
 The upcoming/candidates list is empty for now — future work is driven by real usage.
 

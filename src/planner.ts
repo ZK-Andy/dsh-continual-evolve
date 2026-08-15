@@ -13,6 +13,7 @@ import type { HarnessState, RefinementProposal, RefinementResult } from "./types
 import { parseProposal } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { recentUserText } from "./inject.js";
+import { skillQualityGuide } from "./skillquality.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the /evolve continual harness subsystem.
 
@@ -26,6 +27,16 @@ Rules:
 - prompt = narrow behavioral policy addendums; memory = durable facts/preferences/failures;
   skill = repeatable procedures (must carry a python reference {type:"python", import, callable}
   and an arguments object); subagent = reusable delegation roles.
+- Skill entries are authored to the official DSH skill quality standard
+  (skill-creator; the full facts are provided in the <skill_quality_standard>
+  block below): only for a REAL trigger scenario grounded in the trajectory
+  (who, in what real task, what signal) — never invent one to pad the store;
+  never duplicate the official 11 skills or existing entries; content is a
+  SKILL.md document (frontmatter routing with "use when / do not use when"
+  description, boundary declaration, prerequisites and exclusions, layered
+  information, verifiable completion criteria). Self-check every proposed
+  skill against the 7 structural features and state the result in its
+  reason field.
 - Local edits are session-scoped; global edits persist across sessions.
 - Ground every edit in evidence: the session trajectory (recent direct user
   messages) is provided when available; prefer edits backed by it over
@@ -67,6 +78,13 @@ export interface PlanOptions {
 	 * every planning call is grounded in what the user actually said.
 	 */
 	trajectory?: string;
+	/**
+	 * Skills root to read the official skill-creator template facts from
+	 * (`<root>/skill-creator/references/template.md`). When omitted or the
+	 * official skills are not installed, the builtin distilled quality guide
+	 * is injected instead — the skill standard is always present.
+	 */
+	skillsRoot?: string;
 	global?: boolean;
 	signal?: AbortSignal;
 	maxOutputTokens?: number;
@@ -86,11 +104,18 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 	// then omitted entirely, keeping an empty trajectory zero-cost).
 	const trajectory = options.trajectory ?? recentUserText(agent);
 
+	// The skill quality standard is always present: the official
+	// skill-creator template facts when installed, the builtin distilled
+	// guide otherwise (~1KB — planning is low-frequency, and the standard
+	// keeps skill proposals from drifting off the official quality bar).
+	const qualityGuide = skillQualityGuide(options.skillsRoot);
+
 	const userPrompt = [
 		`<current_harness_state>\n${formatHarnessStateForPrompt(state)}\n</current_harness_state>`,
 		`<refinement_history>\n${historyForPrompt(history)}\n</refinement_history>`,
 		`<scope_policy>\n${scopeInstruction}\n</scope_policy>`,
 		trajectory ? `<session_trajectory>\n${trajectory}\n</session_trajectory>` : "",
+		`<skill_quality_standard>\n${qualityGuide.text}\n</skill_quality_standard>`,
 		options.instructions ? `<user_instructions>\n${options.instructions}\n</user_instructions>` : "",
 		"Return only JSON edits. If no useful edit is justified, return an empty edits array with a rationale.",
 	]

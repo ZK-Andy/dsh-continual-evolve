@@ -106,4 +106,38 @@ describe("validateEdit", () => {
 			),
 		).toMatch(/must be python/);
 	});
+
+	it("rejects skill content that opens with a frontmatter block", () => {
+		expect(
+			validateEdit(
+				edit({
+					action: "create",
+					kind: "skill",
+					id: "s",
+					title: "t",
+					content: "---\nname: x\n---\n\nbody",
+					arguments: {},
+					reference: { type: "python", import: "pkg.mod", callable: "run" },
+				}),
+				undefined,
+			),
+		).toMatch(/must not start with a `---`/);
+	});
+
+	it("rejects skill content with escaping resource references", () => {
+		expect(
+			validateEdit(
+				edit({
+					action: "create",
+					kind: "skill",
+					id: "s",
+					title: "t",
+					content: "Run `references/../../etc/x.md`.",
+					arguments: {},
+					reference: { type: "python", import: "pkg.mod", callable: "run" },
+				}),
+				undefined,
+			),
+		).toMatch(/escapes the skill directory/);
+	});
 });

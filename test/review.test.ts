@@ -17,6 +17,13 @@ describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/archive/i);
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/rather than delete/i);
 	});
+
+	it("judges skill-related trajectories against the skill-audit quality dimensions", () => {
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/skill-audit/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/structural features/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/REAL trigger scenario/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/skill-creator/i);
+	});
 });
 
 describe("parseAutoRefineReview", () => {

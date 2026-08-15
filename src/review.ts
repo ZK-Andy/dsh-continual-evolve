@@ -57,6 +57,15 @@ refine target: approve with instructions naming the entry ids, and tell the
 planner to archive them (archive hides from injection, data stays restorable)
 rather than delete.
 
+Skill-related trajectories (the evidence concerns creating or improving a
+skill entry) are judged against the DSH skill quality standard (skill-audit
+dimensions: frontmatter routing, the 7 structural features, paragraph
+skeleton, no duplication of official/covered skills). Approve only when the
+trajectory shows a REAL trigger scenario and the resulting skill would meet
+the standard; otherwise decline and say in the rationale what must improve —
+drafting follows skill-creator, and the planner receives the standard as its
+<skill_quality_standard> block.
+
 Return JSON only:
 {
   "shouldRefine": true|false,

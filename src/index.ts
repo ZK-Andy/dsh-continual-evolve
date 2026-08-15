@@ -92,7 +92,10 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 	const engine = createEvolutionEngine(baseDir, {
 		onApplied: (result) => {
 			try {
-				syncSkillsFromResult(skillsRoot, result);
+				const warnings = syncSkillsFromResult(skillsRoot, result);
+				for (const warning of warnings) {
+					ctx.logger("continual-evolve").warn(warning);
+				}
 			} catch (cause) {
 				ctx
 					.logger("continual-evolve")

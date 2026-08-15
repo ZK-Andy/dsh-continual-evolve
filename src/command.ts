@@ -10,6 +10,7 @@ import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { planWithLlm } from "./planner.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { requireGlobalApproval } from "./approval.js";
 import { saveHarnessState } from "./state.js";
 import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
@@ -291,6 +292,8 @@ async function executeEvolveCommand(
 					...(instructions ? { instructions } : {}),
 					global: scope === "global",
 					signal: invocation.signal,
+					// Official skill-creator template facts (fallback: builtin guide).
+					skillsRoot: join(engine.baseDir, "skills"),
 				});
 				if (scope === "global" && opts.requireGlobalApproval && proposal.edits.length > 0) {
 					await requireGlobalApproval(
