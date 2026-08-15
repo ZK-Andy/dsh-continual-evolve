@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a problem with dsh-continual-evolve (install, activation, commands, gate behavior).
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: Run `dsh --version` (or the version you installed from, e.g. 0.1.0-rc.6)
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install the plugin?
+      options:
+        - npm (dsh plugin --profile <name> add dsh-continual-evolve)
+        - GitHub source (dsh plugin --profile <name> add github:ZK-Andy/dsh-continual-evolve)
+        - Local path / workspace link
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: Profile name
+      description: e.g. web, headless, or a custom profile
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Paste the exact error output. If the plugin failed to activate, include the terminal output of `dsh web` or the profile install command.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: evolve-log
+    attributes:
+      label: Plugin log (optional but very helpful)
+      description: Run `/evolve log 200` in the session, or paste the tail of `~/.dsh/evolve/plugin.log`
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What commands/sessions led to the problem?
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked the FAQ (docs/FAQ.md) and the issue list first.
+          required: true

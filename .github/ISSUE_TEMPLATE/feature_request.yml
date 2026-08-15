@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement or new capability for dsh-continual-evolve.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: One or two sentences about the gap you hit in real usage.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How should the plugin behave? Include command/tool names if you have them in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Anything you tried or workarounds you currently use.
