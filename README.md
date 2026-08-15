@@ -237,7 +237,7 @@ acceptance:
 The evaluator does not grade model common sense — it inspects the actual
 harness state under test (grep, `evolve_list`) and scores against it, so a
 harness change measurably moves the score. Earlier runs in the same session
-produced honest `REJECTED` decisions (0 → 0 placeholder cases, and 100 → 100
+produced honest `REJECTED` decisions (0 → 0 stub cases, and 100 → 100
 where the baseline was already perfect).
 
 ## Configuration
@@ -296,7 +296,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **automatic rollback on benchmark rejection** — the acceptance loop is closed: when the code-owned decision rejects a candidate, the refinement is reverted automatically through the same engine path as `/evolve rollback` (deterministic inverse edits, snapshotted and audited; configurable via `autoRollbackOnReject`, on by default). Failures report the manual fallback instead of throwing
   - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
 
-The planned/candidates list is empty for now — future work is driven by real usage.
+The upcoming/candidates list is empty for now — future work is driven by real usage.
 
 ## License
 
