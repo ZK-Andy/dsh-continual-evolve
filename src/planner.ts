@@ -27,9 +27,10 @@ Rules:
 - prompt = narrow behavioral policy addendums; memory = durable facts/preferences/failures;
   skill = repeatable procedures (must carry a python reference {type:"python", import, callable}
   and an arguments object); subagent = reusable delegation roles.
-- Skill entries are authored to the official DSH skill quality standard
-  (skill-creator; the full facts are provided in the <skill_quality_standard>
-  block below): only for a REAL trigger scenario grounded in the trajectory
+- Skill entries are authored to the DSH skill quality standard
+  (skill-creator, distilled from the official deepseek-harness 11 skills;
+  the full facts are provided in the <skill_quality_standard> block below):
+  only for a REAL trigger scenario grounded in the trajectory
   (who, in what real task, what signal) — never invent one to pad the store;
   never duplicate the official 11 skills or existing entries; content is a
   SKILL.md document (frontmatter routing with "use when / do not use when"
@@ -79,10 +80,10 @@ export interface PlanOptions {
 	 */
 	trajectory?: string;
 	/**
-	 * Skills root to read the official skill-creator template facts from
+	 * Skills root to read the skill-creator template facts from
 	 * (`<root>/skill-creator/references/template.md`). When omitted or the
-	 * official skills are not installed, the builtin distilled quality guide
-	 * is injected instead — the skill standard is always present.
+	 * skills are not installed, the builtin distilled quality guide is
+	 * injected instead — the skill standard is always present.
 	 */
 	skillsRoot?: string;
 	global?: boolean;
@@ -104,10 +105,10 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 	// then omitted entirely, keeping an empty trajectory zero-cost).
 	const trajectory = options.trajectory ?? recentUserText(agent);
 
-	// The skill quality standard is always present: the official
-	// skill-creator template facts when installed, the builtin distilled
-	// guide otherwise (~1KB — planning is low-frequency, and the standard
-	// keeps skill proposals from drifting off the official quality bar).
+	// The skill quality standard is always present: the skill-creator
+	// template facts when installed, the builtin distilled guide otherwise
+	// (~1KB — planning is low-frequency, and the standard keeps skill
+	// proposals from drifting off the quality bar).
 	const qualityGuide = skillQualityGuide(options.skillsRoot);
 
 	const userPrompt = [

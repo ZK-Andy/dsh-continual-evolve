@@ -1,6 +1,6 @@
 /**
- * Tests for the skill-quality integration: reading the official
- * skill-creator template facts, the builtin distilled guide fallback, and
+ * Tests for the skill-quality integration: reading the skill-creator
+ * template facts, the builtin distilled guide fallback, and
  * the code-enforced mechanical frontmatter/content rules (mirroring
  * skill-creator's validate-frontmatter.mjs).
  */
@@ -44,7 +44,7 @@ function skillEntry(overrides: Partial<HarnessEntry> = {}): HarnessEntry {
 }
 
 describe("readSkillCreatorTemplate", () => {
-	it("reads the official template facts when installed", () => {
+	it("reads the template facts when installed", () => {
 		const root = tmpRoot();
 		try {
 			const dir = join(root, "skill-creator", "references");
@@ -56,7 +56,7 @@ describe("readSkillCreatorTemplate", () => {
 		}
 	});
 
-	it("returns null when the official skills are not installed", () => {
+	it("returns null when the skills are not installed", () => {
 		expect(readSkillCreatorTemplate(tmpRoot())).toBeNull();
 	});
 
@@ -74,14 +74,14 @@ describe("readSkillCreatorTemplate", () => {
 });
 
 describe("skillQualityGuide", () => {
-	it("prefers the official template over the builtin guide", () => {
+	it("prefers the on-disk template over the builtin guide", () => {
 		const root = tmpRoot();
 		try {
 			const dir = join(root, "skill-creator", "references");
 			mkdirSync(dir, { recursive: true });
 			writeFileSync(join(dir, "template.md"), "# Official facts\n\nOnly real trigger scenarios.\n", "utf8");
 			const guide = skillQualityGuide(root);
-			expect(guide.source).toBe("official");
+			expect(guide.source).toBe("template");
 			expect(guide.text).toContain("Official facts");
 			expect(guide.text).toContain("skill-creator");
 		} finally {
@@ -95,7 +95,7 @@ describe("skillQualityGuide", () => {
 		expect(guide.text).toBe(BUILTIN_SKILL_QUALITY_GUIDE);
 	});
 
-	it("falls back to the builtin guide when the official template is unreadable", () => {
+	it("falls back to the builtin guide when the template is unreadable", () => {
 		const guide = skillQualityGuide(tmpRoot());
 		expect(guide.source).toBe("builtin");
 	});

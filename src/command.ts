@@ -292,7 +292,7 @@ async function executeEvolveCommand(
 					...(instructions ? { instructions } : {}),
 					global: scope === "global",
 					signal: invocation.signal,
-					// Official skill-creator template facts (fallback: builtin guide).
+					// skill-creator template facts (fallback: builtin guide).
 					skillsRoot: join(engine.baseDir, "skills"),
 				});
 				if (scope === "global" && opts.requireGlobalApproval && proposal.edits.length > 0) {

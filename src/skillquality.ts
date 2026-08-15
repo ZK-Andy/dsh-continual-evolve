@@ -1,17 +1,19 @@
 /**
- * Skill-quality integration: makes the official DSH skill standard
- * (skill-creator / skill-audit) usable INSIDE the self-evolution loop.
+ * Skill-quality integration: makes the DSH skill quality standard — carried
+ * by the author-distilled skills skill-creator / skill-audit (distilled
+ * from the official deepseek-harness 11 skills, facts verified against
+ * deepseek-harness 47f9438) — usable INSIDE the self-evolution loop.
  *
  * The planner and review gate are raw `ctx.llm` calls — they do not live in
  * an agent session, so they cannot load skills through the `skill` tool.
- * The official skills stay the single source of truth on disk; this module
- * only:
+ * The skill-creator / skill-audit skills stay the single source of truth on
+ * disk; this module only:
  *
- * 1. reads the official template facts at runtime
+ * 1. reads the template facts at runtime
  *    (`<skillsRoot>/skill-creator/references/template.md`, 85 lines) and
  *    hands them to the planner as a `<skill_quality_standard>` block —
- *    the official file wins, a built-in distilled guide is the fallback for
- *    installs without the official skills;
+ *    the on-disk template wins, a built-in distilled guide is the fallback
+ *    for installs without these skills;
  * 2. code-enforces the mechanical frontmatter rules of
  *    `skill-creator/scripts/validate-frontmatter.mjs` (the platform would
  *    IGNORE a file that fails them), so a skill entry can never materialize
@@ -33,15 +35,16 @@ const CANONICAL_KEYS: Record<string, string> = {
 	userInvocable: "user-invocable",
 };
 
-/** Relative location of the official skill-creator template facts. */
+/** Relative location of the skill-creator template facts. */
 export const SKILL_CREATOR_TEMPLATE_REL = join("skill-creator", "references", "template.md");
 
 /**
- * Read the official skill-creator template facts
- * (`<skillsRoot>/skill-creator/references/template.md`). Returns null when
- * the official skills are not installed — callers fall back to the builtin
- * distilled guide. Reading is a runtime reference, never a copy: template
- * updates in the official skill are picked up automatically.
+ * Read the skill-creator template facts
+ * (`<skillsRoot>/skill-creator/references/template.md`; facts distilled
+ * from the official deepseek-harness skills). Returns null when the skills
+ * are not installed — callers fall back to the builtin distilled guide.
+ * Reading is a runtime reference, never a copy: template updates in the
+ * skill are picked up automatically.
  */
 export function readSkillCreatorTemplate(skillsRoot: string): string | null {
 	const path = join(skillsRoot, SKILL_CREATOR_TEMPLATE_REL);
@@ -55,13 +58,14 @@ export function readSkillCreatorTemplate(skillsRoot: string): string | null {
 }
 
 /**
- * Builtin distilled skill-quality guide (fallback when the official
- * skill-creator template is not installed). Condenses the official template
- * facts — frontmatter schema, the 7 structural features, paragraph skeleton,
- * and the no-duplication / real-trigger rules — so a planner still authors
- * skills to the official standard on installs without the official skills.
+ * Builtin distilled skill-quality guide (fallback when the skill-creator
+ * template is not installed). Condenses the template facts — frontmatter
+ * schema, the 7 structural features, paragraph skeleton, and the
+ * no-duplication / real-trigger rules — so a planner still authors skills
+ * to the standard on installs without the skill-creator / skill-audit
+ * skills.
  */
-export const BUILTIN_SKILL_QUALITY_GUIDE = `DSH skill quality standard (distilled from the official skill-creator template; the full facts live in <skillsRoot>/skill-creator/references/template.md when installed):
+export const BUILTIN_SKILL_QUALITY_GUIDE = `DSH skill quality standard (distilled by the author from the official deepseek-harness 11 skills; the full facts live in <skillsRoot>/skill-creator/references/template.md when installed):
 
 Frontmatter schema (platform-enforced; violations make the platform IGNORE the whole file):
 - name: required, kebab-case only (^[a-z0-9]+(?:-[a-z0-9]+)*$)
@@ -69,7 +73,7 @@ Frontmatter schema (platform-enforced; violations make the platform IGNORE the w
 - invocation booleans accept true/false/yes/no/on/off/1/0; legacy camelCase keys (disableModelInvocation / modelInvocable / userInvocable) are rejected
 - whenToUse (optional): non-empty string; metadata (optional): object
 
-The 7 structural features of good official skills:
+The 7 structural features of the official deepseek-harness skills:
 1. Frontmatter is routing metadata, not a summary (description = when to use / when not to use)
 2. Opens with a boundary declaration (guidance, not a script; mechanical flow skills may omit the disclaimer)
 3. Prerequisites + exclusions: explicit required input, stop when missing (report the required input and stop), excluded scenarios
@@ -83,24 +87,23 @@ Paragraph skeleton (writing order): frontmatter -> H1 + boundary declaration -> 
 Creation rules: only create a skill for a REAL trigger scenario (who, in what real task, what signal) grounded in the trajectory — never invent one to pad the store; do not duplicate the official 11 skills or existing entries; skill bodies should be a SKILL.md document (this is what materializes under <skillsRoot>/<kebab-name>/SKILL.md).`;
 
 export interface SkillQualityGuide {
-	/** Where the guide text came from. */
-	source: "official" | "builtin";
+	/** Where the guide text came from: the on-disk template or the builtin guide. */
+	source: "template" | "builtin";
 	text: string;
 }
 
 /**
- * The quality guide handed to the planner: the official skill-creator
- * template facts when the official skills are installed, otherwise the
- * builtin distilled guide. Never throws — a missing/unreadable template
- * degrades to the builtin.
+ * The quality guide handed to the planner: the skill-creator template facts
+ * when the skills are installed, otherwise the builtin distilled guide.
+ * Never throws — a missing/unreadable template degrades to the builtin.
  */
 export function skillQualityGuide(skillsRoot: string | undefined): SkillQualityGuide {
 	if (skillsRoot) {
-		const official = readSkillCreatorTemplate(skillsRoot);
-		if (official !== null) {
+		const template = readSkillCreatorTemplate(skillsRoot);
+		if (template !== null) {
 			return {
-				source: "official",
-				text: `The official skill-creator template facts (single source of truth, read from <skillsRoot>/skill-creator/references/template.md):\n\n${official}`,
+				source: "template",
+				text: `The skill-creator template facts (distilled from the official deepseek-harness 11 skills, verified against deepseek-harness 47f9438; single source of truth, read from <skillsRoot>/skill-creator/references/template.md):\n\n${template}`,
 			};
 		}
 	}

@@ -20,7 +20,7 @@ describe("PLANNER_SYSTEM_PROMPT", () => {
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/instead of\s+"delete"/i);
 	});
 
-	it("requires skill entries to follow the official DSH skill quality standard", () => {
+	it("requires skill entries to follow the DSH skill quality standard", () => {
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/skill quality standard/i);
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/real trigger scenario/i);
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/7 structural features/i);
@@ -128,15 +128,15 @@ describe("planWithLlm skill quality standard", () => {
 		expect(captured.userPrompt).toContain("7 structural features");
 	});
 
-	it("uses the official skill-creator template facts when installed", async () => {
+	it("uses the skill-creator template facts when installed", async () => {
 		const root = mkdtempSync(join(process.cwd(), "test/.tmp/"));
 		try {
 			const dir = join(root, "skill-creator", "references");
 			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, "template.md"), "# Official marker line\n\nunique-official-fact-123\n", "utf8");
+			writeFileSync(join(dir, "template.md"), "# Marker line\n\nunique-template-fact-123\n", "utf8");
 			const { ctx, captured } = fakeCtx();
 			await planWithLlm(ctx, { agent: agentWith([]), state: emptyState, history: [], skillsRoot: root });
-			expect(captured.userPrompt).toContain("unique-official-fact-123");
+			expect(captured.userPrompt).toContain("unique-template-fact-123");
 			expect(captured.userPrompt).toContain("<skill_quality_standard>");
 		} finally {
 			rmSync(root, { recursive: true, force: true });

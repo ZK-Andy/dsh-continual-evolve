@@ -109,7 +109,7 @@ dsh-continual-evolve/
 │   ├── review.ts         # gate LLM judgment (declines local duplicates of globally covered topics)
 │   ├── approval.ts       # human approval for global edits
 │   ├── skill.ts          # skill materialization ($DSH_HOME/skills/)
-│   ├── skillquality.ts   # official skill standard in the loop (skill-creator template reading + frontmatter code checks)
+│   ├── skillquality.ts   # skill standard in the loop (skill-creator template reading + frontmatter code checks)
 │   ├── mount.ts          # hot-mounted skill plugins (loader.create + boot restore)
 │   ├── benchmark.ts      # benchmark store
 │   ├── rubric.ts         # rubric ACL (AES-256-GCM envelopes, auto-generated local key)
@@ -185,21 +185,23 @@ LangMem; no external services — everything is pure functions):
   already covered by a global entry is declined instead of being re-sedimented
   as a local duplicate.
 
-## Official skill standard in the loop
+## Skill standard in the loop
 
 The planner and the auto-review gate are raw `ctx.llm` calls — they do not
 live in an agent session, so they cannot load skills through the `skill`
-tool. To keep self-evolved skills on the official quality bar, the plugin
-references the official **skill-creator** / **skill-audit** skills at
-runtime (they stay the single source of truth on disk — nothing is copied):
+tool. To keep self-evolved skills on the quality bar, the plugin references
+the **skill-creator** / **skill-audit** skills (user-level skills distilled
+by the author from the official deepseek-harness 11 skills; template facts
+verified against deepseek-harness `47f9438`) at runtime — they stay the
+single source of truth on disk, nothing is copied:
 
 - Every planning call receives a `<skill_quality_standard>` block: the
-  official `skill-creator/references/template.md` facts when the official
-  skills are installed (`<dshHome>/skills/`), or a builtin distilled guide
-  otherwise (~1KB, low-frequency calls). The planner must ground skill
-  proposals in a REAL trigger scenario from the trajectory, must not
-  duplicate the official 11 skills or existing entries, and self-checks
-  every proposed skill against the 7 structural features.
+  `skill-creator/references/template.md` facts when those skills are
+  installed (`<dshHome>/skills/`), or a builtin distilled guide otherwise
+  (~1KB, low-frequency calls). The planner must ground skill proposals in a
+  REAL trigger scenario from the trajectory, must not duplicate the
+  official 11 skills or existing entries, and self-checks every proposed
+  skill against the 7 structural features.
 - The gate judges skill-related trajectories against the skill-audit
   dimensions (frontmatter routing, structural features, paragraph skeleton,
   duplication) and declines proposals that would not meet the standard.
@@ -321,7 +323,7 @@ Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (servi
   - **gate-proposed archiving** — stale entries are a first-class refine target: the planner can emit `action: "archive"` (kind + id only), which stamps `metadata.archivedAt` through the normal apply path — snapshot, version bump, audit event, and a deterministic rollback inverse that restores the pre-archive state. Archive hides from injection but never deletes; re-archiving an archived entry is rejected, and the base system prompt stays immutable
   - **automatic rollback on benchmark rejection** — the acceptance loop is closed: when the code-owned decision rejects a candidate, the refinement is reverted automatically through the same engine path as `/evolve rollback` (deterministic inverse edits, snapshotted and audited; configurable via `autoRollbackOnReject`, on by default). Failures report the manual fallback instead of throwing
   - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
-  - **official skill standard in the loop** — the planner and gate now author and judge skill entries against the official skill-creator/skill-audit standard: every plan call injects the official `template.md` facts (builtin distilled guide as fallback) as `<skill_quality_standard>`; apply code-enforces the frontmatter mechanics (no shadowing `---`, no escaping resource refs); materialized SKILL.md files are re-checked and dangling resource references are logged
+  - **skill standard in the loop** — the planner and gate now author and judge skill entries against the skill-creator/skill-audit standard (author-distilled from the official deepseek-harness 11 skills): every plan call injects the `template.md` facts (builtin distilled guide as fallback) as `<skill_quality_standard>`; apply code-enforces the frontmatter mechanics (no shadowing `---`, no escaping resource refs); materialized SKILL.md files are re-checked and dangling resource references are logged
 
 The upcoming/candidates list is empty for now — future work is driven by real usage.
 
