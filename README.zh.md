@@ -233,6 +233,8 @@ pnpm lint           # oxlint src test
 
 遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
 
+对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0：评估者/评分者分离、失败格协议）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
+
 ## 路线图
 
 **已交付**

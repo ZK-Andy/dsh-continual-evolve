@@ -321,6 +321,8 @@ pnpm lint           # oxlint src test
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
+Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0: evaluator/scorer separation, failure-cell protocol).
+
 ## Roadmap
 
 **Shipped**
