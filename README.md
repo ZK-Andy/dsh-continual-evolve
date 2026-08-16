@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -118,8 +118,9 @@ dsh-continual-evolve/
 │   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
-│   └── service.ts        # evolution engine (onApplied hook)
-└── test/                 # 21 files, 238 tests
+│   ├── service.ts        # evolution engine (onApplied hook)
+│   └── wrapup.ts         # /evolve wrapup — session-end lifecycle (promote → global, archive one-offs)
+└── test/                 # 22 files, 255 tests
 ```
 
 ## Install
@@ -142,6 +143,8 @@ Swap `web` for your profile name (`headless`, or a custom profile).
 /evolve history          applied refinements (ids for rollback)
 /evolve rollback <id>    deterministically revert a refinement
 /evolve plan [msg]       LLM planner against the current store
+/evolve wrapup           assess this session's local entries: promote reusable ones to the
+                         global store (approval required), archive session-specific ones
 /evolve archive <id>     hide an entry from injection (data kept, restorable)
 /evolve unarchive <id>   restore an archived entry
 /evolve log [tail N] [session <id>]  show the recent plugin log (default 50 lines; optional per-session filter)
@@ -180,6 +183,15 @@ LangMem; no external services — everything is pure functions):
   `/evolve unarchive <id>` restores it. Archived entries are marked
   `[archived]` in `evolve_list` and skipped by injection; the overflow count
   excludes them.
+- **Session wrap-up** — a session's local entries otherwise become orphans when
+  it ends (later sessions never see them). `/evolve wrapup` gives them an exit:
+  each entry is audited mechanically (global-coverage detection, already-promoted
+  marker) then classified as `promote` / `archive` / `keep`. Promotions move
+  reusable entries into the global store **through the human approval gate**,
+  keeping their trajectory citation and adding a `sourcedFromLocal=<session>:<id>`
+  back-link; the local copy is then stamped `promotedTo` and retired from
+  injection so it is never offered again. Archive uses the existing restorable
+  archive channel; everything stays snapshot/versioned/rollbackable.
 - **Global-aware gate** — the auto-review gate and planner judge the merged
   global + local state with every entry's real scope labeled, so a topic
   already covered by a global entry is declined instead of being re-sedimented

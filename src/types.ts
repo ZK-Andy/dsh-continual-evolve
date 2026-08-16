@@ -46,6 +46,28 @@ export const SOURCE_SEQS_KEY = "sourceSeqs";
 export const ARCHIVED_AT_KEY = "archivedAt";
 
 /**
+ * Metadata key stamped on a LOCAL entry that was promoted to the global
+ * store by a session wrap-up: the id of the global entry it became. Present
+ * means the entry's lifecycle is finished — it must not be offered for
+ * promotion again (the global copy is the live one, the local copy is a
+ * restorable trace).
+ */
+export const PROMOTED_TO_KEY = "promotedTo";
+
+/**
+ * Metadata key recording when a local entry was promoted to the global
+ * store (companion of {@link PROMOTED_TO_KEY}).
+ */
+export const PROMOTED_AT_KEY = "promotedAt";
+
+/**
+ * Metadata key stamped on a GLOBAL entry created by a session wrap-up
+ * promotion: `<sessionId>:<localEntryId>` — the反向 provenance link from the
+ * cross-session copy back to the session it was distilled from.
+ */
+export const SOURCED_FROM_KEY = "sourcedFromLocal";
+
+/**
  * True when the entry is archived (hidden from injection, restorable).
  * Absent or empty archivedAt means the entry is active.
  */

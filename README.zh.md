@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -95,8 +95,9 @@ dsh-continual-evolve/
 │   ├── evaluate.ts       # 评估矩阵执行器（结构化输出子代理）
 │   ├── pool.ts           # 评估运行的有界并发工作池
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
-│   └── service.ts        # 进化引擎（onApplied 钩子）
-└── test/                 # 21 个文件，238 个测试
+│   ├── service.ts        # 进化引擎（onApplied 钩子）
+│   └── wrapup.ts         # /evolve wrapup — 会话收尾生命周期（提升到 global、归档一次性条目）
+└── test/                 # 22 个文件，255 个测试
 ```
 
 ## 安装
@@ -119,6 +120,8 @@ dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 /evolve history               已应用的 refinement（回滚用 id）
 /evolve rollback <id>         确定性回滚某个 refinement
 /evolve plan [msg]            LLM 规划器
+/evolve wrapup                评估本会话 local 条目：可复用的提升到 global（需审批），
+                              会话特有的一次性条目归档
 /evolve archive <id>          归档条目——不再注入（数据保留，可恢复）
 /evolve unarchive <id>        恢复已归档条目
 /evolve log [tail N] [session <id>] 查看最近插件日志（默认 50 行；可加会话过滤）
@@ -141,6 +144,7 @@ dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 - **打分排序注入**——某类条目超过 6 条封顶时，注入块不再固定取前 6 条：先按与 agent 最近直接用户消息的相关度打分（关键词/BM25 级别，标题命中权重 2×），再按新鲜度排序（`updated_at`，30 天半衰期），让"最新 + 最相关"的条目填满封顶。空 store 零 token 行为不变。
 - **轨迹引用**——每条新沉淀条目都会记录 `metadata.sourceSession` + `metadata.sourceSeqs`，指向它蒸馏自的直接用户消息（DSH 会话是事件溯源、seq 连续，引用可展开回持久会话日志）。列表显示 `src=<sessionId>:<seqs>`；旧条目不迁移也不报错。
 - **归档**——`/evolve archive <id>` 让条目不再注入（`metadata.archivedAt`，数据保留、与快照/回滚兼容），`/evolve unarchive <id>` 恢复。归档条目在 `evolve_list` 中标记 `[archived]`，注入跳过，溢出计数不含它们。
+- **会话收尾**——否则会话结束时的 local 条目会变成孤岛（后续会话永远看不到）。`/evolve wrapup` 给它们一个归宿：先机械审计（global 覆盖检测、已提升标记），再由模型逐条分类为 `promote` / `archive` / `keep`。提升把可复用条目写入 global store——**经人工审批门禁**，保留轨迹引用并追加 `sourcedFromLocal=<session>:<id>` 反向回引；本地副本随后盖 `promotedTo` 戳退出注入，永不再被提议。归档复用现有可恢复通道；一切仍走快照/版本/可回滚。
 - **global 感知门禁**——自动 review 门禁与规划器评审的是合并后的 global + local 状态，每条条目标注真实 scope；global 已覆盖的主题会被 declined，不再重复沉淀为 local 条目。
 
 ## 自进化环中的技能标准

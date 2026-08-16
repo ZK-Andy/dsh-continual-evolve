@@ -4,14 +4,15 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
-import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementResult } from "./types.js";
-import { ARCHIVED_AT_KEY } from "./types.js";
+import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementProposal, RefinementResult } from "./types.js";
+import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCED_FROM_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { planWithLlm } from "./planner.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { requireGlobalApproval } from "./approval.js";
+import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates } from "./wrapup.js";
 import { saveHarnessState } from "./state.js";
 import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
 import { blockEvolutionGoal, completeEvolutionGoal, goalServiceOf, goalStatusText, upsertEvolutionGoal } from "./goal.js";
@@ -28,6 +29,8 @@ const USAGE = `Usage:
   /evolve history [global] show applied refinements (rollback ids)
   /evolve rollback <id> [global]  deterministically revert a refinement
   /evolve plan [msg]       run the LLM planner against the current store
+  /evolve wrapup           assess this session's local entries: promote reusable ones
+                           to the global store (approval required), archive one-offs
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
   /evolve log [tail N]            show the recent plugin log (default 50 lines)
@@ -310,6 +313,9 @@ async function executeEvolveCommand(
 				});
 				return success(renderResult(result));
 			}
+			case "wrapup": {
+				return await executeWrapupCommand(ctx, engine, invocation);
+			}
 			case "goal": {
 				return executeGoalCommand(ctx, invocation, rest);
 			}
@@ -362,6 +368,150 @@ function executeGoalCommand(ctx: Context, invocation: CommandInvocation, rest: s
 	} catch (cause) {
 		return error(cause instanceof Error ? cause.message : String(cause));
 	}
+}
+
+async function executeWrapupCommand(
+	ctx: Context,
+	engine: EvolutionEngine,
+	invocation: CommandInvocation,
+): Promise<CommandResult> {
+	const sessionId = invocation.agent.id;
+	const localState = engine.load("local", sessionId);
+	const globalState = engine.load("global", undefined);
+	const candidates = listLocalCandidates(localState, globalState);
+	if (candidates.length === 0) {
+		return success(
+			`(nothing to wrap up: ${sessionId}'s local store has no active, un-promoted entries — use /evolve list to inspect it)`,
+		);
+	}
+
+	// 1. Classify: the model judges each audited candidate's fate.
+	const assessment = await assessLocalEntries(ctx, invocation.agent, candidates, { signal: invocation.signal });
+	const byKey = new Map(candidates.map((candidate) => [candidateKey(candidate.kind, candidate.id), candidate]));
+
+	// 2. Deterministic guard: re-check every promote verdict against the live
+	//    global store right before it lands (state may have changed mid-call).
+	const { promotable, skipped } = filterPromotable(assessment.items, globalState, candidates);
+	const promoteItems = promotable.filter((item) => item.verdict === "promote");
+	const archiveItems = assessment.items.filter((item) => item.verdict === "archive");
+	const keepItems = assessment.items.filter((item) => item.verdict === "keep");
+
+	// 3. Report the assessment before touching anything.
+	const lines: string[] = [
+		`wrapup assessment (${sessionId}): ${candidates.length} candidates${candidates.some((c) => c.coveredGlobally) ? `, ${candidates.filter((c) => c.coveredGlobally).length} covered globally` : ""}`,
+		`${assessment.rationale}`,
+	];
+	for (const [heading, items] of [
+		["PROMOTE (to global)", promoteItems],
+		["ARCHIVE", archiveItems],
+		["KEEP", keepItems],
+	] as const) {
+		lines.push(`${heading}: ${items.length}`);
+		for (const item of items) {
+			const candidate = byKey.get(item.key);
+			const title = candidate ? candidate.title : item.key;
+			lines.push(`- ${item.key} "${title}" — ${item.reason}`);
+		}
+	}
+	for (const skip of skipped) {
+		lines.push(`- promote skipped: ${skip.key} — ${skip.reason}`);
+	}
+	lines.push("");
+
+	const applied: string[] = [];
+
+	// 4. Promotions: a governed resource — human approval for the global write.
+	//    The local copy is then stamped (promotedTo + archivedAt) so the entry
+	//    stops being injected and is never offered for promotion again.
+	if (promoteItems.length > 0) {
+		const what = `wrapup 将提升 ${promoteItems.length} 条 local 条目到跨会话 global store：\n${promoteItems
+			.map((item) => {
+				const candidate = byKey.get(item.key);
+				return `- ${item.key} "${candidate?.title ?? item.key}"`;
+			})
+			.join("\n")}`;
+		let promoteAllowed = true;
+		try {
+			await requireGlobalApproval(ctx, invocation.agent, invocation.signal, what);
+		} catch (cause) {
+			promoteAllowed = false;
+			const message = `promote rejected — nothing was promoted (${cause instanceof Error ? cause.message : String(cause)})`;
+			applied.push(message);
+			lines.push(message);
+		}
+		if (promoteAllowed) {
+			for (const item of promoteItems) {
+				const candidate = byKey.get(item.key);
+				if (!candidate) continue;
+				const now = new Date().toISOString();
+				const globalProposal: RefinementProposal = {
+					summary: `wrapup: promote local ${item.key} to the global store`,
+					rationale: item.reason,
+					expectedOutcome: `The entry is now visible to every session via the global store (sourcedFromLocal=${sessionId}:${candidate.id}).`,
+					edits: [
+						{
+							action: "create",
+							kind: candidate.kind,
+							id: candidate.id,
+							title: candidate.title,
+							content: candidate.content,
+							path: candidate.path,
+							metadata: {
+								...candidate.metadata,
+								[SOURCED_FROM_KEY]: `${sessionId}:${candidate.id}`,
+								[PROMOTED_AT_KEY]: now,
+							},
+						},
+					],
+				};
+				const globalResult = engine.apply("global", undefined, globalProposal, { scope: "global" });
+				const createdId = globalResult.appliedEdits.find((edit) => edit.applied)?.id ?? candidate.id;
+				const localProposal: RefinementProposal = {
+					summary: `wrapup: stamp local ${item.key} as promoted to ${createdId} and retire it from injection`,
+					rationale: item.reason,
+					expectedOutcome: `The local copy keeps its data but stops being injected; the global copy is the live one.`,
+					edits: [
+						{
+							action: "update",
+							kind: candidate.kind,
+							id: candidate.id,
+							title: candidate.title,
+							content: candidate.content,
+							metadata: {
+								...candidate.metadata,
+								[PROMOTED_TO_KEY]: createdId,
+								[PROMOTED_AT_KEY]: now,
+								[ARCHIVED_AT_KEY]: now,
+							},
+						},
+					],
+				};
+				const localResult = engine.apply("local", sessionId, localProposal, { scope: "local", baselineState: localState });
+				applied.push(`promoted ${item.key} → global:${createdId} (${globalResult.id}; local stamped ${localResult.id})`);
+			}
+		}
+	}
+	// 5. Archives: deterministic local action (hidden from injection, data kept
+	//    restorable) — no approval needed.
+	for (const item of archiveItems) {
+		const candidate = byKey.get(item.key);
+		if (!candidate) continue;
+		const result = engine.apply(
+			"local",
+			sessionId,
+			{
+				summary: `wrapup: archive local ${item.key} — ${item.reason}`,
+				rationale: item.reason,
+				expectedOutcome: `The entry stops being injected but stays restorable.`,
+				edits: [{ action: "archive", kind: candidate.kind, id: candidate.id }],
+			},
+			{ scope: "local", baselineState: localState },
+		);
+		applied.push(`archived ${item.key} (${result.id})`);
+	}
+
+	lines.push(...(applied.length > 0 ? applied : ["(no changes applied — all entries kept)"]));
+	return success(lines.join("\n"));
 }
 
 async function executeMountCommand(
