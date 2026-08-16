@@ -119,7 +119,7 @@ dsh-continual-evolve/
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   ├── service.ts        # evolution engine (onApplied hook)
-│   └── wrapup.ts         # /evolve wrapup — session-end lifecycle (promote → global, archive one-offs)
+│   └── wrapup.ts         # /evolve wrapup — session-end lifecycle (promote / split-promote → global, guarded archive)
 └── test/                 # 22 files, 255 tests
 ```
 
@@ -184,14 +184,23 @@ LangMem; no external services — everything is pure functions):
   `[archived]` in `evolve_list` and skipped by injection; the overflow count
   excludes them.
 - **Session wrap-up** — a session's local entries otherwise become orphans when
-  it ends (later sessions never see them). `/evolve wrapup` gives them an exit:
-  each entry is audited mechanically (global-coverage detection, already-promoted
-  marker) then classified as `promote` / `archive` / `keep`. Promotions move
-  reusable entries into the global store **through the human approval gate**,
-  keeping their trajectory citation and adding a `sourcedFromLocal=<session>:<id>`
-  back-link; the local copy is then stamped `promotedTo` and retired from
-  injection so it is never offered again. Archive uses the existing restorable
-  archive channel; everything stays snapshot/versioned/rollbackable.
+  it ends (later sessions never see them). `/evolve wrapup` gives them an exit.
+  Each entry is audited mechanically — global-coverage is judged by **title
+  similarity only** (a bare id collision with a different title is intentionally
+  NOT coverage; the actual matching global titles are shown to the assessor so
+  it judges against real content) — then classified as `promote` / `archive` /
+  `keep`. Promotions move reusable entries into the global store **through the
+  human approval gate**, keeping their trajectory citation and adding a
+  `sourcedFromLocal=<session>:<id>` back-link; the local copy is stamped
+  `promotedTo` and retired from injection so it is never offered again.
+  **Split promotion** (A-form): a mixed entry (durable facts + session snapshot)
+  can be archived while carrying a cleaned `promote` sub-object — only the
+  durable part lands globally, the snapshot stays in the archive. A **symmetric
+  archive guard** requires user confirmation before an archive that is NOT
+  globally covered AND was distilled from real user messages hides that content
+  from future sessions (over-archiving gets the same protection as
+  over-writing); operational entries still archive silently. Everything stays
+  snapshot/versioned/rollbackable.
 - **Global-aware gate** — the auto-review gate and planner judge the merged
   global + local state with every entry's real scope labeled, so a topic
   already covered by a global entry is declined instead of being re-sedimented

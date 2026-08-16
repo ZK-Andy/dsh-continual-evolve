@@ -96,7 +96,7 @@ dsh-continual-evolve/
 │   ├── pool.ts           # 评估运行的有界并发工作池
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   ├── service.ts        # 进化引擎（onApplied 钩子）
-│   └── wrapup.ts         # /evolve wrapup — 会话收尾生命周期（提升到 global、归档一次性条目）
+│   └── wrapup.ts         # /evolve wrapup — 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档）
 └── test/                 # 22 个文件，255 个测试
 ```
 
@@ -144,7 +144,7 @@ dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 - **打分排序注入**——某类条目超过 6 条封顶时，注入块不再固定取前 6 条：先按与 agent 最近直接用户消息的相关度打分（关键词/BM25 级别，标题命中权重 2×），再按新鲜度排序（`updated_at`，30 天半衰期），让"最新 + 最相关"的条目填满封顶。空 store 零 token 行为不变。
 - **轨迹引用**——每条新沉淀条目都会记录 `metadata.sourceSession` + `metadata.sourceSeqs`，指向它蒸馏自的直接用户消息（DSH 会话是事件溯源、seq 连续，引用可展开回持久会话日志）。列表显示 `src=<sessionId>:<seqs>`；旧条目不迁移也不报错。
 - **归档**——`/evolve archive <id>` 让条目不再注入（`metadata.archivedAt`，数据保留、与快照/回滚兼容），`/evolve unarchive <id>` 恢复。归档条目在 `evolve_list` 中标记 `[archived]`，注入跳过，溢出计数不含它们。
-- **会话收尾**——否则会话结束时的 local 条目会变成孤岛（后续会话永远看不到）。`/evolve wrapup` 给它们一个归宿：先机械审计（global 覆盖检测、已提升标记），再由模型逐条分类为 `promote` / `archive` / `keep`。提升把可复用条目写入 global store——**经人工审批门禁**，保留轨迹引用并追加 `sourcedFromLocal=<session>:<id>` 反向回引；本地副本随后盖 `promotedTo` 戳退出注入，永不再被提议。归档复用现有可恢复通道；一切仍走快照/版本/可回滚。
+- **会话收尾**——否则会话结束时的 local 条目会变成孤岛（后续会话永远看不到）。`/evolve wrapup` 给它们一个归宿：先机械审计——**全局覆盖只看标题相似**（裸同 id 但标题迥异**不算**覆盖；实际命中的全局标题会展示给分类器，让它对照真实内容判断）——再由模型逐条分类为 `promote` / `archive` / `keep`。提升把可复用条目写入 global store——**经人工审批门禁**，保留轨迹引用并追加 `sourcedFromLocal=<session>:<id>` 反向回引；本地副本随后盖 `promotedTo` 戳退出注入，永不再被提议。**拆解提升（A 形）**：混合条目（持久事实 + 会话快照）可整体归档、同时带一个清洗过的 `promote` 子对象——只有持久部分落进 global，快照留在归档里。**对称归档守卫**：未被全局覆盖、且源自真实用户消息的归档，先征求用户确认才隐藏内容（防过度归档与防过度写入获得同等保护）；操作性条目仍静默归档。一切仍走快照/版本/可回滚。
 - **global 感知门禁**——自动 review 门禁与规划器评审的是合并后的 global + local 状态，每条条目标注真实 scope；global 已覆盖的主题会被 declined，不再重复沉淀为 local 条目。
 
 ## 自进化环中的技能标准

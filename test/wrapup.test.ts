@@ -9,8 +9,12 @@ import { PROMOTED_TO_KEY, emptyHarnessState } from "../src/types.js";
 import {
 	filterPromotable,
 	globalCoverageDetected,
+	globalHintsFor,
 	listLocalCandidates,
+	needsArchiveReview,
 	parseWrapupAssessment,
+	splitArchiveGuards,
+	splitPromoteBlocked,
 	type WrapupCandidate,
 } from "../src/wrapup.js";
 
@@ -43,6 +47,7 @@ function candidateOf(entry: HarnessEntry, coveredGlobally = false): WrapupCandid
 		version: entry.version,
 		metadata: entry.metadata,
 		coveredGlobally,
+		globalHints: [],
 	};
 }
 
@@ -55,9 +60,14 @@ describe("globalCoverageDetected", () => {
 		return state;
 	}
 
-	it("detects coverage by the same entry id", () => {
+	it("does NOT treat a bare same-id collision as coverage (weak signal)", () => {
 		const state = globalWith("memory", { "note_x": { title: "A totally different note" } });
-		expect(globalCoverageDetected(state, "memory", { id: "note_x", title: "anything" })).toBe(true);
+		expect(globalCoverageDetected(state, "memory", { id: "note_x", title: "anything" })).toBe(false);
+	});
+
+	it("treats same id WITH a near-identical title as coverage", () => {
+		const state = globalWith("memory", { "note_x": { title: "用户画像（持续更新）" } });
+		expect(globalCoverageDetected(state, "memory", { id: "note_x", title: "用户画像 持续更新" })).toBe(true);
 	});
 
 	it("detects coverage by a normalized-equal title", () => {
@@ -194,5 +204,116 @@ describe("filterPromotable", () => {
 		);
 		expect(split.promotable).toEqual([]);
 		expect(split.skipped[0]?.reason).toBe("not in the audited candidate list");
+	});
+});
+
+describe("globalHintsFor", () => {
+	function globalWith(kind: RefinementKind, records: Record<string, Partial<HarnessEntry>>): HarnessState {
+		const state = emptyHarnessState();
+		for (const [id, over] of Object.entries(records)) {
+			state.entries[kind][id] = entry(id, kind, over.title ?? id, over);
+		}
+		return state;
+	}
+
+	it("surfaces a bare same-id collision (weak signal) with its real title", () => {
+		const state = globalWith("memory", { "memory": { title: "用户画像（持续更新）" } });
+		const hints = globalHintsFor(state, "memory", { id: "memory", title: "用户产品愿景与收入需求（本会话）" });
+		expect(hints).toEqual([{ id: "memory", title: "用户画像（持续更新）" }]);
+	});
+
+	it("surfaces title-similar global entries", () => {
+		const state = globalWith("memory", {
+			"a": { title: "产品愿景与成功标准" },
+			"b": { title: "完全无关的运维笔记" },
+		});
+		const hints = globalHintsFor(state, "memory", { id: "c", title: "产品愿景 与 成功标准（补充）" });
+		expect(hints.map((hint) => hint.id)).toEqual(["a"]);
+	});
+
+	it("returns empty when no global entry touches the topic", () => {
+		expect(globalHintsFor(emptyHarnessState(), "memory", { id: "x", title: "anything" })).toEqual([]);
+	});
+});
+
+describe("split promotion (A-form)", () => {
+	const candidates: WrapupCandidate[] = [candidateOf(entry("mem_1", "memory", "混合条目：持久愿景 + 会话快照", { metadata: { sourceSeqs: [1, 2], sourceSession: "session-x" } }))];
+
+	it("parses a cleaned promote sub-object on an archive verdict", () => {
+		const text = JSON.stringify({
+			items: [
+				{
+					key: "memory:mem_1",
+					verdict: "archive",
+					reason: "snapshot half",
+					promote: { title: "用户产品愿景（持久）", content: "电脑端写作 agent，番茄签约 + 月收入 500。" },
+				},
+			],
+		});
+		const assessment = parseWrapupAssessment(text, candidates);
+		const item = assessment.items.find((i) => i.key === "memory:mem_1");
+		expect(item?.verdict).toBe("archive");
+		expect(item?.promote?.title).toBe("用户产品愿景（持久）");
+		expect(item?.promote?.content).toContain("月收入 500");
+	});
+
+	it("degrades a malformed promote sub-object to a plain archive", () => {
+		const text = JSON.stringify({
+			items: [
+				{ key: "memory:mem_1", verdict: "archive", reason: "x", promote: { title: "", content: "  " } },
+				{ key: "memory:mem_1", verdict: "keep", reason: "dup", promote: { title: "no", content: "never accepted on keep" } },
+			],
+		});
+		const assessment = parseWrapupAssessment(text, candidates);
+		// Both items reference mem_1; keep wins the parse order but no promote payload survives.
+		expect(assessment.items.filter((i) => i.key === "memory:mem_1").every((i) => !i.promote)).toBe(true);
+	});
+
+	it("splitPromoteBlocked rejects a cleaned title already covered globally", () => {
+		const global = emptyHarnessState();
+		global.entries.memory["g1"] = entry("g1", "memory", "用户产品愿景与成功标准");
+		const item = { key: "memory:mem_1", verdict: "archive" as const, reason: "x", promote: { title: "用户产品愿景与成功标准 2", content: "body" } };
+		expect(splitPromoteBlocked(item, global, "memory")).toBeTruthy();
+	});
+
+	it("splitPromoteBlocked allows a fresh cleaned title", () => {
+		const item = { key: "memory:mem_1", verdict: "archive" as const, reason: "x", promote: { title: "全新主题", content: "body" } };
+		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory")).toBeUndefined();
+	});
+});
+
+describe("archive review guard (symmetric)", () => {
+	const withSource = entry("m1", "memory", "有来源的实质条目", { metadata: { sourceSeqs: [10], sourceSession: "session-x" } });
+	const withCoverage = entry("m2", "memory", "有来源但已被全局覆盖", { metadata: { sourceSeqs: [11], sourceSession: "session-x" } });
+	const noSource = entry("m3", "memory", "无来源操作性条目");
+	const splitArchive = entry("m4", "memory", "拆解归档", { metadata: { sourceSeqs: [12], sourceSession: "session-x" } });
+
+	it("requires review only when not covered AND distilled from real messages", () => {
+		const candidates = [
+			candidateOf(withSource),
+			candidateOf(withCoverage, /* coveredGlobally */ true),
+			candidateOf(noSource),
+		];
+		expect(needsArchiveReview({ key: "memory:m1", verdict: "archive", reason: "" }, candidates[0]!)).toBe(true);
+		expect(needsArchiveReview({ key: "memory:m2", verdict: "archive", reason: "" }, candidates[1]!)).toBe(false);
+		expect(needsArchiveReview({ key: "memory:m3", verdict: "archive", reason: "" }, candidates[2]!)).toBe(false);
+	});
+
+	it("partitions silent vs review archives, and keeps split archives silent", () => {
+		const candidates = [
+			candidateOf(withSource),
+			candidateOf(withCoverage, /* coveredGlobally */ true),
+			candidateOf(noSource),
+			candidateOf(splitArchive),
+		];
+		const items = [
+			{ key: "memory:m1", verdict: "archive" as const, reason: "sourced, uncovered → review" },
+			{ key: "memory:m2", verdict: "archive" as const, reason: "covered → silent" },
+			{ key: "memory:m3", verdict: "archive" as const, reason: "no source → silent" },
+			{ key: "memory:m4", verdict: "archive" as const, reason: "split → silent", promote: { title: "t", content: "c" } },
+		];
+		const { silent, review } = splitArchiveGuards(items, candidates);
+		expect(review.map((i) => i.key)).toEqual(["memory:m1"]);
+		expect(silent.map((i) => i.key).sort()).toEqual(["memory:m2", "memory:m3", "memory:m4"]);
 	});
 });
