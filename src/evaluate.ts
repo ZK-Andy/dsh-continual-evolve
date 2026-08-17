@@ -186,6 +186,9 @@ async function runUnit(
 	c: BenchmarkCase,
 	run: number,
 ): Promise<CellScore> {
+	// Gap C3: track wall-clock duration of the entire cell evaluation.
+	const cellStart = Date.now();
+
 	// The ONLY rubric decryption point: the envelope is opened here, in the
 	// host, and the plaintext goes ONLY into the reviewer prompt — the
 	// executor branch never touches it (gap A1).
@@ -193,7 +196,7 @@ async function runUnit(
 	try {
 		rubric = decryptRubric(c.rubric, options.rubricKey ?? devRubricKey());
 	} catch (cause) {
-		return failedCell(c.id, run, `rubric decrypt failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+		return { ...failedCell(c.id, run, `rubric decrypt failed: ${cause instanceof Error ? cause.message : String(cause)}`), durationMs: Date.now() - cellStart };
 	}
 
 	// Runtime evidence (gap A3): record actual provider/model from the host,
@@ -242,7 +245,7 @@ async function runUnit(
 			executorRun.dispose();
 		}
 	} catch (cause) {
-		return { ...failedCell(c.id, run, `executor failed: ${cause instanceof Error ? cause.message : String(cause)}`), provider: actualProvider, model: actualModel, caseHash: hash };
+		return { ...failedCell(c.id, run, `executor failed: ${cause instanceof Error ? cause.message : String(cause)}`), provider: actualProvider, model: actualModel, caseHash: hash, durationMs: Date.now() - cellStart };
 	}
 
 	// Stage 2: independent reviewer — rubric + evidence, NO task execution.
@@ -280,12 +283,12 @@ async function runUnit(
 			if (!cell) {
 				throw new Error("reviewer returned neither a structured value nor usable text");
 			}
-			return { ...cell, ...(sessionId !== undefined ? { sessionId } : {}), provider: actualProvider, model: actualModel, caseHash: hash };
+			return { ...cell, ...(sessionId !== undefined ? { sessionId } : {}), provider: actualProvider, model: actualModel, caseHash: hash, durationMs: Date.now() - cellStart };
 		} finally {
 			reviewerRun.dispose();
 		}
 	} catch (cause) {
-		return { ...failedCell(c.id, run, `reviewer failed: ${cause instanceof Error ? cause.message : String(cause)}`), provider: actualProvider, model: actualModel, caseHash: hash };
+		return { ...failedCell(c.id, run, `reviewer failed: ${cause instanceof Error ? cause.message : String(cause)}`), provider: actualProvider, model: actualModel, caseHash: hash, durationMs: Date.now() - cellStart };
 	}
 }
 

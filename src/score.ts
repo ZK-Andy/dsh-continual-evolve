@@ -30,6 +30,8 @@ export interface AggregateResult extends Record<string, number | null> {
 	failed: number;
 	/** Total cells considered (ok + failed). */
 	total: number;
+	/** Gap C3: total wall-clock duration of all cells in milliseconds. */
+	totalDurationMs: number;
 }
 
 /**
@@ -55,11 +57,18 @@ export function aggregate(cells: readonly CellScore[]): AggregateResult {
 		perCase[caseId] = mean(scores);
 	}
 	const all = [...byCase.values()].flat();
+	let totalDurationMs = 0;
+	for (const cell of cells) {
+		if (cell.durationMs !== undefined && cell.durationMs >= 0) {
+			totalDurationMs += cell.durationMs;
+		}
+	}
 	return {
 		...perCase,
 		overall: all.length > 0 ? mean(all) : null,
 		failed,
 		total: cells.length,
+		totalDurationMs,
 	};
 }
 
@@ -93,6 +102,12 @@ export function decisionReport(reference: EvaluationEntry, candidate: Evaluation
 	const candFailed = candidate.aggregate.failed ?? 0;
 	if (refFailed > 0 || candFailed > 0) {
 		lines.push(`failed cells: reference ${refFailed}/${reference.aggregate.total ?? 0} · candidate ${candFailed}/${candidate.aggregate.total ?? 0}`);
+	}
+	// Gap C3: show duration summary when available.
+	const refDuration = reference.aggregate.totalDurationMs ?? 0;
+	const candDuration = candidate.aggregate.totalDurationMs ?? 0;
+	if (refDuration > 0 || candDuration > 0) {
+		lines.push(`duration: ${formatDuration(refDuration)} → ${formatDuration(candDuration)}`);
 	}
 	lines.push(
 		decision.accepted
@@ -158,4 +173,10 @@ function clampScore(score: number): number {
 
 function round2(value: number): number {
 	return Math.round(value * 100) / 100;
+}
+
+/** Gap C3: human-readable duration (ms → "1.2s" or "340ms"). */
+function formatDuration(ms: number): string {
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	return `${(ms / 1000).toFixed(1)}s`;
 }

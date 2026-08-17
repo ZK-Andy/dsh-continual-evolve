@@ -158,3 +158,52 @@ describe("decisionReport with failed cells", () => {
 		expect(lines).toMatch(/failed cells: reference 1\/2 · candidate 1\/2/);
 	});
 });
+
+// ── Gap C3: duration tracking ─────────────────────────────────────────
+
+describe("aggregate duration (C3)", () => {
+	it("sums durationMs from all cells", () => {
+		const c: CellScore[] = [
+			{ caseId: "a", run: 1, status: "ok", score: 80, passed: true, notes: "", durationMs: 1000 },
+			{ caseId: "a", run: 2, status: "ok", score: 90, passed: true, notes: "", durationMs: 1500 },
+			{ caseId: "b", run: 1, status: "failed", score: 0, passed: false, notes: "crash", durationMs: 200 },
+		];
+		const aggr = aggregate(c);
+		expect(aggr.totalDurationMs).toBe(2700);
+	});
+
+	it("handles missing durationMs gracefully", () => {
+		const c: CellScore[] = [
+			{ caseId: "a", run: 1, status: "ok", score: 80, passed: true, notes: "" },
+			{ caseId: "b", run: 1, status: "ok", score: 90, passed: true, notes: "", durationMs: 500 },
+		];
+		const aggr = aggregate(c);
+		expect(aggr.totalDurationMs).toBe(500);
+	});
+
+	it("returns 0 when no cells have durationMs", () => {
+		const aggr = aggregate(cells([["a", 80]]));
+		expect(aggr.totalDurationMs).toBe(0);
+	});
+});
+
+describe("decisionReport duration (C3)", () => {
+	it("shows duration summary when available", () => {
+		const reference = entryFromCells("ref", cells([["a", 70]]));
+		// Inject durationMs into the aggregate manually
+		reference.aggregate.totalDurationMs = 5000;
+		const candidate = entryFromCells("cand", cells([["a", 90]]));
+		candidate.aggregate.totalDurationMs = 3000;
+		const decision = decide(reference, candidate, OPTS);
+		const lines = decisionReport(reference, candidate, decision);
+		expect(lines.some((l) => l.includes("duration:"))).toBe(true);
+	});
+
+	it("omits duration when both are 0", () => {
+		const reference = entryFromCells("ref", cells([["a", 70]]));
+		const candidate = entryFromCells("cand", cells([["a", 90]]));
+		const decision = decide(reference, candidate, OPTS);
+		const lines = decisionReport(reference, candidate, decision);
+		expect(lines.some((l) => l.includes("duration:"))).toBe(false);
+	});
+});

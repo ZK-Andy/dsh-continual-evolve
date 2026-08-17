@@ -101,6 +101,11 @@ export interface CellScore {
 	 * absence means pre-A3 cell (backward compatible).
 	 */
 	caseHash?: string;
+	/**
+	 * Gap C3: wall-clock duration of this cell's evaluation (both executor +
+	 * reviewer subagents) in milliseconds. Absent means pre-C3 cell.
+	 */
+	durationMs?: number;
 }
 
 export interface EvaluationEntry {
