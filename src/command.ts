@@ -16,6 +16,7 @@ import { saveHarnessState } from "./state.js";
 import { appendResult, storePaths } from "./store.js";
 import { entrySourceOf } from "./source.js";
 import { filterLogBySession, formatLogLine, pluginLogFilePath } from "./logfile.js";
+import { readBenchmarkFailures, readReviewFailures, summarizeFailures, formatFailureSummary } from "./failures.js";
 import { executeGoalCommand } from "./goal-command.js";
 import { executeMountCommand, executeUnmountCommand } from "./mount-command.js";
 import { executeBenchmarkCommand } from "./benchmark-command.js";
@@ -32,6 +33,7 @@ const USAGE = `Usage:
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
   /evolve log [tail N]            show the recent plugin log (default 50 lines)
+  /evolve failures               aggregated failure counts (gate + benchmark, by class)
   /evolve export [global] <path>  backup a store to a JSON file
   /evolve import [global] <path>  restore a store from an export file
   /evolve mount <skillId>    hot-mount a skill entry as a live cordis plugin
@@ -199,6 +201,22 @@ async function executeEvolveCommand(
 					{ scope },
 				);
 				return success(renderResult(result));
+			}
+			case "failures": {
+				// /evolve failures — failure-signature aggregation (D1 observation):
+				// failed review-gate records + failed benchmark cells, counted by class.
+				const failed = [...readReviewFailures(engine.baseDir), ...readBenchmarkFailures(engine.baseDir)];
+				const summary = summarizeFailures(failed);
+				const parts = formatFailureSummary(summary).split("\n");
+				const recent = failed
+					.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""))
+					.slice(0, 10)
+					.map((f) => `  [${f.timestamp ?? "(benchmark)"}] ${f.kind} · ${f.source}: ${f.message.slice(0, 140)}`);
+				if (recent.length > 0) {
+					parts.push("recent 10:");
+					parts.push(...recent);
+				}
+				return success(parts.join("\n"));
 			}
 			case "log": {
 				// /evolve log [tail N] [session <sessionId>]
