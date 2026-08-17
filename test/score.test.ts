@@ -257,3 +257,41 @@ describe("flagMaterialDrift (A3)", () => {
 		expect(decide(reference, candidate, OPTS).accepted).toBe(false);
 	});
 });
+
+// ── Regression: duration must never be treated as a case score ─────────
+
+describe("decide duration isolation (C3 regression)", () => {
+	const reference = entryFromCells("ref", cells([["a", 70], ["b", 80]]));
+
+	it("accepts a higher-scoring candidate whose run took longer (duration is not a grade)", () => {
+		const candidate = entryFromCells("cand", cells([["a", 90], ["b", 85]]));
+		reference.aggregate.totalDurationMs = 5000;
+		candidate.aggregate.totalDurationMs = 6000; // slower, but duration must not reject
+		expect(decide(reference, candidate, OPTS).accepted).toBe(true);
+	});
+
+	it("accepts a candidate with real per-case gains even when totalDurationMs changed (regression direction)", () => {
+		// The original bug rejected this candidate ("82854 < 85127 - 0"):
+		// duration was iterated as a case score. A shorter run is improvement.
+		const candidate = entryFromCells("cand", cells([["a", 90], ["b", 85]]));
+		reference.aggregate.totalDurationMs = 85127;
+		candidate.aggregate.totalDurationMs = 82854;
+		expect(decide(reference, candidate, OPTS).accepted).toBe(true);
+	});
+
+	it("still rejects real score regressions when duration metadata is present", () => {
+		const candidate = entryFromCells("cand", cells([["a", 90], ["b", 60]]));
+		reference.aggregate.totalDurationMs = 5000;
+		candidate.aggregate.totalDurationMs = 4000;
+		expect(decide(reference, candidate, OPTS).accepted).toBe(false);
+		expect(decide(reference, candidate, OPTS).reasons.join(" ")).toMatch(/regressed/);
+	});
+
+	it("does not render totalDurationMs as a per-case delta in the decision report", () => {
+		const candidate = entryFromCells("cand", cells([["a", 90], ["b", 85]]));
+		const decision = decide(reference, candidate, OPTS);
+		const lines = decisionReport(reference, candidate, decision);
+		expect(lines.some((l) => l.includes("totalDurationMs"))).toBe(false);
+		expect(lines.join("\n")).toContain("a: 70 → 90");
+	});
+});

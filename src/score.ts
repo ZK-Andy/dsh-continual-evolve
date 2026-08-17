@@ -92,8 +92,12 @@ export interface Decision {
 /** Human-readable decision report with per-case before → after deltas. */
 export function decisionReport(reference: EvaluationEntry, candidate: EvaluationEntry, decision: Decision): string[] {
 	const lines: string[] = [`overall: ${reference.overall ?? "?"} → ${candidate.overall ?? "?"}`];
-	for (const [caseId, refScore] of Object.entries(reference.aggregate)) {
-		if (caseId === "overall" || caseId === "failed" || caseId === "total" || refScore === null) continue;
+	// Per-case deltas over the actual evaluated cases only (aggregate() mixes
+	// case means with metadata keys like totalDurationMs — never render those
+	// as cases).
+	for (const caseId of new Set(reference.cells.map((cell) => cell.caseId))) {
+		const refScore = reference.aggregate[caseId];
+		if (refScore === null || refScore === undefined) continue;
 		const candScore = candidate.aggregate[caseId];
 		const failedMark = isCaseFailed(reference, caseId) || isCaseFailed(candidate, caseId) ? " (failed)" : "";
 		lines.push(`  ${caseId}: ${refScore} → ${candScore ?? "?"}${failedMark}`);
@@ -186,8 +190,17 @@ export function decide(reference: EvaluationEntry, candidate: EvaluationEntry, o
 	if (candidate.overall <= reference.overall) {
 		reasons.push(`overall not improved: ${candidate.overall} <= ${reference.overall}`);
 	}
-	for (const [caseId, refScore] of Object.entries(reference.aggregate)) {
-		if (caseId === "overall" || caseId === "failed" || caseId === "total" || refScore === null) continue;
+	// Per-case regression is judged ONLY over the cases that actually exist in
+	// the evaluation — aggregate() mixes per-case means with metadata keys
+	// (failed/total/totalDurationMs), and iterating raw keys would (and did)
+	// treat totalDurationMs as a case score, rejecting a candidate whose run
+	// merely took longer. Derived from reference.cells, never from the
+	// aggregate key set.
+	for (const caseId of new Set(reference.cells.map((cell) => cell.caseId))) {
+		const refScore = reference.aggregate[caseId];
+		if (refScore === null || refScore === undefined) {
+			continue; // case had no comparable mean (all cells failed) — nothing to regress
+		}
 		const candScore = candidate.aggregate[caseId];
 		if (candScore === null || candScore === undefined) {
 			reasons.push(`candidate missing case ${caseId}`);
