@@ -58,6 +58,12 @@ export const Config = z.object({
 	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
 	autoRollbackOnReject: z.boolean().default(true),
 	/**
+	 * Gap C1: optional model override for the review gate (cheaper model).
+	 * Format: "provider/model" or just "model" (same provider as the agent).
+	 * When absent, the review gate uses the agent's own provider/model.
+	 */
+	reviewModel: z.string(),
+	/**
 	 * Gate local-fate dimension (#11 P2): the gate audits the session's local
 	 * entries on its own cadence and proposes promote/archive — consulted
 	 * first, never written silently. Only meaningful with autoReview on.
@@ -147,6 +153,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
 			localFate: config.localFate ?? true,
 			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
+			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
 		});
 		ctx.logger("continual-evolve").info(
 			`continual-evolve auto-review enabled (every ${config.reviewIntervalTurns ?? 6} turns; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,

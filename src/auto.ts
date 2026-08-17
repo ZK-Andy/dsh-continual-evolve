@@ -50,6 +50,12 @@ export interface AutoReviewConfig {
 	 * round.
 	 */
 	fateIntervalTurns: number;
+	/**
+	 * Gap C1: optional model override for the review gate (cheaper model).
+	 * Format: "provider/model" or just "model" (same provider as the agent).
+	 * When absent, the review gate uses the agent's own provider/model.
+	 */
+	reviewModel?: string;
 }
 
 export interface GateState {
@@ -196,6 +202,22 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 	});
 }
 
+/**
+ * Gap C1: parse a "provider/model" or "model" string into its components.
+ * Returns undefined when the input is empty (no override).
+ */
+function parseReviewModel(
+	reviewModel: string | undefined,
+	fallbackProvider: string | undefined,
+): { provider: string; model: string } | undefined {
+	if (!reviewModel || reviewModel.trim().length === 0) return undefined;
+	const slash = reviewModel.indexOf("/");
+	if (slash > 0) {
+		return { provider: reviewModel.slice(0, slash), model: reviewModel.slice(slash + 1) };
+	}
+	return { provider: fallbackProvider ?? "deepseek", model: reviewModel };
+}
+
 function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 	let state = map.get(sessionId);
 	if (!state) {
@@ -275,6 +297,8 @@ async function runReviewPhase(
 	const localState = engine.load("local", sessionId);
 	const harnessState = loadGateHarnessView(engine, sessionId);
 	const history = engine.history("local", sessionId);
+	// Gap C1: resolve optional review model override.
+	const reviewRoute = parseReviewModel(config.reviewModel, agent.options.provider);
 	const review = await reviewAutoRefine(ctx, {
 		agent,
 		state: harnessState,
@@ -282,6 +306,7 @@ async function runReviewPhase(
 		trajectory,
 		context: { reason, turnsSinceLastReview },
 		budgetTokens: config.budgetTokens,
+		...(reviewRoute ? { overrideProvider: reviewRoute.provider, overrideModel: reviewRoute.model } : {}),
 	});
 	state.lastReviewAt = state.turns;
 

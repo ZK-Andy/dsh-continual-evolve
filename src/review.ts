@@ -34,6 +34,9 @@ export interface ReviewOptions {
 	trajectory?: string;
 	signal?: AbortSignal;
 	budgetTokens?: number;
+	/** Gap C1: optional provider/model override for the review gate (cheaper model). */
+	overrideProvider?: string;
+	overrideModel?: string;
 }
 
 export const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
@@ -123,7 +126,9 @@ export function serializeSurface(events: readonly unknown[], maxChars: number): 
 
 export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Promise<AutoRefineReview> {
 	const { agent, state, history } = options;
-	if (!agent.options.provider || !agent.options.model) {
+	const provider = options.overrideProvider ?? agent.options.provider;
+	const model = options.overrideModel ?? agent.options.model;
+	if (!provider || !model) {
 		throw new Error("evolve: no provider/model route for the review gate");
 	}
 	if (!options.trajectory || options.trajectory.length === 0) {
@@ -138,8 +143,8 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 	].join("\n\n");
 
 	const text = await streamText(ctx, {
-		provider: agent.options.provider,
-		model: agent.options.model,
+		provider,
+		model,
 		system: AUTO_REVIEW_SYSTEM_PROMPT,
 		prompt: userPrompt,
 		maxTokens: options.budgetTokens ?? 8000,
