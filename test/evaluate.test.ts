@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
-import { evaluateState, normalizeCell, normalizeExecutor } from "../src/evaluate.js";
+import { evaluateState, normalizeCell, normalizeExecutor, caseHash } from "../src/evaluate.js";
 import type { BenchmarkCase, CellScore } from "../src/benchmark.js";
 import { deriveKey, encryptRubric } from "../src/rubric.js";
 
@@ -176,14 +176,14 @@ describe("evaluateState runtime evidence (A3)", () => {
 		expect(cell.caseHash).toMatch(/^[a-f0-9]{16}$/);
 	});
 
-	it("produces different caseHash for different case statements", () => {
-		const { caseHash: hash1 } = evaluateState as never;
-		// Directly test the hash via two different cases
-		const caseA = caseWith("a");
-		const caseB = caseWith("b");
-		// We can't call caseHash directly (not exported), but we can verify
-		// via evaluateState that different cases produce different hashes.
-		// This is an integration-level assertion.
-		expect(caseA.statement).not.toBe(caseB.statement);
+	it("produces different caseHash for different case material", () => {
+		expect(caseHash(caseWith("a"))).not.toBe(caseHash(caseWith("b")));
+	});
+
+	it("is stable for identical case material", () => {
+		const c = caseWith("c1");
+		expect(caseHash(c)).toBe(caseHash(c));
+		// statement changes must change the hash even when id/title differ
+		expect(caseHash({ ...caseWith("x"), statement: "task x" })).not.toBe(caseHash({ ...caseWith("x"), statement: "task y" }));
 	});
 });

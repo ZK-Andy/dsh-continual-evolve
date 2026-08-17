@@ -3,7 +3,7 @@
  * non-regressive acceptance rule.
  */
 import { describe, expect, it } from "vitest";
-import { aggregate, decide, decisionReport, entryFromCells, type AggregateOptions } from "../src/score.js";
+import { aggregate, decide, decisionReport, entryFromCells, flagMaterialDrift, type AggregateOptions } from "../src/score.js";
 import type { CellScore } from "../src/benchmark.js";
 
 const OPTS: AggregateOptions = { passThreshold: 60, regressionTolerance: 0, maxFailedCells: 0 };
@@ -205,5 +205,55 @@ describe("decisionReport duration (C3)", () => {
 		const decision = decide(reference, candidate, OPTS);
 		const lines = decisionReport(reference, candidate, decision);
 		expect(lines.some((l) => l.includes("duration:"))).toBe(false);
+	});
+});
+
+// ── Gap A3: material-drift detection (version_changed semantics) ──────
+
+describe("flagMaterialDrift (A3)", () => {
+	function okCell(caseId: string, hash: string): CellScore {
+		return { caseId, run: 1, status: "ok", score: 90, passed: true, notes: "", caseHash: hash };
+	}
+
+	it("re-marks a candidate cell failed when its case hash no longer matches the reference", () => {
+		const reference = entryFromCells("ref", [okCell("a", "hash-v1")]);
+		const flagged = flagMaterialDrift(reference, [okCell("a", "hash-v2")]);
+		expect(flagged[0]?.status).toBe("failed");
+		expect(flagged[0]?.passed).toBe(false);
+		expect(flagged[0]?.notes).toMatch(/materials changed: case a hash hash-v2 ≠ reference hash-v1/);
+	});
+
+	it("leaves matching cells untouched", () => {
+		const reference = entryFromCells("ref", [okCell("a", "hash-v1")]);
+		const flagged = flagMaterialDrift(reference, [okCell("a", "hash-v1")]);
+		expect(flagged[0]).toEqual({ ...okCell("a", "hash-v1") });
+	});
+
+	it("leaves candidate cells whose case has no reference hash untouched (new case)", () => {
+		const reference = entryFromCells("ref", [okCell("a", "hash-v1")]);
+		const flagged = flagMaterialDrift(reference, [okCell("b", "hash-x")]);
+		expect(flagged[0]?.status).toBe("ok");
+	});
+
+	it("ignores pre-A3 cells without hashes on either side", () => {
+		const reference = entryFromCells("ref", cells([["a", 70]]));
+		const candidate = cells([["a", 90]]);
+		const flagged = flagMaterialDrift(reference, candidate);
+		expect(flagged).toEqual(candidate);
+	});
+
+	it("does not touch cells already failed", () => {
+		const reference = entryFromCells("ref", [okCell("a", "hash-v1")]);
+		const alreadyFailed: CellScore = { caseId: "a", run: 1, status: "failed", score: 0, passed: false, notes: "reviewer crashed", caseHash: "hash-v2" };
+		const flagged = flagMaterialDrift(reference, [alreadyFailed]);
+		expect(flagged[0]).toEqual(alreadyFailed);
+	});
+
+	it("feeds the failure-cell protocol: drifted cells exclude from the mean and reject the round", () => {
+		const reference = entryFromCells("ref", [okCell("a", "hash-v1")]);
+		const candidate = entryFromCells("cand", [...flagMaterialDrift(reference, [okCell("a", "hash-v2")])]);
+		expect(candidate.aggregate.failed).toBe(1);
+		expect(candidate.overall).toBeNull();
+		expect(decide(reference, candidate, OPTS).accepted).toBe(false);
 	});
 });

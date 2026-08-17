@@ -117,6 +117,45 @@ export function decisionReport(reference: EvaluationEntry, candidate: Evaluation
 	return lines;
 }
 
+/**
+ * Gap A3 (version_changed semantics): detect cells whose case material
+ * changed between the reference and candidate evaluation runs. A candidate
+ * cell whose `caseHash` differs from the reference cell of the SAME case
+ * means the statement/rubric was edited between the two runs — its score is
+ * not comparable to the baseline and must not count toward the decision.
+ *
+ * The check is conservative: cells without a hash on either side (pre-A3
+ * data) and cells already failed are left untouched. Mismatched cells are
+ * returned re-marked as `failed` with a reason in notes, so aggregation
+ * excludes them and the acceptance rule can reject the round.
+ */
+export function flagMaterialDrift(reference: EvaluationEntry, candidateCells: readonly CellScore[]): CellScore[] {
+	const referenceHashes = new Map<string, string>();
+	for (const cell of reference.cells) {
+		if (cell.status !== "failed" && cell.caseHash !== undefined && !referenceHashes.has(cell.caseId)) {
+			referenceHashes.set(cell.caseId, cell.caseHash);
+		}
+	}
+	if (referenceHashes.size === 0) {
+		return [...candidateCells];
+	}
+	return candidateCells.map((cell) => {
+		if (cell.status === "failed" || cell.caseHash === undefined) {
+			return cell;
+		}
+		const refHash = referenceHashes.get(cell.caseId);
+		if (refHash !== undefined && refHash !== cell.caseHash) {
+			return {
+				...cell,
+				status: "failed",
+				passed: false,
+				notes: `materials changed: case ${cell.caseId} hash ${cell.caseHash} ≠ reference ${refHash} (re-run the reference or fix the material)`,
+			};
+		}
+		return cell;
+	});
+}
+
 function isCaseFailed(entry: EvaluationEntry, caseId: string): boolean {
 	return entry.cells.some((cell) => cell.caseId === caseId && cell.status === "failed");
 }

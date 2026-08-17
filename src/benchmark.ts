@@ -89,9 +89,11 @@ export interface CellScore {
 	sessionId?: string;
 	/**
 	 * Runtime evidence verification (gap A3): the actual provider and model
-	 * used by the executor subagent — written from the host (not the model),
-	 * so it reflects reality. A mismatch with the expected route flags the
-	 * cell as failed (version_changed semantics).
+	 * used by the evaluation units — written from the host (not the model),
+	 * so it reflects reality. Combined with `caseHash`, these make material
+	 * and route drift between reference and candidate runs detectable:
+	 * `score.flagMaterialDrift` re-marks a candidate cell failed when its
+	 * case hash no longer matches the reference (version_changed semantics).
 	 */
 	provider?: string;
 	model?: string;

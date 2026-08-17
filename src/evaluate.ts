@@ -172,9 +172,10 @@ function failedCell(caseId: string, run: number, message: string): CellScore {
 /**
  * Deterministic hash of a case's statement + rubric envelope (gap A3):
  * a 16-char SHA-256 prefix, hex-encoded. Used to detect material changes
- * between reference and candidate evaluation runs.
+ * between reference and candidate evaluation runs (see
+ * `score.flagMaterialDrift`).
  */
-function caseHash(caseItem: BenchmarkCase): string {
+export function caseHash(caseItem: BenchmarkCase): string {
 	const material = `${caseItem.statement}\n${caseItem.rubric}`;
 	return createHash("sha256").update(material).digest("hex").slice(0, 16);
 }

@@ -8,7 +8,7 @@ import { formatHarnessStateForPrompt } from "./render.js";
 import { stripAngleBrackets } from "./command.js";
 import type { CommandRuntimeOptions } from "./command.js";
 import { addCase, caseCheckProblems, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadCaseMeta, loadScoreboard, rollbackRejectedCandidate, saveCaseMeta, saveScoreboard, transitionCaseStatus } from "./benchmark.js";
-import { decide, decisionReport, entryFromCells } from "./score.js";
+import { decide, decisionReport, entryFromCells, flagMaterialDrift } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 
 function success(text: string): CommandResult {
@@ -154,8 +154,13 @@ export async function executeBenchmarkCommand(
 				label,
 				signal: invocation.signal,
 			});
-			const entry = entryFromCells(label, outcome.cells, candidateId);
-			const failedCells = outcome.cells.filter((cell) => cell.status === "failed").length;
+			// Gap A3 (version_changed semantics): when a reference exists, re-check
+			// the candidate's cells for material drift — a case whose statement/rubric
+			// hash differs from the reference run is re-marked failed (never counted
+			// as a score, can reject the round via the failure-cell protocol).
+			const cells = candidateId && board.reference ? flagMaterialDrift(board.reference, outcome.cells) : outcome.cells;
+			const entry = entryFromCells(label, cells, candidateId);
+			const failedCells = cells.filter((cell) => cell.status === "failed").length;
 			const lines = [
 				`evaluation "${label}": ${outcome.cells.length} cells${failedCells > 0 ? `, ${failedCells} failed` : ""}, overall=${entry.overall ?? "?"}`,
 				...Object.entries(entry.aggregate)
@@ -163,7 +168,7 @@ export async function executeBenchmarkCommand(
 					.map(([key, value]) => `  ${key}: ${value ?? "?"}`),
 			];
 			if (failedCells > 0) {
-				for (const cell of outcome.cells.filter((cell) => cell.status === "failed")) {
+				for (const cell of cells.filter((cell) => cell.status === "failed")) {
 					lines.push(`  [failed] ${cell.caseId} r${cell.run}: ${cell.notes}`);
 				}
 			}
