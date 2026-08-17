@@ -95,12 +95,15 @@
 
 ### D1 failure-signature 四遍式 Refiner
 - 按失败签名（导航循环/工具失败/目标停滞/漏探）分类驱动 prompt 重写 / subagent CRUD / 技能修复 / 记忆降权——当前我们的门禁是"单回合判定该不该沉淀"，无"按失败类型路由处理策略"。
+- **2026-08-19 观察层已落地**（`src/failures.ts` + `/evolve failures`）：把 reviews.jsonl 失败记录与 benchmark 失败格按确定性失败类聚合统计——分类规则与聚合是纯函数（有测试），为完整 Refiner 提供路由所需的数据层。完整 Refiner 仍属研究项，待观察数据出现"同一类失败重复发生"再工程化。
 
 ### D2 bootstrap-updating 变体（harness 继承加速）
 - 实证"前一跑 refined harness 加速下一跑"——我们的 parentSession 链继承 + global 注入已有雏形（D 级研究项：把"继承效果"做成可度量 benchmark 指标）。
+- **2026-08-19 实验脚手架已建**（`docs/experiment-bootstrap.md` + `scripts/benchmark-trend.sh`）：≤3 轮对照实验设计（固定 reference → 沉淀 harness 知识 → 候选评估，用 existing totalDurationMs/overall 判趋势）与趋势表提取脚本。仍属研究项：跑出数据前不做工程化度量。
 
 ### D3 goal 轮次与进化耦合（反向）
-- 我们已实现 goal 轮次驱动（prime 无对应物），保持领先；D 级研究：goal blocked 连续 N 轮 → 自动触发 wrapup 评估（衔接待办 #11）。
+- 我们已实现 goal 轮次驱动（prime 无对应物），保持领先；goal blocked 连续 N 轮 → 自动触发 wrapup 评估（衔接待办 #11）。
+- **2026-08-19 已工程化**（`runGoalBlockedFate`，`auto.ts`）：goal 连续 `goalBlockedWrapupTurns` 次门禁运行（默认 3）处于 `blocked` → 触发一次 local-fate 评估（复用 fate 管线：审计→分类→征询→确定性应用）；连胜非 blocked 即重置、触发后重置、被拒走 fate 冷却；`goalBlockedWrapupTurns: 0` 关闭。测试覆盖触发/重置/关闭/无服务四路径。
 
 ---
 
@@ -122,7 +125,7 @@
 | P3 | C4 扩展事件面 | prime #4.13 | evolve_complete 事件 → reviews.jsonl | ✅ 完成（`4408e92`） |
 | P3 | C5 种子 benchmark | penguin | examples/ lint_convention case | ✅ 完成（`d4896a2`） |
 | P3 | C6 跨进程同步 | prime #4.10 | 乐观并发已覆盖 | 暂不实现 |
-| R | D1 failure-signature Refiner | prime #4.16 | 无 | 研究项 |
-| R | D2/D3 继承度量 / goal-wrapup | prime 论文 | 雏形 | 研究项 |
+| R | D1 failure-signature Refiner | prime #4.16 | 观察层（`/evolve failures` 失败类聚合）已落地；完整 Refiner 待数据 | 研究项→观察层 ✅ |
+| R | D2/D3 继承度量 / goal-wrapup | prime 论文 | D3 ✅ 工程化（`runGoalBlockedFate`）；D2 实验脚手架已建 | D3 ✅ / D2 待实验 |
 
-> P0=强烈建议立即可做（修复结构弱点）；P1=记忆层与证据链关键；P2=低成本治理增强；P3=锦上添花；R=远期研究。P0+P1+P2+P3 全部完成（2026-08-18），剩 R 级研究项。
+> P0=强烈建议立即可做（修复结构弱点）；P1=记忆层与证据链关键；P2=低成本治理增强；P3=锦上添花；R=远期研究。P0+P1+P2+P3 全部完成（2026-08-18）；R 级中 D3 已工程化、D1 观察层与 D2 实验脚手架已落地（2026-08-19），剩 D1 完整 Refiner 与 D2 实验数据。

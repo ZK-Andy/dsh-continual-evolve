@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-383%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-396%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -104,8 +104,9 @@ dsh-continual-evolve/
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   ├── service.ts        # 进化引擎（onApplied 钩子）
 │   ├── usage.ts          # 条目注入使用率追踪（持久计数、陈旧检测）
+│   ├── failures.ts       # 失败签名聚合（门禁 + benchmark 失败按类统计，/evolve failures）
 │   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器；陈旧信号）
-└── test/                 # 27 个文件，383 个测试
+└── test/                 # 28 个文件，396 个测试
 ```
 
 ## 安装
@@ -133,6 +134,7 @@ dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 /evolve archive <id>          归档条目——不再注入（数据保留，可恢复）
 /evolve unarchive <id>        恢复已归档条目
 /evolve log [tail N] [session <id>] 查看最近插件日志（默认 50 行；可加会话过滤）
+/evolve failures                  失败聚合统计（门禁 + benchmark 失败按类计数——D1 观察层）
 /evolve export <path>         备份局部 store 为 JSON
 /evolve import <path>         从导出文件恢复 store
 /evolve mount <skillId>       热挂载 skill 条目为实时 cordis 插件（工具：skill_<name>）
@@ -240,6 +242,7 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 | `autoRollbackOnReject` | `true` | benchmark 决策拒绝候选后自动回滚该 refinement（与 `/evolve rollback` 同一引擎路径——确定性、快照、审计） |
 | `localFate` | `true` | 门禁 local 归宿维度：门禁按自有节奏审计本会话 local 条目并提议提升/归档——先征询、绝不静默写入（仅 `autoReview` 开启时有效） |
 | `fateIntervalTurns` | 跟随 `reviewIntervalTurns` | 回合间隔路径上两次 local 归宿评估的最小间隔（压缩时刻无条件触发） |
+| `goalBlockedWrapupTurns` | `3` | D3：连续多少次门禁运行观察到 goal 处于 `blocked` 后触发一次 local 归宿评估（`0` 关闭） |
 | `reviewModel` | （使用 agent 自身模型） | review 门禁的可选模型覆盖（更便宜的模型）；格式：`"provider/model"` 或仅 `"model"` |
 
 示例（profile `cordis.patch.yml`）：
@@ -265,7 +268,7 @@ pnpm lint           # oxlint src test
 
 遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
 
-对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1+P2+P3 已交付：评估者/评分者分离、失败格协议、运行时实证校验+材料漂移检测、使用率统计、自动衰减、case 生命周期+质检、条目目录视图、review 模型分离、blast-radius 标注、耗时追踪、evolve_complete 事件、种子 benchmark；剩余：跨进程同步按需实现 + 远期研究项）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
+对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1+P2+P3 已交付：评估者/评分者分离、失败格协议、运行时实证校验+材料漂移检测、使用率统计、自动衰减、case 生命周期+质检、条目目录视图、review 模型分离、blast-radius 标注、耗时追踪、evolve_complete 事件、种子 benchmark；D1 观察层 + D3 goal-blocked 触发已交付；剩余：跨进程同步按需实现 + D1/D2 完整工程化待实验数据）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
 
 ## 路线图
 
@@ -285,12 +288,16 @@ pnpm lint           # oxlint src test
 - **2026-08-17 收尾 wave（完成）**：
   - **`/evolve wrapup`**——会话结束时 local 条目有了真正的归宿：先机械审计（local 候选 + 全局覆盖检测；**覆盖只看标题相似**——裸同 id 但标题迥异**不算**覆盖，真正命中的全局标题会展示给分类器）→ LLM 分类（`promote` / `archive` / `keep` + A 形拆解提升：混合条目整体归档、同时提升清洗出的持久子对象）→ 应用时刻确定性守卫复检（promote 永不写出全局重复；对称归档守卫要求用户确认后才隐藏未被覆盖、源自真实对话的条目；清洗标题撞全局主题的拆解降级为普通归档）→ 所有全局 create 走一个人工审批门
   - **门禁 local 归宿维度**——wrap-up 机制现在以内置节奏（`fateIntervalTurns`，压缩时刻无条件）跑在自动 review 门禁里：local 条目在会话进行中被审计、分类、划分；治理动作先征询（一个弹窗、拒绝冷却），被覆盖/操作性条目静默归档，压缩时刻只做静默归档并以审计记录推迟治理动作；每次决策落进 `reviews.jsonl`，已执行动作发后续通知。应用写入与 wrapup 命令共享构造器（逐字节一致）
+- **2026-08-19 研究项先导（完成）**:
+  - **goal-blocked 触发收尾（D3）**——goal 连续 `goalBlockedWrapupTurns` 次门禁运行（默认 3）处于 `blocked` 时触发一次 local 归宿评估，把卡住的原因沉淀下来再继续；连胜在任意非 blocked 运行与每次触发后被重置，被拒提案走正常 fate 冷却（绝不打扰）；`goalBlockedWrapupTurns: 0` 关闭
+  - **失败签名聚合（D1 观察层）**——`/evolve failures` 将门禁失败记录与 benchmark 失败格按确定性失败类（`rubric-decrypt` / `executor` / `reviewer` / `material-drift` / `gate` / `max-tokens` 等）统计——未来 failure-signature Refiner 的底层数据
+  - **bootstrap 加速实验脚手架（D2）**——[`docs/experiment-bootstrap.md`](docs/experiment-bootstrap.md) 设计 ≤3 轮对照实验（固定 reference → 沉淀 harness → 候选评估）验证"被提高的 harness 加速下一跑"；`scripts/benchmark-trend.sh` 从 scoreboard 提取每轮趋势表（overall / totalDurationMs / failed / case-hash 一致性）
 - **2026-08-17 差距 P0（完成）**：
   - **评估者/评分者分离**——benchmark 评估改为两段式（差距 A1）：执行者完成任务并记录具体证据、**永远看不到 rubric**；独立评审者按 rubric 给证据评分（唯一解密 rubric 的分支）。被测 agent 无法朝评分标准优化、也无法自评
   - **失败格协议**——cell 带 `status: ok|failed`（差距 A2）：失败格从所有均值中排除并计数，接受规则在失败格超过 `maxFailedCells`（默认 0）时拒绝整轮，而不是把 0 平均进均值。scoreboard status/run 展示失败数与逐格原因
   - **Trace 证据指针**——每个 cell 记录执行者会话 id（差距 A4），分数可下钻回产生它的确切会话轨迹
 - **2026-08-18 差距 P1（完成）**：
-  - **运行时实证校验（A3）**——cell 现在记录宿主写入的实际 `provider`、`model` 和 `caseHash`（statement + rubric 的 SHA-256 前缀）；参考线与候选运行之间的材料变化可检出
+  - **运行时实证校验（A3）**——cell 现在记录宿主写入的实际 `provider`、`model` 和 `caseHash`（statement + rubric 的 SHA-256 前缀）；参考线与候选运行之间的材料变化会被检出并把受影响候选格重标为失败（version_changed 语义，`score.flagMaterialDrift`），材料漂移的轮次绝不可能被接受
   - **条目使用率统计（B1）**——注入计数持久追踪（`<baseDir>/evolve/usage.json`）；`evolve_list` 展示使用次数；`zeroUsageEntries()` 筛选从未注入的 local 条目作为归档候选
   - **自动陈旧检测（B2）**——零注入且低新鲜度的条目标记为 `stale`；LLM 分类器被指示优先归档陈旧条目
 - **2026-08-18 差距 P2（完成）**：

@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-383%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-396%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -130,8 +130,9 @@ dsh-continual-evolve/
 │   ├── store.ts          # store layout + snapshots + result history
 │   ├── service.ts        # evolution engine (onApplied hook)
 │   ├── usage.ts          # entry injection usage tracking (durable counts, staleness detection)
+│   ├── failures.ts       # failure-signature aggregation (gate + benchmark failures by class, /evolve failures)
 │   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders; staleness signal)
-└── test/                 # 27 files, 383 tests
+└── test/                 # 28 files, 396 tests
 ```
 
 ## Install
@@ -159,6 +160,7 @@ Swap `web` for your profile name (`headless`, or a custom profile).
 /evolve archive <id>     hide an entry from injection (data kept, restorable)
 /evolve unarchive <id>   restore an archived entry
 /evolve log [tail N] [session <id>]  show the recent plugin log (default 50 lines; optional per-session filter)
+/evolve failures                  aggregated failure counts (review-gate + benchmark, by class — D1 observation layer)
 /evolve export <path>    backup the local store to JSON
 /evolve import <path>    restore a store from an export file
 /evolve mount <skillId>  hot-mount a skill entry as a live cordis plugin (tool: skill_<name>)
@@ -378,6 +380,7 @@ where the baseline was already perfect).
 | `autoRollbackOnReject` | `true` | after a benchmark decision rejects a candidate, roll the refinement back automatically (same engine path as `/evolve rollback` — deterministic, snapshotted, audited) |
 | `localFate` | `true` | gate local-fate dimension: the gate audits the session's local entries on its own cadence and proposes promote/archive — consulted first, never written silently (only meaningful with `autoReview`) |
 | `fateIntervalTurns` | follows `reviewIntervalTurns` | minimum turns between local-fate assessments on the turn-interval path (compaction is unconditional) |
+| `goalBlockedWrapupTurns` | `3` | D3: after this many consecutive gate runs observing the goal phase `blocked`, run one local-fate assessment (`0` disables) |
 | `reviewModel` | (agent's own) | optional model override for the review gate (cheaper model); format: `"provider/model"` or just `"model"` |
 
 Example (profile `cordis.patch.yml`):
@@ -403,7 +406,7 @@ pnpm lint           # oxlint src test
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
-Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1+P2+P3 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification + material-drift detection, usage statistics, auto-decay, case lifecycle + quality gate, entry directory view, review model separation, blast-radius annotations, duration tracking, evolve_complete events, seed benchmark; remaining: cross-process sync on demand + long-term research items).
+Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1+P2+P3 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification + material-drift detection, usage statistics, auto-decay, case lifecycle + quality gate, entry directory view, review model separation, blast-radius annotations, duration tracking, evolve_complete events, seed benchmark; D1 observation layer + D3 goal-blocked trigger shipped; remaining: cross-process sync on demand + D1/D2 full engineering pending experiment data).
 
 ## Roadmap
 
@@ -423,12 +426,16 @@ Where we still lag behind prime-agent `/refine` and penguin-harness — and what
 - **2026-08-17 wrap-up wave (done)**:
   - **`/evolve wrapup`** — a session's local entries get a real exit at session end: mechanical audit (local candidates + global-coverage detection; coverage judges **title similarity only** — a bare id collision with a different title is deliberately NOT coverage, and the real matching global titles are shown to the assessor) → LLM classification (`promote` / `archive` / `keep` + A-form split promotion: archive a mixed entry while promoting a cleaned durable sub-object) → deterministic guards re-checked at apply time (promote can never write a global duplicate; the symmetric archive guard requires user confirmation before an uncovered, user-sourced archive hides content; splits that duplicate a global topic drop to plain archive) → one human approval gate for every global create
   - **gate local-fate dimension** — the wrap-up machinery now runs inside the auto-review gate on its own cadence (`fateIntervalTurns`, compaction unconditional): local entries are audited, classified and partitioned while the session is still running; governed actions are consulted first (one dialog, decline cooldown), covered/operational entries archive silently, compaction applies only silent archives and defers governed actions with an audit record; every decision lands in `reviews.jsonl` and applied actions get a follow-up notice. Apply writes are shared with the wrap-up command (byte-identical proposals)
+- **2026-08-19 research-wave precursors (done)**:
+  - **goal-blocked wrap-up (D3)** — a goal stuck in `blocked` for `goalBlockedWrapupTurns` consecutive gate runs (default 3) triggers one local-fate assessment, so the blocked encounter is distilled before the session moves on; the streak resets on any non-blocked run and after each assessment, and declined proposals follow the normal fate cooldown (never nagged). Disable with `goalBlockedWrapupTurns: 0`
+  - **failure-signature aggregation (D1 observation layer)** — `/evolve failures` counts every failed review-gate record and benchmark failed cell by deterministic failure class (`rubric-decrypt` / `executor` / `reviewer` / `material-drift` / `gate` / `max-tokens` / …), the data layer a future failure-signature Refiner would route on
+  - **bootstrap-update experiment scaffold (D2)** — [`docs/experiment-bootstrap.md`](docs/experiment-bootstrap.md) designs a ≤3-round controlled experiment (fixed reference → evolve harness → candidate) to test whether a refined harness accelerates the next run; `scripts/benchmark-trend.sh` extracts the per-run trend table (overall / totalDurationMs / failed / case-hash consistency) from scoreboards
 - **2026-08-17 gap P0 (done)**:
   - **evaluator/scorer separation** — benchmark evaluation is now two-stage (gap A1): the executor performs the task and records concrete evidence without ever seeing the rubric; an independent reviewer grades that evidence against the rubric (the only branch that decrypts it). The assessed agent can no longer optimize toward or self-grade against the criteria.
   - **failure-cell protocol** — cells carry `status: ok|failed` (gap A2): failed units are excluded from every mean and counted, and the acceptance rule rejects rounds with failures beyond `maxFailedCells` (0 default) instead of averaging a zero into the mean. Scoreboard status/run surfaces failed counts and per-cell reasons.
   - **trace evidence pointer** — each cell records the executor's session id (gap A4), so a score drills back to the exact transcript that earned it
 - **2026-08-18 gap P1 (done)**:
-  - **runtime evidence verification (A3)** — cells now record actual `provider`, `model`, and `caseHash` (SHA-256 prefix of statement + rubric) written by the host, not the model; material changes between reference and candidate runs are detectable
+  - **runtime evidence verification (A3)** — cells now record actual `provider`, `model`, and `caseHash` (SHA-256 prefix of statement + rubric) written by the host, not the model; material changes between reference and candidate runs are detected and re-mark the affected candidate cells as failed (version_changed semantics, `score.flagMaterialDrift`), so a drifted round can never be accepted
   - **entry usage statistics (B1)** — injection counts are durably tracked per entry in `<baseDir>/evolve/usage.json`; `evolve_list` shows usage counts; `zeroUsageEntries()` surfaces never-injected local entries as archive candidates
   - **automatic staleness detection (B2)** — entries with zero injection usage AND old recency are flagged `stale` in wrap-up candidates; the LLM assessor is instructed to prefer "archive" for stale entries
 - **2026-08-18 gap P2 (done)**:
