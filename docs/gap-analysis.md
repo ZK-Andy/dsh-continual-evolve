@@ -106,23 +106,23 @@
 
 ## 汇总表
 
-| 优先级 | 项 | 参照物 | 现状 | 建议动作 |
+| 优先级 | 项 | 参照物 | 现状 | 状态 |
 |---|---|---|---|---|
-| P0 | A1 评分者分离 | penguin #1 | 自产自审（实测） | 拆被测/评分两段，rubric 只进 reviewer |
-| P0 | A2 失败格协议 | penguin #4 | 失败格当 0 分（实测） | status 字段 + 聚合排除 + 失败计数拒绝 |
-| P1 | A3 运行时实证校验 | penguin #5 | 仅配置冻结 | 单元格回写实际 provider/hash，不匹配判 failed |
-| P1 | A4 Trace 证据指针 | penguin #6 | 无 session 引用 | 单元格带 sessionId + 报告可回放 |
-| P1 | B1 使用率统计 | prime #4.17 | 无 | 注入计数落盘 + 展示 |
-| P1 | B2 自动降权/过期 | prime #3.4/3.6 | 仅人工 archive | recency+引用衰减，门禁提议归档（衔接 #11） |
-| P2 | A5 校准 Pipeline + case 质检 | penguin #2/#3 | 无状态机 | case 状态机 + casecheck 子命令 |
-| P2 | B3 记忆目录分层 | prime #4.17 | 精选 6 条注入 | 全量 id+title 目录视图 |
-| P2 | C1 review 模型分离 | prime #3.8 | 同模型 | reviewModel 配置 |
-| P2 | C2 blast-radius 声明 | prime #3.2 | 无 | edit 强制影响范围声明 + review 校验 |
-| P2 | C3 cost/duration 入矩阵 | penguin #8 | 无 | usage 事件聚合 |
-| P3 | C4 扩展事件面 | prime #4.13 | 无 | notify 结构化进化完成记录 |
-| P3 | C5 种子 benchmark | penguin | 无 | examples 真实 case |
-| P3 | C6 跨进程同步 | prime #4.10 | 乐观并发已覆盖 | 暂不实现，记 FAQ |
+| P0 | A1 评分者分离 | penguin #1 | 两段式（执行者→评审者） | ✅ 完成（`32d3341`） |
+| P0 | A2 失败格协议 | penguin #4 | status ok/failed + 聚合排除 | ✅ 完成（`32d3341`） |
+| P1 | A3 运行时实证校验 | penguin #5 | cell 带 provider/model/caseHash | ✅ 完成（`379c67e`） |
+| P1 | A4 Trace 证据指针 | penguin #6 | cell 带 sessionId | ✅ 完成（P0 顺手） |
+| P1 | B1 使用率统计 | prime #4.17 | usage.json + evolve_list 展示 | ✅ 完成（`ebc2797`） |
+| P1 | B2 自动降权/过期 | prime #3.4/3.6 | staleness 信号 + LLM 优先归档 | ✅ 完成（`0827022`） |
+| P2 | A5 校准 Pipeline + case 质检 | penguin #2/#3 | draft→calibrating→frozen + casecheck | ✅ 完成（`f176562`） |
+| P2 | B3 记忆目录分层 | prime #4.17 | 全量 id+title 目录视图 | ✅ 完成（`f70077c`） |
+| P2 | C1 review 模型分离 | prime #3.8 | reviewModel 配置项 | ✅ 完成（`b2475c8`） |
+| P2 | C2 blast-radius 声明 | prime #3.2 | blastRadius general/project/session | ✅ 完成（`7fc84d4`） |
+| P2 | C3 cost/duration 入矩阵 | penguin #8 | durationMs per cell + 聚合 | ✅ 完成（`65f33eb`） |
+| P3 | C4 扩展事件面 | prime #4.13 | evolve_complete 事件 → reviews.jsonl | ✅ 完成（`4408e92`） |
+| P3 | C5 种子 benchmark | penguin | examples/ lint_convention case | ✅ 完成（`d4896a2`） |
+| P3 | C6 跨进程同步 | prime #4.10 | 乐观并发已覆盖 | 暂不实现 |
 | R | D1 failure-signature Refiner | prime #4.16 | 无 | 研究项 |
 | R | D2/D3 继承度量 / goal-wrapup | prime 论文 | 雏形 | 研究项 |
 
-> P0=强烈建议立即可做（修复结构弱点）；P1=记忆层与证据链关键；P2=低成本治理增强；P3=锦上添花；R=远期研究。
+> P0=强烈建议立即可做（修复结构弱点）；P1=记忆层与证据链关键；P2=低成本治理增强；P3=锦上添花；R=远期研究。P0+P1+P2+P3 全部完成（2026-08-18），剩 R 级研究项。
