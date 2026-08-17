@@ -19,12 +19,12 @@
  * time so a stale classification can never write a duplicate global entry.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessEntry, HarnessState, RefinementKind, RefinementProposal } from "./types.js";
 import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOURCE_SESSION_KEY, SOURCED_FROM_KEY, isArchived } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
+import { streamText } from "./llm-text.js";
 
 /** What should happen to one local entry at session end. */
 export type WrapupVerdict = "promote" | "archive" | "keep";
@@ -533,41 +533,13 @@ export async function assessLocalEntries(
 		"Return only JSON. Every item must reference one of the keys above.",
 	].join("\n\n");
 
-	const assembler = new BlockAssembler();
-	for await (const chunk of ctx.llm.stream({
+	const text = await streamText(ctx, {
 		provider: agent.options.provider,
 		model: agent.options.model,
 		system: WRAPUP_ASSESS_SYSTEM_PROMPT,
-		messages: [
-			createUserMessage({
-				content: [{ type: "text", text: userPrompt }],
-				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
-			}),
-		],
-		// Force non-reasoning output so the budget lands in the JSON verdicts.
-		reasoningEffort: ReasoningEffortId("off"),
+		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 4096,
-		...(options.signal ? { signal: options.signal } : {}),
-	})) {
-		assembler.push(chunk);
-	}
-	const finish = assembler.finish;
-	if (finish.kind === "error") {
-		throw new Error(`evolve: wrap-up assessor call failed: ${(finish as { failure?: { message?: string } }).failure?.message ?? "unknown"}`);
-	}
-	if (finish.kind === "aborted") {
-		throw new Error("evolve: wrap-up assessor call aborted");
-	}
-	if (finish.kind === "max-tokens") {
-		throw new Error("evolve: wrap-up assessor output budget exhausted (max-tokens)");
-	}
-	const text = assembler
-		.blocks()
-		.filter((block) => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-	if (text.length === 0) {
-		throw new Error("evolve: wrap-up assessor produced no text");
-	}
+		signal: options.signal,
+	});
 	return parseWrapupAssessment(text, candidates);
 }

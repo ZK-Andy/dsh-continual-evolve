@@ -6,11 +6,11 @@
  * "should we refine?", never "what should we edit?".
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementResult } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
+import { streamText } from "./llm-text.js";
 
 export interface AutoRefineReview {
 	shouldRefine: boolean;
@@ -137,43 +137,13 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 		"Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local edits; do not ask for global refinement here.",
 	].join("\n\n");
 
-	const assembler = new BlockAssembler();
-	for await (const chunk of ctx.llm.stream({
+	const text = await streamText(ctx, {
 		provider: agent.options.provider,
 		model: agent.options.model,
 		system: AUTO_REVIEW_SYSTEM_PROMPT,
-		messages: [
-			createUserMessage({
-				content: [{ type: "text", text: userPrompt }],
-				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
-			}),
-		],
-		// Force non-reasoning output so the model spends its budget on the JSON
-		// answer, not on visible thinking (reasoning models otherwise produce
-		// zero text blocks — the exact failure recorded in reviews.jsonl).
-		reasoningEffort: ReasoningEffortId("off"),
+		prompt: userPrompt,
 		maxTokens: options.budgetTokens ?? 8000,
-		...(options.signal ? { signal: options.signal } : {}),
-	})) {
-		assembler.push(chunk);
-	}
-	const finish = assembler.finish;
-	if (finish.kind === "error") {
-		throw new Error(`evolve: review gate call failed: ${(finish as { failure?: { message?: string } }).failure?.message ?? "unknown"}`);
-	}
-	if (finish.kind === "aborted") {
-		throw new Error("evolve: review gate call aborted");
-	}
-	if (finish.kind === "max-tokens") {
-		throw new Error("evolve: review gate output budget exhausted (max-tokens)");
-	}
-	const text = assembler
-		.blocks()
-		.filter((block) => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-	if (text.length === 0) {
-		throw new Error("evolve: review gate produced no text");
-	}
+		signal: options.signal,
+	});
 	return parseAutoRefineReview(text);
 }

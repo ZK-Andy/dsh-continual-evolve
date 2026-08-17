@@ -7,13 +7,13 @@
  * provider/model so the plan uses the same model the session runs on.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementProposal, RefinementResult } from "./types.js";
 import { parseProposal } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { recentUserText } from "./inject.js";
 import { skillQualityGuide } from "./skillquality.js";
+import { streamText } from "./llm-text.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the /evolve continual harness subsystem.
 
@@ -132,47 +132,13 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		.filter(Boolean)
 		.join("\n\n");
 
-	const assembler = new BlockAssembler();
-	for await (const chunk of ctx.llm.stream({
+	const text = await streamText(ctx, {
 		provider: agent.options.provider,
 		model: agent.options.model,
 		system: PLANNER_SYSTEM_PROMPT,
-		messages: [
-			createUserMessage({
-				content: [{ type: "text", text: userPrompt }],
-				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
-			}),
-		],
-		// Force non-reasoning output: the proposal must be pure JSON text.
-		reasoningEffort: ReasoningEffortId("off"),
+		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 8000,
-		...(options.signal ? { signal: options.signal } : {}),
-	})) {
-		assembler.push(chunk);
-	}
-	throwOnFinishError(assembler.finish);
-	const blocks = assembler.blocks();
-	const text = blocks
-		.filter((block) => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-	if (text.length === 0) {
-		throw new Error("evolve: planner produced no text output");
-	}
+		signal: options.signal,
+	});
 	return parseProposal(text);
-}
-
-/** Surface terminal stream states as errors so the caller never sees a silent partial plan. */
-function throwOnFinishError(finish: { kind: string; failure?: { message?: string } }): void {
-	switch (finish.kind) {
-		case "stop":
-		case "tool-calls":
-			return;
-		case "max-tokens":
-			throw new Error("evolve: planner output budget exhausted (max-tokens)");
-		case "aborted":
-			throw new Error("evolve: planner call aborted");
-		case "error":
-			throw new Error(`evolve: planner call failed: ${finish.failure?.message ?? "unknown error"}`);
-	}
 }
