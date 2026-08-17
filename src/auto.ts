@@ -57,6 +57,16 @@ export interface AutoReviewConfig {
 	 * When absent, the review gate uses the agent's own provider/model.
 	 */
 	reviewModel?: string;
+	/**
+	 * Goal-blocked trigger (D3): after this many CONSECUTIVE gate runs that
+	 * observe the session goal in phase "blocked", run one local-fate
+	 * assessment (the same audit → classify → consult → apply pipeline as the
+	 * gate's normal fate dimension) so the blocked encounter is distilled
+	 * before the session moves on. 0 disables. The streak resets on any
+	 * non-blocked run and after each triggered assessment; a declined
+	 * proposal then follows the normal fate cooldown.
+	 */
+	goalBlockedWrapupTurns: number;
 }
 
 export interface GateState {
@@ -77,6 +87,12 @@ export interface GateState {
 	 * window (the consultSkillEdits pattern — no nagging).
 	 */
 	fateRejects: Map<string, number>;
+	/**
+	 * Consecutive gate runs that observed the goal phase "blocked" (D3).
+	 * Reset to 0 by any non-blocked run and after a triggered assessment —
+	 * see runGoalBlockedFate.
+	 */
+	goalBlockStreak: number;
 }
 
 /** Turns a rejected skill candidate stays silent before being offered again. */
@@ -229,6 +245,7 @@ function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 			skillRejects: new Map(),
 			lastFateAt: 0,
 			fateRejects: new Map(),
+			goalBlockStreak: 0,
 		};
 		map.set(sessionId, state);
 	}
@@ -266,7 +283,48 @@ async function runGate(
 	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
 ): Promise<void> {
 	await runReviewPhase(ctx, engine, agent, config, state, reason, record);
+	// D3: a goal stuck in "blocked" for consecutive gate runs gets one
+	// local-fate assessment (the pipeline below), so whatever led the goal
+	// astray is distilled before the session moves on.
+	await runGoalBlockedFate(ctx, engine, agent, config, state, reason, record);
 	await runLocalFatePhase(ctx, engine, agent, config, state, reason, record);
+}
+
+/**
+ * D3 (goal blocked → wrap-up coupling, reverse direction): count consecutive
+ * gate runs whose goal is in phase "blocked"; when the streak reaches
+ * `goalBlockedWrapupTurns`, run ONE local-fate assessment (same pipeline as
+ * the normal fate dimension — audit, classify, consult, apply deterministically).
+ * The streak resets on any non-blocked run and after a triggered assessment;
+ * a declined proposal is then protected by the normal fate cooldown, so a
+ * blocked session can never be nagged into another dialog.
+ *
+ * Exported for unit testing (the advanceGateState precedent); production runs
+ * it from runGate.
+ */
+export async function runGoalBlockedFate(
+	ctx: Context,
+	engine: EvolutionEngine,
+	agent: Agent,
+	config: AutoReviewConfig,
+	state: GateState,
+	_reason: AutoRefineReason,
+	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
+): Promise<void> {
+	if (config.goalBlockedWrapupTurns <= 0) return;
+	const goal = goalServiceOf(ctx)?.get(agent);
+	if (goal?.phase !== "blocked") {
+		state.goalBlockStreak = 0;
+		return;
+	}
+	state.goalBlockStreak += 1;
+	if (state.goalBlockStreak < config.goalBlockedWrapupTurns) {
+		return;
+	}
+	state.goalBlockStreak = 0; // one assessment per streak; declines follow the fate cooldown
+	const logger = ctx.logger("continual-evolve");
+	logger.info(`auto-review goal-blocked trigger [${agent.id}]: ${config.goalBlockedWrapupTurns} consecutive blocked gate runs → local-fate assessment`);
+	await runLocalFatePhase(ctx, engine, agent, config, state, "goal_blocked", record);
 }
 
 async function runReviewPhase(

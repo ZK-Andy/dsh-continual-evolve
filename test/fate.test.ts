@@ -15,6 +15,7 @@ import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { HarnessEntry, HarnessState, RefinementKind } from "../src/types.js";
 import { PROMOTED_TO_KEY, SOURCED_FROM_KEY, emptyHarnessState } from "../src/types.js";
 import type { AutoReviewConfig, GateState, ReviewRecord } from "../src/auto.js";
+import { runGoalBlockedFate } from "../src/auto.js";
 import {
 	applyLocalFates,
 	buildFateNotice,
@@ -71,6 +72,7 @@ function gateWith(overrides: Partial<GateState> = {}): GateState {
 		skillRejects: new Map(),
 		lastFateAt: 0,
 		fateRejects: new Map(),
+		goalBlockStreak: 0,
 		...overrides,
 	};
 }
@@ -83,6 +85,7 @@ function configWith(overrides: Partial<AutoReviewConfig> = {}): AutoReviewConfig
 		notifyOnAutoReview: false,
 		localFate: true,
 		fateIntervalTurns: 1,
+		goalBlockedWrapupTurns: 0, // off by default in fate-unit tests; D3 tests enable it explicitly
 		...overrides,
 	};
 }
@@ -126,6 +129,11 @@ describe("fateCadenceDue", () => {
 	it("is unconditional on compaction", () => {
 		const gate = gateWith({ turns: 5, lastFateAt: 5 });
 		expect(fateCadenceDue(gate, "compact", 6)).toBe(true);
+	});
+
+	it("is unconditional on goal_blocked (the gate's streak counter already gates it)", () => {
+		const gate = gateWith({ turns: 5, lastFateAt: 5 });
+		expect(fateCadenceDue(gate, "goal_blocked", 6)).toBe(true);
 	});
 });
 
@@ -642,5 +650,94 @@ describe("buildFateNotice", () => {
 		expect(notice).toContain("提升 memory:m1");
 		expect(notice).toContain("归档 memory:m2");
 		expect(notice).toContain("/evolve rollback");
+	});
+});
+
+describe("goal-blocked trigger (D3)", () => {
+	const ASSESS = JSON.stringify({
+		rationale: "durable lesson",
+		items: [{ key: "memory:m1", verdict: "promote", reason: "blocked 教训值得沉淀" }],
+	});
+
+	/** A ctx whose goal service reports the requested phase; "none" = no service at all. */
+	function goalCtx(phase: "blocked" | "active" | "none", json: string): Context {
+		const goals = phase === "none" ? undefined : { get: () => ({ id: "g1", revision: 1, objective: "o", phase, maxGoalRounds: 10 }) };
+		return {
+			get: (name: string) => (name === "goals" ? goals : undefined),
+			llm: llmStreaming(json),
+			logger: noopLogger,
+			userQuestions: { ask: async () => ({ answers: [{ id: "evolve-fate-consult", selected: ["执行"] }] }) },
+		} as unknown as Context;
+	}
+
+	function blockedHarness(): { dir: string; engine: ReturnType<typeof createEvolutionEngine>; records: Array<Omit<ReviewRecord, "timestamp">> } {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-goal-blocked-"));
+		const engine = createEvolutionEngine(dir);
+		const local = emptyHarnessState();
+		local.entries.memory["m1"] = entry("m1", "memory", "goal 卡住的教训");
+		saveHarnessState(storePaths(dir, "local", "session-fate").stateDir, local);
+		return { dir, engine, records: [] };
+	}
+
+	it("counts consecutive blocked runs and triggers ONE assessment at the threshold", async () => {
+		const h = blockedHarness();
+		try {
+			const gate = gateWith();
+			const config = configWith({ goalBlockedWrapupTurns: 3 });
+			// First two runs: streak 1 → 2, no assessment (no LLM call, no audit).
+			await runGoalBlockedFate(goalCtx("blocked", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", (e) => h.records.push(e));
+			await runGoalBlockedFate(goalCtx("blocked", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", (e) => h.records.push(e));
+			expect(gate.goalBlockStreak).toBe(2);
+			expect(h.records).toHaveLength(0);
+			// Third run: threshold reached → one local-fate assessment, streak reset.
+			await runGoalBlockedFate(goalCtx("blocked", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", (e) => h.records.push(e));
+			expect(gate.goalBlockStreak).toBe(0);
+			expect(h.records.length).toBeGreaterThan(0);
+			expect(h.records.some((e) => e.outcome === "approved")).toBe(true);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("resets the streak on a non-blocked goal", async () => {
+		const h = blockedHarness();
+		try {
+			const gate = gateWith();
+			const config = configWith({ goalBlockedWrapupTurns: 3 });
+			await runGoalBlockedFate(goalCtx("blocked", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", () => {});
+			expect(gate.goalBlockStreak).toBe(1);
+			await runGoalBlockedFate(goalCtx("active", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", () => {});
+			expect(gate.goalBlockStreak).toBe(0);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("is disabled when goalBlockedWrapupTurns is 0", async () => {
+		const h = blockedHarness();
+		try {
+			const gate = gateWith();
+			const config = configWith({ goalBlockedWrapupTurns: 0 });
+			for (let i = 0; i < 5; i += 1) {
+				await runGoalBlockedFate(goalCtx("blocked", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", (e) => h.records.push(e));
+			}
+			expect(gate.goalBlockStreak).toBe(0);
+			expect(h.records).toHaveLength(0);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("is a no-op without the goals service", async () => {
+		const h = blockedHarness();
+		try {
+			const gate = gateWith();
+			const config = configWith({ goalBlockedWrapupTurns: 3 });
+			await runGoalBlockedFate(goalCtx("none", ASSESS), h.engine, fakeAgent, config, gate, "turn_interval", (e) => h.records.push(e));
+			expect(gate.goalBlockStreak).toBe(0);
+			expect(h.records).toHaveLength(0);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
 	});
 });

@@ -74,6 +74,12 @@ export const Config = z.object({
 	 * (compaction is unconditional). Absent → follows reviewIntervalTurns.
 	 */
 	fateIntervalTurns: z.natural(),
+	/**
+	 * Goal-blocked trigger (D3): after this many CONSECUTIVE gate runs that
+	 * observe the session goal in phase "blocked", run one local-fate
+	 * assessment so the encounter is distilled. 0 disables.
+	 */
+	goalBlockedWrapupTurns: z.natural().min(0).default(3),
 });
 
 /**
@@ -153,6 +159,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
 			localFate: config.localFate ?? true,
 			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
+			goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
 			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
 		});
 		ctx.logger("continual-evolve").info(

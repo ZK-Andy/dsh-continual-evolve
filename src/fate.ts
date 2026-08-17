@@ -124,10 +124,13 @@ export function fateSetKey(candidates: readonly WrapupCandidate[]): string {
  * gates respect the fate cadence (an independent counter — goal-driven
  * sessions run the review EVERY round, the fate assessment must not);
  * compaction is unconditional: experiences about to be summarized away get
- * their fate check regardless.
+ * their fate check regardless. Goal-blocked assessments are unconditional
+ * here too — the gate's own streak counter (auto.ts runGoalBlockedFate)
+ * already gates their frequency, so the cadence must not re-block them.
  */
 export function fateCadenceDue(state: GateState, reason: AutoRefineReason, intervalTurns: number): boolean {
-	if (reason === "compact") return true;
+	// Compact and goal-blocked assessments bypass the cadence (see header).
+	if (reason === "compact" || reason === "goal_blocked") return true;
 	return state.turns - state.lastFateAt >= intervalTurns;
 }
 

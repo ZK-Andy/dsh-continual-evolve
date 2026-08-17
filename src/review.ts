@@ -18,7 +18,7 @@ export interface AutoRefineReview {
 	instructions?: string;
 }
 
-export type AutoRefineReason = "turn_interval" | "compact";
+export type AutoRefineReason = "turn_interval" | "compact" | "goal_blocked";
 
 export interface AutoRefineReviewContext {
 	reason: AutoRefineReason;
