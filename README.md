@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-290%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -21,8 +21,11 @@ Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/d
 > scoring, non-regressive acceptance, rubric ACL). Since then the plugin
 > keeps growing with usage-driven enhancements — the memory layer (ranked
 > injection, trajectory citations, archive), per-installation rubric keys,
-> and plugin-owned file logging. See the Roadmap for the full shipped and
-> candidate lists.
+> plugin-owned file logging, the session wrap-up (`/evolve wrapup`), and
+> the gate's automatic local-fate dimension (local entries get a promoted
+> or archived exit on the gate's own cadence — consulted first, never
+> written silently). See the Roadmap for the full shipped and candidate
+> lists.
 
 ## Background
 
@@ -103,7 +106,8 @@ dsh-continual-evolve/
 │   ├── render.ts         # bounded prompt rendering
 │   ├── inject.ts         # dynamic system-prompt section (prompt notes + delegation specs, ranked injection)
 │   ├── source.ts         # trajectory citations (sessionId + event seqs of distilled entries)
-│   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit, global-aware view)
+│   ├── auto.ts           # auto-review gate (turn/compaction triggers + audit, global-aware view, local-fate phase)
+│   ├── fate.ts           # gate local-fate dimension — auto promote/archive of local entries (consulted first, cooldown)
 │   ├── notify.ts         # gate visibility — follow-up notice after an approved auto-refine
 │   ├── goal.ts           # goal-driven evolution rounds (/evolve goal)
 │   ├── review.ts         # gate LLM judgment (declines local duplicates of globally covered topics)
@@ -119,8 +123,8 @@ dsh-continual-evolve/
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   ├── service.ts        # evolution engine (onApplied hook)
-│   └── wrapup.ts         # /evolve wrapup — session-end lifecycle (promote / split-promote → global, guarded archive)
-└── test/                 # 22 files, 255 tests
+│   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders)
+└── test/                 # 23 files, 290 tests
 ```
 
 ## Install
@@ -201,6 +205,21 @@ LangMem; no external services — everything is pure functions):
   from future sessions (over-archiving gets the same protection as
   over-writing); operational entries still archive silently. Everything stays
   snapshot/versioned/rollbackable.
+- **Gate local-fate (automatic wrap-up)** — the same wrap-up machinery now
+  runs inside the auto-review gate on its own cadence (`fateIntervalTurns`),
+  so local entries get their exit while the session is still running instead
+  of waiting for a manual `/evolve wrapup`. On each due gate run the audited
+  candidates are classified by the assessor and partitioned by the same
+  deterministic guards; the user is consulted FIRST before anything governed
+  lands (one dialog covering promotes, split promotions and review-required
+  archives — the consultSkillEdits pattern, with a decline cooldown). Covered
+  or operational entries still archive silently, and at compaction the gate
+  never opens a dialog: only silent archives apply, governed actions are
+  deferred with an audit record pointing at `/evolve wrapup`. Every fate
+  decision lands in `reviews.jsonl` (`approved` / `declined` / `deferred` /
+  `assessed` / `failed`) and applied actions are visible via a follow-up
+  notice. Apply writes are byte-identical to the wrap-up command (shared
+  proposal builders).
 - **Global-aware gate** — the auto-review gate and planner judge the merged
   global + local state with every entry's real scope labeled, so a topic
   already covered by a global entry is declined instead of being re-sedimented
@@ -318,6 +337,8 @@ where the baseline was already perfect).
 | `logLevel` | `1` | file log level: 0=error, 1=info, 2=warn, 3=debug |
 | `logMaxBytes` | 5 MiB | rotate the log to `plugin.log.1` when it exceeds this size |
 | `autoRollbackOnReject` | `true` | after a benchmark decision rejects a candidate, roll the refinement back automatically (same engine path as `/evolve rollback` — deterministic, snapshotted, audited) |
+| `localFate` | `true` | gate local-fate dimension: the gate audits the session's local entries on its own cadence and proposes promote/archive — consulted first, never written silently (only meaningful with `autoReview`) |
+| `fateIntervalTurns` | follows `reviewIntervalTurns` | minimum turns between local-fate assessments on the turn-interval path (compaction is unconditional) |
 
 Example (profile `cordis.patch.yml`):
 
@@ -359,6 +380,9 @@ Where we still lag behind prime-agent `/refine` and penguin-harness — and what
   - **per-session log filtering** — `/evolve log [tail N] [session <id>]` keeps only the lines mentioning a given session id (exact token match, drawn from the rendered message and raw args); gate records now carry the session id in their log line
   - **skill standard in the loop** — the planner and gate now author and judge skill entries against the skill-creator/skill-audit standard (author-distilled from the official deepseek-harness 11 skills): every plan call injects the `template.md` facts (builtin distilled guide as fallback) as `<skill_quality_standard>`; apply code-enforces the frontmatter mechanics (no shadowing `---`, no escaping resource refs); materialized SKILL.md files are re-checked and dangling resource references are logged;
   - **guidance skills + user-governed creation** — a second skill form (SKILL.md documents without a python reference) lets recurring workflows be proposed as skills; the gate offers every auto-created skill to the user (固化/不固化) before it lands, with a rejection cooldown — skills grow under governance, never silently
+- **2026-08-17 wrap-up wave (done)**:
+  - **`/evolve wrapup`** — a session's local entries get a real exit at session end: mechanical audit (local candidates + global-coverage detection; coverage judges **title similarity only** — a bare id collision with a different title is deliberately NOT coverage, and the real matching global titles are shown to the assessor) → LLM classification (`promote` / `archive` / `keep` + A-form split promotion: archive a mixed entry while promoting a cleaned durable sub-object) → deterministic guards re-checked at apply time (promote can never write a global duplicate; the symmetric archive guard requires user confirmation before an uncovered, user-sourced archive hides content; splits that duplicate a global topic drop to plain archive) → one human approval gate for every global create
+  - **gate local-fate dimension** — the wrap-up machinery now runs inside the auto-review gate on its own cadence (`fateIntervalTurns`, compaction unconditional): local entries are audited, classified and partitioned while the session is still running; governed actions are consulted first (one dialog, decline cooldown), covered/operational entries archive silently, compaction applies only silent archives and defers governed actions with an audit record; every decision lands in `reviews.jsonl` and applied actions get a follow-up notice. Apply writes are shared with the wrap-up command (byte-identical proposals)
 
 The upcoming/candidates list is empty for now — future work is driven by real usage.
 

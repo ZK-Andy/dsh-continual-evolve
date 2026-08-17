@@ -26,6 +26,7 @@ import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
 import { goalServiceOf } from "./goal.js";
 import { notifyAutoReview } from "./notify.js";
+import { runLocalFatePhase } from "./fate.js";
 import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
 import type { QuestionService } from "./approval.js";
@@ -36,6 +37,19 @@ export interface AutoReviewConfig {
 	budgetTokens: number;
 	/** Queue a visible follow-up notice after an approved, applied gate run. */
 	notifyOnAutoReview: boolean;
+	/**
+	 * Local-fate dimension (#11 P2): the gate audits the session's local
+	 * entries on its own cadence and proposes promote/archive (consulted
+	 * first — never written silently). Off disables the whole dimension.
+	 */
+	localFate: boolean;
+	/**
+	 * Minimum turns between local-fate assessments on the turn-interval path
+	 * (compaction is unconditional). Independent of the review cadence so
+	 * goal-driven sessions (gate every round) do not pay an assessment per
+	 * round.
+	 */
+	fateIntervalTurns: number;
 }
 
 export interface GateState {
@@ -48,17 +62,25 @@ export interface GateState {
 	 * window (skills are governed resources — no nagging).
 	 */
 	skillRejects: Map<string, number>;
+	/** Turn at which the local-fate dimension last assessed (cadence). */
+	lastFateAt: number;
+	/**
+	 * Per-candidate-set turn at which the user last declined a local-fate
+	 * proposal; declined sets are not offered again within the cooldown
+	 * window (the consultSkillEdits pattern — no nagging).
+	 */
+	fateRejects: Map<string, number>;
 }
 
 /** Turns a rejected skill candidate stays silent before being offered again. */
 export const SKILL_CONSULT_COOLDOWN_TURNS = 10;
 
-interface ReviewRecord {
+export interface ReviewRecord {
 	timestamp: string;
 	sessionId: string;
 	reason: AutoRefineReason;
 	turnsSinceLastReview: number;
-	outcome: "approved" | "declined" | "failed";
+	outcome: "approved" | "declined" | "failed" | "assessed" | "deferred";
 	rationale?: string;
 	refinementId?: string;
 }
@@ -178,7 +200,14 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 	let state = map.get(sessionId);
 	if (!state) {
-		state = { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map() };
+		state = {
+			turns: 0,
+			lastReviewAt: 0,
+			running: false,
+			skillRejects: new Map(),
+			lastFateAt: 0,
+			fateRejects: new Map(),
+		};
 		map.set(sessionId, state);
 	}
 	return state;
@@ -197,7 +226,28 @@ export function loadGateHarnessView(engine: EvolutionEngine, sessionId: string):
 	return mergeHarnessStates(engine.load("global", undefined), engine.load("local", sessionId));
 }
 
+/**
+ * One gate run = review phase + local-fate phase (#11 P2). The review phase
+ * judges and applies local refinements; the local-fate phase then gives the
+ * session's existing local entries a running exit (promote/archive proposals,
+ * consulted before they land). Running fate AFTER the review keeps the
+ * review's baseline fresh — fate re-loads the store and never races the
+ * review's optimistic-concurrency checks.
+ */
 async function runGate(
+	ctx: Context,
+	engine: EvolutionEngine,
+	agent: Agent,
+	config: AutoReviewConfig,
+	state: GateState,
+	reason: AutoRefineReason,
+	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
+): Promise<void> {
+	await runReviewPhase(ctx, engine, agent, config, state, reason, record);
+	await runLocalFatePhase(ctx, engine, agent, config, state, reason, record);
+}
+
+async function runReviewPhase(
 	ctx: Context,
 	engine: EvolutionEngine,
 	agent: Agent,

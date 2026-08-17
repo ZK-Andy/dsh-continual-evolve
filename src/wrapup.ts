@@ -21,8 +21,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { HarnessEntry, HarnessState, RefinementKind } from "./types.js";
-import { PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOURCE_SESSION_KEY, isArchived } from "./types.js";
+import type { HarnessEntry, HarnessState, RefinementKind, RefinementProposal } from "./types.js";
+import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOURCE_SESSION_KEY, SOURCED_FROM_KEY, isArchived } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
 
@@ -334,6 +334,122 @@ export function splitPromoteBlocked(item: WrapupItem, globalState: HarnessState,
 		return "split promotion duplicates a globally covered topic";
 	}
 	return undefined;
+}
+
+/**
+ * Shared proposal builders for a WHOLE promotion — used by both the
+ * `/evolve wrapup` command and the gate's local-fate dimension so the two
+ * paths apply IDENTICAL edits (global create + local retirement stamp).
+ *
+ * The local stamp is a factory: the `promotedTo` id is only known after the
+ * global create lands (validation may slugify the id), so the caller applies
+ * the global proposal first and stamps the local copy with the created id.
+ */
+export function wholePromoteProposals(
+	item: WrapupItem,
+	candidate: WrapupCandidate,
+	sessionId: string,
+): { global: RefinementProposal; localStamp: (createdId: string) => RefinementProposal } {
+	const now = new Date().toISOString();
+	return {
+		global: {
+			summary: `wrapup: promote local ${item.key} to the global store`,
+			rationale: item.reason,
+			expectedOutcome: `The entry is now visible to every session via the global store (sourcedFromLocal=${sessionId}:${candidate.id}).`,
+			edits: [
+				{
+					action: "create",
+					kind: candidate.kind,
+					id: candidate.id,
+					title: candidate.title,
+					content: candidate.content,
+					path: candidate.path,
+					metadata: {
+						...candidate.metadata,
+						[SOURCED_FROM_KEY]: `${sessionId}:${candidate.id}`,
+						[PROMOTED_AT_KEY]: now,
+					},
+				},
+			],
+		},
+		localStamp: (createdId) => ({
+			summary: `wrapup: stamp local ${item.key} as promoted to ${createdId} and retire it from injection`,
+			rationale: item.reason,
+			expectedOutcome: `The local copy keeps its data but stops being injected; the global copy is the live one.`,
+			edits: [
+				{
+					action: "update",
+					kind: candidate.kind,
+					id: candidate.id,
+					title: candidate.title,
+					content: candidate.content,
+					metadata: {
+						...candidate.metadata,
+						[PROMOTED_TO_KEY]: createdId,
+						[PROMOTED_AT_KEY]: now,
+						[ARCHIVED_AT_KEY]: now,
+					},
+				},
+			],
+		}),
+	};
+}
+
+/**
+ * Shared proposal builders for a SPLIT promotion (A-form): archive a mixed
+ * local entry but promote ONLY the cleaned durable part the model extracted.
+ * Same usage contract as {@link wholePromoteProposals}: apply the global
+ * create, then stamp the original local entry with the created id.
+ */
+export function splitPromoteProposals(
+	item: WrapupItem,
+	candidate: WrapupCandidate,
+	sessionId: string,
+): { global: RefinementProposal; localStamp: (createdId: string) => RefinementProposal } {
+	if (!item.promote) throw new Error("split promote proposals require a promote payload");
+	const now = new Date().toISOString();
+	return {
+		global: {
+			summary: `wrapup: split — promote cleaned part of ${item.key} to the global store`,
+			rationale: item.reason,
+			expectedOutcome: `Only the durable part becomes visible globally; the snapshot half stays archived with the original.`,
+			edits: [
+				{
+					action: "create",
+					kind: candidate.kind,
+					id: candidate.id,
+					title: item.promote.title,
+					content: item.promote.content,
+					path: candidate.path,
+					metadata: {
+						...candidate.metadata,
+						[SOURCED_FROM_KEY]: `${sessionId}:${candidate.id}`,
+						[PROMOTED_AT_KEY]: now,
+					},
+				},
+			],
+		},
+		localStamp: (createdId) => ({
+			summary: `wrapup: split — archive original ${item.key}, stamped as promoted to ${createdId}`,
+			rationale: item.reason,
+			expectedOutcome: `The original leaves injection (data kept, restorable); the cleaned global copy is the live one.`,
+			edits: [
+				{
+					action: "update",
+					kind: candidate.kind,
+					id: candidate.id,
+					title: candidate.title,
+					content: candidate.content,
+					metadata: {
+						...candidate.metadata,
+						[PROMOTED_TO_KEY]: createdId,
+						[PROMOTED_AT_KEY]: now,
+						[ARCHIVED_AT_KEY]: now,
+					},
+				},
+			],
+		}),
+	};
 }
 
 export const WRAPUP_ASSESS_SYSTEM_PROMPT = `You are the /evolve session wrap-up assessor.

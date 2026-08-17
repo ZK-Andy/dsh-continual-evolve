@@ -4,8 +4,8 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
-import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementProposal, RefinementResult } from "./types.js";
-import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCED_FROM_KEY } from "./types.js";
+import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementResult } from "./types.js";
+import { ARCHIVED_AT_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { planWithLlm } from "./planner.js";
@@ -13,7 +13,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { requireGlobalApproval } from "./approval.js";
 import type { QuestionService } from "./approval.js";
-import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked } from "./wrapup.js";
+import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, wholePromoteProposals } from "./wrapup.js";
 import type { WrapupCandidate, WrapupItem } from "./wrapup.js";
 import { saveHarnessState } from "./state.js";
 import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
@@ -481,102 +481,30 @@ async function executeWrapupCommand(
 		}
 		if (promoteAllowed) {
 			// Whole promotes: create global entry, retire the local copy.
+			// Shared proposal builders keep the wrap-up command and the gate's
+			// local-fate dimension writing IDENTICAL edits.
 			for (const { item, candidate } of wholeCreates) {
 				if (!candidate) continue;
-				const now = new Date().toISOString();
-				const globalProposal: RefinementProposal = {
-					summary: `wrapup: promote local ${item.key} to the global store`,
-					rationale: item.reason,
-					expectedOutcome: `The entry is now visible to every session via the global store (sourcedFromLocal=${sessionId}:${candidate.id}).`,
-					edits: [
-						{
-							action: "create",
-							kind: candidate.kind,
-							id: candidate.id,
-							title: candidate.title,
-							content: candidate.content,
-							path: candidate.path,
-							metadata: {
-								...candidate.metadata,
-								[SOURCED_FROM_KEY]: `${sessionId}:${candidate.id}`,
-								[PROMOTED_AT_KEY]: now,
-							},
-						},
-					],
-				};
-				const globalResult = engine.apply("global", undefined, globalProposal, { scope: "global" });
+				const proposals = wholePromoteProposals(item, candidate, sessionId);
+				const globalResult = engine.apply("global", undefined, proposals.global, { scope: "global" });
 				const createdId = globalResult.appliedEdits.find((edit) => edit.applied)?.id ?? candidate.id;
-				const localProposal: RefinementProposal = {
-					summary: `wrapup: stamp local ${item.key} as promoted to ${createdId} and retire it from injection`,
-					rationale: item.reason,
-					expectedOutcome: `The local copy keeps its data but stops being injected; the global copy is the live one.`,
-					edits: [
-						{
-							action: "update",
-							kind: candidate.kind,
-							id: candidate.id,
-							title: candidate.title,
-							content: candidate.content,
-							metadata: {
-								...candidate.metadata,
-								[PROMOTED_TO_KEY]: createdId,
-								[PROMOTED_AT_KEY]: now,
-								[ARCHIVED_AT_KEY]: now,
-							},
-						},
-					],
-				};
-				const localResult = engine.apply("local", sessionId, localProposal, { scope: "local", baselineState: localState });
+				const localResult = engine.apply("local", sessionId, proposals.localStamp(createdId), {
+					scope: "local",
+					baselineState: localState,
+				});
 				applied.push(`promoted ${item.key} → global:${createdId} (${globalResult.id}; local stamped ${localResult.id})`);
 			}
 			// Split promotions: create the cleaned durable part, retire the
 			// original local entry (its snapshot half is archived along).
 			for (const { item, candidate } of splitCreates) {
 				if (!item.promote) continue;
-				const now = new Date().toISOString();
-				const globalProposal: RefinementProposal = {
-					summary: `wrapup: split — promote cleaned part of ${item.key} to the global store`,
-					rationale: item.reason,
-					expectedOutcome: `Only the durable part becomes visible globally; the snapshot half stays archived with the original.`,
-					edits: [
-						{
-							action: "create",
-							kind: candidate.kind,
-							id: candidate.id,
-							title: item.promote.title,
-							content: item.promote.content,
-							path: candidate.path,
-							metadata: {
-								...candidate.metadata,
-								[SOURCED_FROM_KEY]: `${sessionId}:${candidate.id}`,
-								[PROMOTED_AT_KEY]: now,
-							},
-						},
-					],
-				};
-				const globalResult = engine.apply("global", undefined, globalProposal, { scope: "global" });
+				const proposals = splitPromoteProposals(item, candidate, sessionId);
+				const globalResult = engine.apply("global", undefined, proposals.global, { scope: "global" });
 				const createdId = globalResult.appliedEdits.find((edit) => edit.applied)?.id ?? candidate.id;
-				const localProposal: RefinementProposal = {
-					summary: `wrapup: split — archive original ${item.key}, stamped as promoted to ${createdId}`,
-					rationale: item.reason,
-					expectedOutcome: `The original leaves injection (data kept, restorable); the cleaned global copy is the live one.`,
-					edits: [
-						{
-							action: "update",
-							kind: candidate.kind,
-							id: candidate.id,
-							title: candidate.title,
-							content: candidate.content,
-							metadata: {
-								...candidate.metadata,
-								[PROMOTED_TO_KEY]: createdId,
-								[PROMOTED_AT_KEY]: now,
-								[ARCHIVED_AT_KEY]: now,
-							},
-						},
-					],
-				};
-				const localResult = engine.apply("local", sessionId, localProposal, { scope: "local", baselineState: localState });
+				const localResult = engine.apply("local", sessionId, proposals.localStamp(createdId), {
+					scope: "local",
+					baselineState: localState,
+				});
 				applied.push(`split ${item.key}: promoted cleaned part → global:${createdId} (${globalResult.id}); original archived (${localResult.id})`);
 			}
 		} else {

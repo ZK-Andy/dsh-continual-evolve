@@ -24,7 +24,7 @@ import { emptyHarnessState, type HarnessEntry, type RefinementProposal } from ".
 import type { Context } from "@deepseek-ai/cordis";
 
 function fresh(): GateState {
-	return { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map() };
+	return { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map() };
 }
 
 function fullEntry(id: string, kind: HarnessEntry["kind"], title: string): HarnessEntry {

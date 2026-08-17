@@ -7,12 +7,12 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-290%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
-> **状态：全部阶段完成，进入长期维护。** Phase 1–3 交付了完整进化闭环：纯核心引擎、模型工具与 `/evolve` 命令、自动 review 门禁（回合间隔 + 压缩检查点、全局写入人工审批）、真实系统提示词注入（prompt 补充 + 委派规格，空 store 零 token 成本）、benchmark 驱动验证闭环（代码所有计分、非退化接受、rubric ACL）。此后插件随真实使用持续增强——记忆层（排序注入、轨迹引用、归档）、每安装实例独立的 rubric 密钥、插件自带文件日志。已交付与候选清单见"路线图"。
+> **状态：全部阶段完成，进入长期维护。** Phase 1–3 交付了完整进化闭环：纯核心引擎、模型工具与 `/evolve` 命令、自动 review 门禁（回合间隔 + 压缩检查点、全局写入人工审批）、真实系统提示词注入（prompt 补充 + 委派规格，空 store 零 token 成本）、benchmark 驱动验证闭环（代码所有计分、非退化接受、rubric ACL）。此后插件随真实使用持续增强——记忆层（排序注入、轨迹引用、归档）、每安装实例独立的 rubric 密钥、插件自带文件日志、会话收尾（`/evolve wrapup`）、以及门禁的自动 local 归宿维度（local 条目在门禁自有节奏下获得提升或归档的归宿——先征询、绝不静默写入）。已交付与候选清单见"路线图"。
 
 ## 背景
 
@@ -80,7 +80,8 @@ dsh-continual-evolve/
 │   ├── render.ts         # 有界提示词渲染
 │   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格，打分排序注入）
 │   ├── source.ts         # 轨迹引用（沉淀条目的 sessionId + 事件 seq）
-│   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计，global 感知视图）
+│   ├── auto.ts           # 自动 review 门禁（回合/压缩触发 + 审计，global 感知视图，local 归宿阶段）
+│   ├── fate.ts           # 门禁 local 归宿维度——自动提议 local 条目提升/归档（先征询、带冷却）
 │   ├── notify.ts         # 门禁可见性——approved 自动沉淀后发送可见通知
 │   ├── goal.ts           # goal 驱动的进化轮次（/evolve goal）
 │   ├── review.ts         # 门禁 LLM 判断（拒绝 global 已覆盖主题的 local 重复沉淀）
@@ -96,8 +97,8 @@ dsh-continual-evolve/
 │   ├── pool.ts           # 评估运行的有界并发工作池
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   ├── service.ts        # 进化引擎（onApplied 钩子）
-│   └── wrapup.ts         # /evolve wrapup — 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档）
-└── test/                 # 22 个文件，255 个测试
+│   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器）
+└── test/                 # 23 个文件，290 个测试
 ```
 
 ## 安装
@@ -145,6 +146,7 @@ dsh plugin --profile web add github:ZK-Andy/dsh-continual-evolve
 - **轨迹引用**——每条新沉淀条目都会记录 `metadata.sourceSession` + `metadata.sourceSeqs`，指向它蒸馏自的直接用户消息（DSH 会话是事件溯源、seq 连续，引用可展开回持久会话日志）。列表显示 `src=<sessionId>:<seqs>`；旧条目不迁移也不报错。
 - **归档**——`/evolve archive <id>` 让条目不再注入（`metadata.archivedAt`，数据保留、与快照/回滚兼容），`/evolve unarchive <id>` 恢复。归档条目在 `evolve_list` 中标记 `[archived]`，注入跳过，溢出计数不含它们。
 - **会话收尾**——否则会话结束时的 local 条目会变成孤岛（后续会话永远看不到）。`/evolve wrapup` 给它们一个归宿：先机械审计——**全局覆盖只看标题相似**（裸同 id 但标题迥异**不算**覆盖；实际命中的全局标题会展示给分类器，让它对照真实内容判断）——再由模型逐条分类为 `promote` / `archive` / `keep`。提升把可复用条目写入 global store——**经人工审批门禁**，保留轨迹引用并追加 `sourcedFromLocal=<session>:<id>` 反向回引；本地副本随后盖 `promotedTo` 戳退出注入，永不再被提议。**拆解提升（A 形）**：混合条目（持久事实 + 会话快照）可整体归档、同时带一个清洗过的 `promote` 子对象——只有持久部分落进 global，快照留在归档里。**对称归档守卫**：未被全局覆盖、且源自真实用户消息的归档，先征求用户确认才隐藏内容（防过度归档与防过度写入获得同等保护）；操作性条目仍静默归档。一切仍走快照/版本/可回滚。
+- **门禁 local 归宿（自动收尾）**——同一套 wrap-up 机制现在以内置节奏（`fateIntervalTurns`）跑在自动 review 门禁里：local 条目在会话进行中就能获得归宿，不必等手动 `/evolve wrapup`。每次到期的门禁运行都会审计候选条目、由分类器分类、再经同一套确定性守卫划分；任何治理动作落地前**先征询用户**（一个弹窗覆盖提升、拆解提升与需确认归档——consultSkillEdits 模式，带拒绝冷却）。被全局覆盖或操作性条目仍静默归档；压缩时刻门禁绝不弹窗：只做静默归档，治理动作以审计记录推迟并指向 `/evolve wrapup`。每次 fate 决策都落进 `reviews.jsonl`（`approved` / `declined` / `deferred` / `assessed` / `failed`），已执行动作通过后续通知可见。应用写入与 wrapup 命令逐字节一致（共享 proposal 构造器）。
 - **global 感知门禁**——自动 review 门禁与规划器评审的是合并后的 global + local 状态，每条条目标注真实 scope；global 已覆盖的主题会被 declined，不再重复沉淀为 local 条目。
 
 ## 自进化环中的技能标准
@@ -213,6 +215,8 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 | `logLevel` | `1` | 文件日志级别：0=error、1=info、2=warn、3=debug |
 | `logMaxBytes` | 5 MiB | 超过该大小轮转到 `plugin.log.1` |
 | `autoRollbackOnReject` | `true` | benchmark 决策拒绝候选后自动回滚该 refinement（与 `/evolve rollback` 同一引擎路径——确定性、快照、审计） |
+| `localFate` | `true` | 门禁 local 归宿维度：门禁按自有节奏审计本会话 local 条目并提议提升/归档——先征询、绝不静默写入（仅 `autoReview` 开启时有效） |
+| `fateIntervalTurns` | 跟随 `reviewIntervalTurns` | 回合间隔路径上两次 local 归宿评估的最小间隔（压缩时刻无条件触发） |
 
 示例（profile `cordis.patch.yml`）：
 
@@ -254,6 +258,9 @@ pnpm lint           # oxlint src test
   - **日志按会话过滤**——`/evolve log [tail N] [session <id>]` 只保留提及指定会话 id 的行（精确 token 匹配，取自渲染消息与原始 args）；门禁记录的行现在携带会话 id
   - **自进化环中的技能标准**——规划器与门禁现在按 skill-creator/skill-audit 标准（作者蒸馏自官方 deepseek-harness 11 技能）创作与评审技能条目：每次规划注入 `template.md` 事实（内置精华版兜底）为 `<skill_quality_standard>`；apply 代码强制 frontmatter 机械规则（禁止遮蔽 `---`、禁止越界资源引用）；物化后的 SKILL.md 复检，悬空资源引用记日志;
   - **guidance 技能形态 + 用户治理创建**——第二种技能形态（无 python reference 的 SKILL.md 文档技能）让反复出现的流程可以被提议为技能；门禁把每次自动创建的技能先交给用户决定（固化/不固化）再落地，带拒绝冷却——技能在治理下生长，绝不静默写入
+- **2026-08-17 收尾 wave（完成）**：
+  - **`/evolve wrapup`**——会话结束时 local 条目有了真正的归宿：先机械审计（local 候选 + 全局覆盖检测；**覆盖只看标题相似**——裸同 id 但标题迥异**不算**覆盖，真正命中的全局标题会展示给分类器）→ LLM 分类（`promote` / `archive` / `keep` + A 形拆解提升：混合条目整体归档、同时提升清洗出的持久子对象）→ 应用时刻确定性守卫复检（promote 永不写出全局重复；对称归档守卫要求用户确认后才隐藏未被覆盖、源自真实对话的条目；清洗标题撞全局主题的拆解降级为普通归档）→ 所有全局 create 走一个人工审批门
+  - **门禁 local 归宿维度**——wrap-up 机制现在以内置节奏（`fateIntervalTurns`，压缩时刻无条件）跑在自动 review 门禁里：local 条目在会话进行中被审计、分类、划分；治理动作先征询（一个弹窗、拒绝冷却），被覆盖/操作性条目静默归档，压缩时刻只做静默归档并以审计记录推迟治理动作；每次决策落进 `reviews.jsonl`，已执行动作发后续通知。应用写入与 wrapup 命令共享构造器（逐字节一致）
 
 候选/待办清单暂时为空——后续工作随真实使用驱动。
 

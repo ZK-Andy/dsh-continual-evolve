@@ -57,6 +57,17 @@ export const Config = z.object({
 	logMaxBytes: z.natural().default(5 * 1024 * 1024),
 	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
 	autoRollbackOnReject: z.boolean().default(true),
+	/**
+	 * Gate local-fate dimension (#11 P2): the gate audits the session's local
+	 * entries on its own cadence and proposes promote/archive — consulted
+	 * first, never written silently. Only meaningful with autoReview on.
+	 */
+	localFate: z.boolean().default(true),
+	/**
+	 * Minimum turns between local-fate assessments on the turn-interval path
+	 * (compaction is unconditional). Absent → follows reviewIntervalTurns.
+	 */
+	fateIntervalTurns: z.natural(),
 });
 
 /** Structurally typed resolved config (loader passes the validated object). */
@@ -79,6 +90,10 @@ export interface EvolveConfig {
 	logMaxBytes?: number;
 	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
 	autoRollbackOnReject?: boolean;
+	/** Gate local-fate dimension: propose promote/archive of local entries automatically. */
+	localFate?: boolean;
+	/** Minimum turns between local-fate assessments (compaction is unconditional). */
+	fateIntervalTurns?: number;
 }
 
 export interface EvolutionService {
@@ -150,9 +165,11 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			maxInputChars: config.maxReviewInputChars ?? 40000,
 			budgetTokens: config.reviewBudgetTokens ?? 4096,
 			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
+			localFate: config.localFate ?? true,
+			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
 		});
 		ctx.logger("continual-evolve").info(
-			`continual-evolve auto-review enabled (every ${config.reviewIntervalTurns ?? 6} turns)`,
+			`continual-evolve auto-review enabled (every ${config.reviewIntervalTurns ?? 6} turns; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
 		);
 	}
 
