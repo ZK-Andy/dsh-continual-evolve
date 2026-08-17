@@ -16,6 +16,8 @@ export interface ApplyContext {
 	baselineState?: Parameters<typeof applyRefinementProposal>[0];
 	/** Trajectory citation stamped into newly created entries (see apply.ts). */
 	source?: EntrySource | undefined;
+	/** Marks the resulting refinement as the deterministic rollback of another (audit chain). */
+	rollbackOf?: string | undefined;
 }
 
 export interface EvolutionHooks {
@@ -39,6 +41,7 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 			scope,
 			...(context?.source ? { source: context.source } : {}),
 			...(context?.baselineState ? { baselineState: context.baselineState } : {}),
+			...(context?.rollbackOf ? { rollbackOf: context.rollbackOf } : {}),
 		});
 		saveHarnessState(paths.stateDir, state);
 		appendResult(paths, result);
@@ -54,7 +57,10 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 			throw new Error(`Refinement ${refinementId} not found in ${scope} history`);
 		}
 		const proposal = rollbackProposal(target);
-		return apply(scope, sessionId, proposal);
+		// The rollback refinement carries rollbackOf so the audit chain links
+		// the inverse operation back to its origin (previously the rollback
+		// record only echoed "Rollback refinement <id>" in its summary text).
+		return apply(scope, sessionId, proposal, { scope, rollbackOf: refinementId });
 	}
 
 	function history(scope: HarnessScope, sessionId: string | undefined): RefinementResult[] {

@@ -160,6 +160,26 @@ describe("rollbackRejectedCandidate", () => {
 			rmSync(base, { recursive: true, force: true });
 		}
 	});
+
+	it("links the rollback refinement back to its origin via rollbackOf", () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const result = engine.apply("local", "session-x", {
+				summary: "candidate",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "Ground truth", content: "value" }],
+			});
+			const outcome = rollbackRejectedCandidate(engine, "session-x", result.id);
+			expect(outcome.rolledBack).toBe(true);
+			const history = engine.history("local", "session-x");
+			const rollbackRecord = history.find((item) => item.id !== result.id);
+			expect(rollbackRecord?.rollbackOf).toBe(result.id);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
 });
 
 // ── A5: case lifecycle + quality gate ──────────────────────────────────
