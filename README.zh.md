@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-302%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -75,8 +75,13 @@ dsh-continual-evolve/
 │   ├── rollback.ts       # 确定性逆操作回滚
 │   ├── plan.ts           # 提案 JSON 解析（截断诊断）
 │   ├── tool.ts           # evolve_* 模型工具（5 个）
-│   ├── command.ts        # /evolve 命令（含 benchmark 子命令）
+│   ├── command.ts        # /evolve 命令分发器 + 共享工具
+│   ├── goal-command.ts   # /evolve goal 子命令处理
+│   ├── mount-command.ts  # /evolve mount + unmount 子命令处理
+│   ├── benchmark-command.ts # /evolve benchmark 子命令处理
+│   ├── wrapup-command.ts # /evolve wrapup 子命令处理
 │   ├── planner.ts        # ctx.llm 规划器
+│   ├── llm-text.ts       # 统一流式文本助手（BlockAssembler + finish 检查）
 │   ├── render.ts         # 有界提示词渲染
 │   ├── inject.ts         # 动态系统提示词段（prompt 补充 + 委派规格，打分排序注入）
 │   ├── source.ts         # 轨迹引用（沉淀条目的 sessionId + 事件 seq）
@@ -87,18 +92,20 @@ dsh-continual-evolve/
 │   ├── review.ts         # 门禁 LLM 判断（拒绝 global 已覆盖主题的 local 重复沉淀）
 │   ├── approval.ts       # 全局写入人工审批
 │   ├── skill.ts          # 技能物化（$DSH_HOME/skills/）
+│   ├── skill-render.ts   # 共享技能渲染（skillNameOf + renderSkillMarkdown，打破循环依赖）
 │   ├── skillquality.ts   # 自进化环中的技能标准（skill-creator 模板读取 + frontmatter 代码校验）
 │   ├── mount.ts          # 技能热挂载插件（loader.create + 启动恢复）
-│   ├── benchmark.ts      # benchmark 存储
+│   ├── benchmark.ts      # benchmark 存储 + CellScore 类型（含运行时实证字段）
 │   ├── rubric.ts         # rubric ACL（AES-256-GCM 密文信封，自动生成本地密钥）
 │   ├── logfile.ts        # 插件自带文件日志（JSONL exporter + 轮转）
 │   ├── score.ts          # 代码所有聚合 + 接受规则
-│   ├── evaluate.ts       # 两段式评估执行器（执行者产证据 → 独立评审者评分）+ 失败格协议
+│   ├── evaluate.ts       # 两段式评估执行器（执行者产证据 → 独立评审者评分）+ 失败格协议 + 运行时实证校验
 │   ├── pool.ts           # 评估运行的有界并发工作池
 │   ├── store.ts          # store 布局 + 快照 + 结果历史
 │   ├── service.ts        # 进化引擎（onApplied 钩子）
-│   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器）
-└── test/                 # 23 个文件，290 个测试
+│   ├── usage.ts          # 条目注入使用率追踪（持久计数、陈旧检测）
+│   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器；陈旧信号）
+└── test/                 # 26 个文件，332 个测试
 ```
 
 ## 安装
@@ -251,7 +258,7 @@ pnpm lint           # oxlint src test
 
 遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
 
-对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0 已交付：评估者/评分者分离、失败格协议；下一步 P1：运行实证校验、使用率统计、自动衰减）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
+对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1 已交付：评估者/评分者分离、失败格协议、运行时实证校验、使用率统计、自动衰减；下一步 P2：校准 Pipeline、case 质检、review 模型分离）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
 
 ## 路线图
 
@@ -275,6 +282,16 @@ pnpm lint           # oxlint src test
   - **评估者/评分者分离**——benchmark 评估改为两段式（差距 A1）：执行者完成任务并记录具体证据、**永远看不到 rubric**；独立评审者按 rubric 给证据评分（唯一解密 rubric 的分支）。被测 agent 无法朝评分标准优化、也无法自评
   - **失败格协议**——cell 带 `status: ok|failed`（差距 A2）：失败格从所有均值中排除并计数，接受规则在失败格超过 `maxFailedCells`（默认 0）时拒绝整轮，而不是把 0 平均进均值。scoreboard status/run 展示失败数与逐格原因
   - **Trace 证据指针**——每个 cell 记录执行者会话 id（差距 A4），分数可下钻回产生它的确切会话轨迹
+- **2026-08-18 差距 P1（完成）**：
+  - **运行时实证校验（A3）**——cell 现在记录宿主写入的实际 `provider`、`model` 和 `caseHash`（statement + rubric 的 SHA-256 前缀）；参考线与候选运行之间的材料变化可检出
+  - **条目使用率统计（B1）**——注入计数持久追踪（`<baseDir>/evolve/usage.json`）；`evolve_list` 展示使用次数；`zeroUsageEntries()` 筛选从未注入的 local 条目作为归档候选
+  - **自动陈旧检测（B2）**——零注入且低新鲜度的条目标记为 `stale`；LLM 分类器被指示优先归档陈旧条目
+- **2026-08-18 代码重构（完成）**：
+  - **循环依赖拆解（P1-1）**——抽出 `skill-render.ts` 解耦 `skill.ts ↔ skillquality.ts`
+  - **LLM 调用去重（P1-2）**——抽出 `llm-text.ts` 共享 `streamText()`（review/planner/wrapup 删除 ~107 行重复）
+  - **config 类型推导（P2-1）**——`EvolveConfig` 改为 `Schemastery.TypeT` 推导（消除 20 行手写接口）
+  - **command.ts 拆分（P2-2）**——860 行 god file 拆为 `goal-command.ts`、`mount-command.ts`、`benchmark-command.ts`、`wrapup-command.ts`
+  - **P3 清理**——`questionServiceOf()` cast 去重（4 处）、死导出清理、矛盾注释修复
 
 候选/待办清单暂时为空——后续工作随真实使用驱动。
 

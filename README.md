@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-302%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -101,8 +101,13 @@ dsh-continual-evolve/
 │   ├── rollback.ts       # deterministic inverse-op rollback
 │   ├── plan.ts           # proposal JSON parsing (truncation-aware)
 │   ├── tool.ts           # evolve_* model-facing tools (5)
-│   ├── command.ts        # /evolve command (incl. benchmark subcommands)
+│   ├── command.ts        # /evolve command dispatcher + shared utilities
+│   ├── goal-command.ts   # /evolve goal subcommand handler
+│   ├── mount-command.ts  # /evolve mount + unmount subcommand handlers
+│   ├── benchmark-command.ts # /evolve benchmark subcommand handler
+│   ├── wrapup-command.ts # /evolve wrapup subcommand handler
 │   ├── planner.ts        # ctx.llm planner
+│   ├── llm-text.ts       # unified streaming-text helper (BlockAssembler + finish check)
 │   ├── render.ts         # bounded prompt rendering
 │   ├── inject.ts         # dynamic system-prompt section (prompt notes + delegation specs, ranked injection)
 │   ├── source.ts         # trajectory citations (sessionId + event seqs of distilled entries)
@@ -113,18 +118,20 @@ dsh-continual-evolve/
 │   ├── review.ts         # gate LLM judgment (declines local duplicates of globally covered topics)
 │   ├── approval.ts       # human approval for global edits
 │   ├── skill.ts          # skill materialization ($DSH_HOME/skills/)
+│   ├── skill-render.ts   # shared skill rendering (skillNameOf + renderSkillMarkdown, breaks circular dependency)
 │   ├── skillquality.ts   # skill standard in the loop (skill-creator template reading + frontmatter code checks)
 │   ├── mount.ts          # hot-mounted skill plugins (loader.create + boot restore)
-│   ├── benchmark.ts      # benchmark store
+│   ├── benchmark.ts      # benchmark store + CellScore types (with runtime evidence fields)
 │   ├── rubric.ts         # rubric ACL (AES-256-GCM envelopes, auto-generated local key)
 │   ├── logfile.ts        # plugin-owned file logging (JSONL exporter + rotation)
 │   ├── score.ts          # code-owned aggregation + acceptance rule
-│   ├── evaluate.ts       # two-stage evaluation runner (executor evidence → independent reviewer) + failure-cell protocol
+│   ├── evaluate.ts       # two-stage evaluation runner (executor evidence → independent reviewer) + failure-cell protocol + runtime verification
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   ├── service.ts        # evolution engine (onApplied hook)
-│   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders)
-└── test/                 # 23 files, 290 tests
+│   ├── usage.ts          # entry injection usage tracking (durable counts, staleness detection)
+│   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders; staleness signal)
+└── test/                 # 26 files, 332 tests
 ```
 
 ## Install
@@ -388,7 +395,7 @@ pnpm lint           # oxlint src test
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
-Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0 shipped: evaluator/scorer separation, failure-cell protocol; next: P1 runtime provenance checks, usage statistics, auto-decay).
+Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification, usage statistics, auto-decay; next: P2 calibration pipeline, case quality checks, review model separation).
 
 ## Roadmap
 
@@ -412,6 +419,16 @@ Where we still lag behind prime-agent `/refine` and penguin-harness — and what
   - **evaluator/scorer separation** — benchmark evaluation is now two-stage (gap A1): the executor performs the task and records concrete evidence without ever seeing the rubric; an independent reviewer grades that evidence against the rubric (the only branch that decrypts it). The assessed agent can no longer optimize toward or self-grade against the criteria.
   - **failure-cell protocol** — cells carry `status: ok|failed` (gap A2): failed units are excluded from every mean and counted, and the acceptance rule rejects rounds with failures beyond `maxFailedCells` (0 default) instead of averaging a zero into the mean. Scoreboard status/run surfaces failed counts and per-cell reasons.
   - **trace evidence pointer** — each cell records the executor's session id (gap A4), so a score drills back to the exact transcript that earned it
+- **2026-08-18 gap P1 (done)**:
+  - **runtime evidence verification (A3)** — cells now record actual `provider`, `model`, and `caseHash` (SHA-256 prefix of statement + rubric) written by the host, not the model; material changes between reference and candidate runs are detectable
+  - **entry usage statistics (B1)** — injection counts are durably tracked per entry in `<baseDir>/evolve/usage.json`; `evolve_list` shows usage counts; `zeroUsageEntries()` surfaces never-injected local entries as archive candidates
+  - **automatic staleness detection (B2)** — entries with zero injection usage AND old recency are flagged `stale` in wrap-up candidates; the LLM assessor is instructed to prefer "archive" for stale entries
+- **2026-08-18 code refactoring (done)**:
+  - **circular dependency break (P1-1)** — extracted `skill-render.ts` to decouple `skill.ts ↔ skillquality.ts`
+  - **LLM call deduplication (P1-2)** — extracted `llm-text.ts` with shared `streamText()` (~107 lines removed from review/planner/wrapup)
+  - **config type derivation (P2-1)** — `EvolveConfig` now derived from schemastery schema via `Schemastery.TypeT` (eliminated 20-line handwritten interface)
+  - **command.ts split (P2-2)** — 860-line god file split into `goal-command.ts`, `mount-command.ts`, `benchmark-command.ts`, `wrapup-command.ts`
+  - **P3 cleanups** — `questionServiceOf()` cast dedup (4 sites), dead exports removed, contradictory comments fixed
 
 The upcoming/candidates list is empty for now — future work is driven by real usage.
 
