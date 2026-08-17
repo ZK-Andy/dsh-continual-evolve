@@ -10,6 +10,7 @@ import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt } from "./render.js";
 import { requireGlobalApproval } from "./approval.js";
 import { entrySourceOf } from "./source.js";
+import { getUsageCount, loadUsage } from "./usage.js";
 
 const SCOPES: HarnessScope[] = ["local", "global"];
 
@@ -56,7 +57,22 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 			execute: async (args, exec) => {
 				const scope = scopeOf(args.scope, "local");
 				const state = engine.load(scope, sessionIdOf(exec));
-				return textResult(formatHarnessStateForPrompt(state));
+				const text = formatHarnessStateForPrompt(state);
+				// Append injection usage counts (gap B1).
+				const usage = loadUsage(engine.baseDir);
+				const usageLines: string[] = [];
+				for (const kind of Object.keys(state.entries) as RefinementKind[]) {
+					for (const entry of Object.values(state.entries[kind])) {
+						const count = getUsageCount(usage, kind, entry.id);
+						if (count > 0) {
+							usageLines.push(`${kind}:${entry.id} — injected ${count}×`);
+						}
+					}
+				}
+				if (usageLines.length > 0) {
+					return textResult(`${text}\n\n# Injection Usage\n${usageLines.join("\n")}`);
+				}
+				return textResult(text);
 			},
 		}),
 	);

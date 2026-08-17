@@ -22,6 +22,7 @@ import { isArchived } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { mergeHarnessStates } from "./state.js";
 import { entryLine } from "./render.js";
+import { recordInjection } from "./usage.js";
 
 /** Prompt sections render at most this many entries per kind. */
 export const MAX_INJECTED_ENTRIES_PER_KIND = 6;
@@ -289,9 +290,31 @@ export function entriesSectionText(engine: EvolutionEngine, agent: AgentLike | u
 	const promptEntries = Object.values(merged.entries.prompt);
 	const subagentEntries = Object.values(merged.entries.subagent);
 	const relevanceQuery = (query ?? recentUserText(agent)).trim();
-	const parts = [
-		formatPromptEntriesSection(promptEntries, relevanceQuery),
-		formatSubagentSpecsSection(subagentEntries, relevanceQuery),
-	].filter((part) => part.length > 0);
+
+	// Build injected text and collect which entries were included (gap B1).
+	const promptText = formatPromptEntriesSection(promptEntries, relevanceQuery);
+	const subagentText = formatSubagentSpecsSection(subagentEntries, relevanceQuery);
+	const injectedKeys: string[] = [];
+
+	// Collect keys from the visible (ranked, capped) entries that actually appear.
+	const visiblePrompt = promptEntries.filter((e) => !isArchived(e));
+	const visibleSubagent = subagentEntries.filter((e) => !isArchived(e));
+	for (const entry of rankEntries(visiblePrompt, relevanceQuery).slice(0, MAX_INJECTED_ENTRIES_PER_KIND)) {
+		injectedKeys.push(`prompt:${entry.id}`);
+	}
+	for (const entry of rankEntries(visibleSubagent, relevanceQuery).slice(0, MAX_INJECTED_ENTRIES_PER_KIND)) {
+		injectedKeys.push(`subagent:${entry.id}`);
+	}
+
+	// Record usage durably (best-effort: failure never blocks injection).
+	if (injectedKeys.length > 0) {
+		try {
+			recordInjection(engine.baseDir, injectedKeys);
+		} catch {
+			// Usage recording is diagnostic; never interrupt the injection path.
+		}
+	}
+
+	const parts = [promptText, subagentText].filter((part) => part.length > 0);
 	return parts.join("\n\n");
 }
