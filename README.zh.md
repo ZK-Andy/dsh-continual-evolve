@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-362%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-383%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -105,7 +105,7 @@ dsh-continual-evolve/
 │   ├── service.ts        # 进化引擎（onApplied 钩子）
 │   ├── usage.ts          # 条目注入使用率追踪（持久计数、陈旧检测）
 │   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器；陈旧信号）
-└── test/                 # 26 个文件，362 个测试
+└── test/                 # 27 个文件，383 个测试
 ```
 
 ## 安装
@@ -265,7 +265,7 @@ pnpm lint           # oxlint src test
 
 遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
 
-对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1+P2 已交付：评估者/评分者分离、失败格协议、运行时实证校验、使用率统计、自动衰减、case 生命周期+质检、条目目录视图、review 模型分离、blast-radius 标注、耗时追踪；下一步 P3：扩展事件面、种子 benchmark）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
+对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1+P2+P3 已交付：评估者/评分者分离、失败格协议、运行时实证校验+材料漂移检测、使用率统计、自动衰减、case 生命周期+质检、条目目录视图、review 模型分离、blast-radius 标注、耗时追踪、evolve_complete 事件、种子 benchmark；剩余：跨进程同步按需实现 + 远期研究项）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
 
 ## 路线图
 

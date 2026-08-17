@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-362%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-383%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -131,7 +131,7 @@ dsh-continual-evolve/
 │   ├── service.ts        # evolution engine (onApplied hook)
 │   ├── usage.ts          # entry injection usage tracking (durable counts, staleness detection)
 │   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders; staleness signal)
-└── test/                 # 26 files, 362 tests
+└── test/                 # 27 files, 383 tests
 ```
 
 ## Install
@@ -403,7 +403,7 @@ pnpm lint           # oxlint src test
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
-Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1+P2 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification, usage statistics, auto-decay, case lifecycle + quality gate, entry directory view, review model separation, blast-radius annotations, duration tracking; next: P3 expanded event surface, seed benchmark).
+Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1+P2+P3 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification + material-drift detection, usage statistics, auto-decay, case lifecycle + quality gate, entry directory view, review model separation, blast-radius annotations, duration tracking, evolve_complete events, seed benchmark; remaining: cross-process sync on demand + long-term research items).
 
 ## Roadmap
 
