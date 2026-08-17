@@ -23,6 +23,39 @@ export interface BenchmarkCase {
 	title: string;
 	statement: string;
 	rubric: string;
+	/**
+	 * Case lifecycle state (gap A5): draft → calibrating → frozen.
+	 * - draft: newly added, not yet quality-checked or calibrated
+	 * - calibrating: pilot run in progress (case may be edited)
+	 * - frozen: calibrated, locked as a formal baseline (immutable)
+	 */
+	status?: "draft" | "calibrating" | "frozen";
+}
+
+/**
+ * Persistent per-case metadata (stored in `cases/<cid>/meta.json`).
+ * Carries quality-gate annotations and calibration history.
+ */
+export interface CaseMeta {
+	status: "draft" | "calibrating" | "frozen";
+	/** What this case tests — the capability contract. */
+	capability: string;
+	/** What distinguishes a pass from a fail. */
+	distinguisher: string;
+	/** Known shortcuts the agent might use to game the rubric. */
+	shortcuts: string;
+	/** Calibration run history (appended on each pilot run). */
+	calibrationHistory: CalibrationRecord[];
+}
+
+/** One pilot-run record in the calibration history. */
+export interface CalibrationRecord {
+	runAt: string;
+	score: number;
+	passed: boolean;
+	notes: string;
+	/** Whether the case was modified after this run. */
+	modified: boolean;
 }
 
 export interface BenchmarkDefinition {
@@ -190,6 +223,8 @@ export function addCase(baseDir: string, bid: string, title: string, statement: 
 	// resolveRubricKey) and the dev key here is only a defensive last resort.
 	const stored = rubricKey ? encryptRubric(rubric, rubricKey) : encryptRubric(rubric, deriveKey(DEV_RUBRIC_KEY));
 	writeFileSync(join(caseDir, "rubric.json"), `${JSON.stringify(stored, null, 2)}\n`, "utf8");
+	// A5: initialize case metadata for quality gate.
+	saveCaseMeta(baseDir, bid, id, defaultCaseMeta());
 	return { id, title: title.trim(), statement, rubric };
 }
 
@@ -204,7 +239,8 @@ export function listCases(baseDir: string, bid: string): BenchmarkCase[] {
 			try {
 				const statement = readFileSync(statementPath, "utf8");
 				const rubric = JSON.parse(readFileSync(rubricPath, "utf8")) as string;
-				return { id, title: id, statement, rubric } satisfies BenchmarkCase;
+				const meta = loadCaseMeta(baseDir, bid, id);
+				return { id, title: id, statement, rubric, ...(meta ? { status: meta.status } : {}) } satisfies BenchmarkCase;
 			} catch {
 				return undefined;
 			}
@@ -231,6 +267,120 @@ export function loadScoreboard(baseDir: string, bid: string): Scoreboard {
 
 export function saveScoreboard(baseDir: string, bid: string, board: Scoreboard): void {
 	writeFileSync(join(benchmarkDir(baseDir, bid), "scoreboard.json"), `${JSON.stringify(board, null, 2)}\n`, "utf8");
+}
+
+// ── Case meta (gap A5: quality gate + calibration history) ────────────
+
+export function loadCaseMeta(baseDir: string, bid: string, cid: string): CaseMeta | undefined {
+	const path = join(benchmarkDir(baseDir, bid), "cases", cid, "meta.json");
+	if (!existsSync(path)) return undefined;
+	try {
+		return JSON.parse(readFileSync(path, "utf8")) as CaseMeta;
+	} catch {
+		return undefined;
+	}
+}
+
+export function saveCaseMeta(baseDir: string, bid: string, cid: string, meta: CaseMeta): void {
+	const metaDir = join(benchmarkDir(baseDir, bid), "cases", cid);
+	mkdirSync(metaDir, { recursive: true });
+	writeFileSync(join(metaDir, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+}
+
+/** List case metas for all cases in a benchmark (missing meta → defaults). */
+export function listCaseMetas(baseDir: string, bid: string): Map<string, CaseMeta> {
+	const result = new Map<string, CaseMeta>();
+	const cases = listCases(baseDir, bid);
+	for (const c of cases) {
+		const meta = loadCaseMeta(baseDir, bid, c.id);
+		if (meta) {
+			result.set(c.id, meta);
+		}
+	}
+	return result;
+}
+
+/** Check whether a case is frozen (immutable). */
+export function isCaseFrozen(baseDir: string, bid: string, cid: string): boolean {
+	const meta = loadCaseMeta(baseDir, bid, cid);
+	return meta?.status === "frozen";
+}
+
+/**
+ * Transition a case's lifecycle state. Throws on illegal transitions.
+ *   draft → calibrating (start pilot)
+ *   calibrating → draft (abandon calibration)
+ *   calibrating → frozen (lock baseline)
+ */
+export function transitionCaseStatus(
+	baseDir: string,
+	bid: string,
+	cid: string,
+	to: "draft" | "calibrating" | "frozen",
+): CaseMeta {
+	const meta = loadCaseMeta(baseDir, bid, cid) ?? defaultCaseMeta();
+	const from = meta.status;
+	const valid =
+		(from === "draft" && to === "calibrating") ||
+		(from === "calibrating" && to === "draft") ||
+		(from === "calibrating" && to === "frozen");
+	if (!valid) {
+		throw new Error(`illegal case status transition: ${from} → ${to}`);
+	}
+	meta.status = to;
+	saveCaseMeta(baseDir, bid, cid, meta);
+	return meta;
+}
+
+function defaultCaseMeta(): CaseMeta {
+	return {
+		status: "draft",
+		capability: "",
+		distinguisher: "",
+		shortcuts: "",
+		calibrationHistory: [],
+	};
+}
+
+/**
+ * Quality-check a case: mechanical validation without LLM calls.
+ * Returns human-readable problems; empty array means the case passes.
+ */
+export function caseCheckProblems(
+	baseDir: string,
+	bid: string,
+	cid: string,
+): string[] {
+	const problems: string[] = [];
+	const statementPath = join(benchmarkDir(baseDir, bid), "cases", cid, "statement.md");
+	if (!existsSync(statementPath)) {
+		problems.push("statement.md missing");
+		return problems;
+	}
+	const statement = readFileSync(statementPath, "utf8").trim();
+	if (statement.length < 20) {
+		problems.push(`statement too short (${statement.length} chars, minimum 20)`);
+	}
+	const rubricPath = join(benchmarkDir(baseDir, bid), "cases", cid, "rubric.json");
+	if (!existsSync(rubricPath)) {
+		problems.push("rubric.json missing");
+		return problems;
+	}
+	try {
+		const raw = readFileSync(rubricPath, "utf8");
+		JSON.parse(raw);
+	} catch {
+		problems.push("rubric.json is not valid JSON");
+	}
+	const meta = loadCaseMeta(baseDir, bid, cid);
+	if (!meta) {
+		problems.push("meta.json missing (run /evolve benchmark casecheck to initialize)");
+	} else {
+		if (!meta.capability) problems.push("capability contract is empty");
+		if (!meta.distinguisher) problems.push("distinguisher is empty");
+		if (!meta.shortcuts) problems.push("shortcuts annotation is empty");
+	}
+	return problems;
 }
 
 export function removeBenchmark(baseDir: string, bid: string): void {

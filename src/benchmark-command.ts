@@ -7,7 +7,7 @@ import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt } from "./render.js";
 import { stripAngleBrackets } from "./command.js";
 import type { CommandRuntimeOptions } from "./command.js";
-import { addCase, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadScoreboard, rollbackRejectedCandidate, saveScoreboard } from "./benchmark.js";
+import { addCase, caseCheckProblems, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadCaseMeta, loadScoreboard, rollbackRejectedCandidate, saveCaseMeta, saveScoreboard, transitionCaseStatus } from "./benchmark.js";
 import { decide, decisionReport, entryFromCells } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 
@@ -40,7 +40,11 @@ const BENCHMARK_USAGE = `Usage:
   /evolve benchmark status <bid>                         show scoreboard + decisions
   /evolve benchmark reset <bid>                          clear the scoreboard (fresh reference)
   /evolve benchmark run <bid>                            evaluate current state as the reference
-  /evolve benchmark run <bid> candidate <refinementId>   evaluate the post-refinement state and decide`;
+  /evolve benchmark run <bid> candidate <refinementId>   evaluate the post-refinement state and decide
+  /evolve benchmark casecheck <bid>                      quality-gate check all cases
+  /evolve benchmark pilot <bid> <cid>                    single pilot run for calibration
+  /evolve benchmark freeze <bid> <cid>                   freeze a case as formal baseline
+  /evolve benchmark meta <bid> <cid> [field value ...]   set case metadata (capability/distinguisher/shortcuts)`;
 
 export async function executeBenchmarkCommand(
 	ctx: Context,
@@ -90,8 +94,11 @@ export async function executeBenchmarkCommand(
 			if (!bid || !title || !statement || !rubric) {
 				return error(`benchmark add-case needs <bid> <title> <statement> <rubric>.\n${BENCHMARK_USAGE}`);
 			}
+			if (!loadBenchmark(baseDir, bid)) {
+				return error(`benchmark ${bid} not found`);
+			}
 			const caseItem = addCase(baseDir, bid, title, statement, rubric, runtime.rubricKey);
-			return success(`case ${caseItem.id} added to ${bid}`);
+			return success(`case ${caseItem.id} added to ${bid} (status: draft)`);
 		}
 		case "reset": {
 			const bid = stripAngleBrackets(args[0] ?? "");
@@ -193,6 +200,142 @@ export async function executeBenchmarkCommand(
 			}
 			saveScoreboard(baseDir, bid, board);
 			return success(lines.join("\n"));
+		}
+		case "casecheck": {
+			const bid = stripAngleBrackets(args[0] ?? "");
+			if (!bid) {
+				return error(`benchmark casecheck needs a <bid>.\n${BENCHMARK_USAGE}`);
+			}
+			const definition = loadBenchmark(baseDir, bid);
+			if (!definition) {
+				return error(`benchmark ${bid} not found`);
+			}
+			const cases = listCases(baseDir, bid);
+			if (cases.length === 0) {
+				return error(`benchmark ${bid} has no cases`);
+			}
+			const lines: string[] = [];
+			let totalProblems = 0;
+			for (const c of cases) {
+				const problems = caseCheckProblems(baseDir, bid, c.id);
+				const meta = loadCaseMeta(baseDir, bid, c.id);
+				const status = meta?.status ?? "draft";
+				if (problems.length === 0) {
+					lines.push(`  ${c.id} [${status}] ✓`);
+				} else {
+					lines.push(`  ${c.id} [${status}] ✗ (${problems.length} problem${problems.length > 1 ? "s" : ""}):`);
+					for (const p of problems) {
+						lines.push(`    - ${p}`);
+					}
+					totalProblems += problems.length;
+				}
+			}
+			const verdict = totalProblems === 0 ? "✓ all cases pass quality gate" : `✗ ${totalProblems} problem${totalProblems > 1 ? "s" : ""} found`;
+			return success(`casecheck ${bid}: ${verdict}\n${cases.length} cases checked\n${lines.join("\n")}`);
+		}
+		case "pilot": {
+			const bid = stripAngleBrackets(args[0] ?? "");
+			const cid = stripAngleBrackets(args[1] ?? "");
+			if (!bid || !cid) {
+				return error(`benchmark pilot needs <bid> <cid>.\n${BENCHMARK_USAGE}`);
+			}
+			const definition = loadBenchmark(baseDir, bid);
+			if (!definition) {
+				return error(`benchmark ${bid} not found`);
+			}
+			const cases = listCases(baseDir, bid);
+			const target = cases.find((c) => c.id === cid);
+			if (!target) {
+				return error(`case ${cid} not found in ${bid}`);
+			}
+			// Transition to calibrating if currently draft.
+			const meta = loadCaseMeta(baseDir, bid, cid);
+			if (meta?.status === "frozen") {
+				return error(`case ${cid} is frozen and cannot be calibrated`);
+			}
+			if (meta?.status !== "calibrating") {
+				transitionCaseStatus(baseDir, bid, cid, "calibrating");
+			}
+			// Run a single evaluation on just this case (1 run).
+			const overview = formatHarnessStateForPrompt(engine.load("local", sessionId));
+			const outcome = await evaluateState(ctx, invocation.agent, {
+				cases: [target],
+				rubricKey: runtime.rubricKey,
+				runs: 1,
+				passThreshold: definition.passThreshold,
+				harnessOverview: overview,
+				label: `pilot:${cid}`,
+				signal: invocation.signal,
+			});
+			const cell = outcome.cells[0];
+			const scoreText = cell?.status === "ok" ? `${cell.score} (${cell.passed ? "passed" : "below threshold"})` : `failed: ${cell?.notes ?? "unknown"}`;
+			// Record in calibration history.
+			const updatedMeta = loadCaseMeta(baseDir, bid, cid) ?? { status: "calibrating" as const, capability: "", distinguisher: "", shortcuts: "", calibrationHistory: [] };
+			updatedMeta.calibrationHistory.push({
+				runAt: new Date().toISOString(),
+				score: cell?.status === "ok" ? cell.score : 0,
+				passed: cell?.passed ?? false,
+				notes: cell?.notes ?? "",
+				modified: false,
+			});
+			saveCaseMeta(baseDir, bid, cid, updatedMeta);
+			const lines = [
+				`pilot ${cid}: ${scoreText}`,
+				`status: calibrating`,
+				`calibration runs: ${updatedMeta.calibrationHistory.length}`,
+			];
+			if (cell?.status === "ok" && cell.sessionId) {
+				lines.push(`session: ${cell.sessionId}`);
+			}
+			lines.push(`next: set meta fields, then /evolve benchmark freeze ${bid} ${cid}`);
+			return success(lines.join("\n"));
+		}
+		case "freeze": {
+			const bid = stripAngleBrackets(args[0] ?? "");
+			const cid = stripAngleBrackets(args[1] ?? "");
+			if (!bid || !cid) {
+				return error(`benchmark freeze needs <bid> <cid>.\n${BENCHMARK_USAGE}`);
+			}
+			const definition = loadBenchmark(baseDir, bid);
+			if (!definition) {
+				return error(`benchmark ${bid} not found`);
+			}
+			const meta = loadCaseMeta(baseDir, bid, cid);
+			if (!meta) {
+				return error(`case ${cid} not found in ${bid}`);
+			}
+			if (meta.status === "frozen") {
+				return error(`case ${cid} is already frozen`);
+			}
+			// Require quality check to pass before freezing.
+			const problems = caseCheckProblems(baseDir, bid, cid);
+			if (problems.length > 0) {
+				return error(`case ${cid} has ${problems.length} quality problem${problems.length > 1 ? "s" : ""}:\n${problems.map((p) => `  - ${p}`).join("\n")}\nFix these before freezing.`);
+			}
+			transitionCaseStatus(baseDir, bid, cid, "frozen");
+			return success(`case ${cid} frozen as formal baseline (immutable)`);
+		}
+		case "meta": {
+			const bid = stripAngleBrackets(args[0] ?? "");
+			const cid = stripAngleBrackets(args[1] ?? "");
+			const field = args[2] ?? "";
+			const value = args.slice(3).join(" ");
+			if (!bid || !cid || !field || !value) {
+				return error(`benchmark meta needs <bid> <cid> <field> <value> (fields: capability, distinguisher, shortcuts).\n${BENCHMARK_USAGE}`);
+			}
+			const meta = loadCaseMeta(baseDir, bid, cid);
+			if (!meta) {
+				return error(`case ${cid} not found in ${bid}`);
+			}
+			if (meta.status === "frozen") {
+				return error(`case ${cid} is frozen and cannot be modified`);
+			}
+			if (field !== "capability" && field !== "distinguisher" && field !== "shortcuts") {
+				return error(`unknown meta field "${field}" — valid fields: capability, distinguisher, shortcuts`);
+			}
+			meta[field] = value;
+			saveCaseMeta(baseDir, bid, cid, meta);
+			return success(`case ${cid} ${field} updated`);
 		}
 		default:
 			return error(`unknown benchmark subcommand: ${sub}\n${BENCHMARK_USAGE}`);
