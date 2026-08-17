@@ -54,6 +54,20 @@ export interface CellScore {
 	 * back to the exact session steps that earned it.
 	 */
 	sessionId?: string;
+	/**
+	 * Runtime evidence verification (gap A3): the actual provider and model
+	 * used by the executor subagent — written from the host (not the model),
+	 * so it reflects reality. A mismatch with the expected route flags the
+	 * cell as failed (version_changed semantics).
+	 */
+	provider?: string;
+	model?: string;
+	/**
+	 * Material hash: SHA-256 prefix of the case statement + rubric envelope,
+	 * so a material change between reference and candidate runs is detectable.
+	 * absence means pre-A3 cell (backward compatible).
+	 */
+	caseHash?: string;
 }
 
 export interface EvaluationEntry {

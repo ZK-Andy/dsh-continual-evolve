@@ -33,6 +33,7 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import { createHash } from "node:crypto";
 import type { BenchmarkCase, CellScore } from "./benchmark.js";
 import { mapPool } from "./pool.js";
 import { decryptRubric, deriveKey, DEV_RUBRIC_KEY } from "./rubric.js";
@@ -168,6 +169,16 @@ function failedCell(caseId: string, run: number, message: string): CellScore {
 	return { caseId, run, status: "failed", score: 0, passed: false, notes: message };
 }
 
+/**
+ * Deterministic hash of a case's statement + rubric envelope (gap A3):
+ * a 16-char SHA-256 prefix, hex-encoded. Used to detect material changes
+ * between reference and candidate evaluation runs.
+ */
+function caseHash(caseItem: BenchmarkCase): string {
+	const material = `${caseItem.statement}\n${caseItem.rubric}`;
+	return createHash("sha256").update(material).digest("hex").slice(0, 16);
+}
+
 async function runUnit(
 	subagents: SubagentsService,
 	agent: Agent,
@@ -184,6 +195,12 @@ async function runUnit(
 	} catch (cause) {
 		return failedCell(c.id, run, `rubric decrypt failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 	}
+
+	// Runtime evidence (gap A3): record actual provider/model from the host,
+	// and compute a material hash of the case for change detection.
+	const actualProvider = agent.options.provider ?? "unknown";
+	const actualModel = agent.options.model ?? "unknown";
+	const hash = caseHash(c);
 
 	// Stage 1: executor — task + evidence, NO rubric.
 	let evidence: ExecutorResult;
@@ -225,7 +242,7 @@ async function runUnit(
 			executorRun.dispose();
 		}
 	} catch (cause) {
-		return failedCell(c.id, run, `executor failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+		return { ...failedCell(c.id, run, `executor failed: ${cause instanceof Error ? cause.message : String(cause)}`), provider: actualProvider, model: actualModel, caseHash: hash };
 	}
 
 	// Stage 2: independent reviewer — rubric + evidence, NO task execution.
@@ -263,15 +280,12 @@ async function runUnit(
 			if (!cell) {
 				throw new Error("reviewer returned neither a structured value nor usable text");
 			}
-			if (sessionId !== undefined) {
-				return { ...cell, sessionId };
-			}
-			return cell;
+			return { ...cell, ...(sessionId !== undefined ? { sessionId } : {}), provider: actualProvider, model: actualModel, caseHash: hash };
 		} finally {
 			reviewerRun.dispose();
 		}
 	} catch (cause) {
-		return failedCell(c.id, run, `reviewer failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+		return { ...failedCell(c.id, run, `reviewer failed: ${cause instanceof Error ? cause.message : String(cause)}`), provider: actualProvider, model: actualModel, caseHash: hash };
 	}
 }
 
