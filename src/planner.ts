@@ -47,6 +47,12 @@ Rules:
   files under <skillsRoot>/<kebab-name>/SKILL.md and are always offered to
   the user for a decision before they land.
 - Local edits are session-scoped; global edits persist across sessions.
+- Gap C2: EVERY edit MUST include a "blastRadius" field indicating how broadly
+  the edit applies: "general" (cross-project tactical rule, applies everywhere),
+  "project" (valid for the current project/repo), or "session" (one-off,
+  specific to this session's context). The review gate validates that
+  local-scope edits use "session" or "project", and global-scope edits use
+  "general" or "project". When in doubt, prefer narrower blast radius.
 - Ground every edit in evidence: the session trajectory (recent direct user
   messages) is provided when available; prefer edits backed by it over
   speculation, and never invent preferences the user did not express.
@@ -71,7 +77,8 @@ Rules:
       "arguments": {"name": {"type":"string","required":true,"description":"..."}},
       "skill_kind": "executable|guidance (optional; skill kind only — guidance = SKILL.md document without reference)",
       "metadata": {},
-      "reason": "why this edit is useful"
+      "reason": "why this edit is useful",
+      "blastRadius": "general|project|session"
     }
   ]
 }`;

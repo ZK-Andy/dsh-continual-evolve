@@ -12,6 +12,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { HarnessState } from "../src/types.js";
 import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import { PLANNER_SYSTEM_PROMPT, planWithLlm, type PlanOptions } from "../src/planner.js";
+import { parseProposal } from "../src/plan.js";
 
 describe("PLANNER_SYSTEM_PROMPT", () => {
 	it("tells the planner to propose archive instead of delete for stale entries", () => {
@@ -136,6 +137,13 @@ describe("planWithLlm skill quality standard", () => {
 		expect(captured.userPrompt).toContain("7 structural features");
 	});
 
+	it("instructs the planner to annotate blastRadius on every edit", () => {
+		expect(PLANNER_SYSTEM_PROMPT).toContain("blastRadius");
+		expect(PLANNER_SYSTEM_PROMPT).toContain("general");
+		expect(PLANNER_SYSTEM_PROMPT).toContain("project");
+		expect(PLANNER_SYSTEM_PROMPT).toContain("session");
+	});
+
 	it("uses the skill-creator template facts when installed", async () => {
 		const root = mkdtempSync(join(process.cwd(), "test/.tmp/"));
 		try {
@@ -149,5 +157,50 @@ describe("planWithLlm skill quality standard", () => {
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("parseProposal blastRadius (C2)", () => {
+	it("parses valid blastRadius values", () => {
+		const text = JSON.stringify({
+			summary: "test",
+			rationale: "r",
+			expectedOutcome: "o",
+			edits: [
+				{ action: "create", kind: "memory", title: "A", content: "a", blastRadius: "session" },
+				{ action: "create", kind: "prompt", title: "B", content: "b", blastRadius: "general" },
+				{ action: "create", kind: "memory", title: "C", content: "c", blastRadius: "project" },
+			],
+		});
+		const proposal = parseProposal(text);
+		expect(proposal.edits[0]?.blastRadius).toBe("session");
+		expect(proposal.edits[1]?.blastRadius).toBe("general");
+		expect(proposal.edits[2]?.blastRadius).toBe("project");
+	});
+
+	it("drops invalid blastRadius values", () => {
+		const text = JSON.stringify({
+			summary: "test",
+			rationale: "r",
+			expectedOutcome: "o",
+			edits: [
+				{ action: "create", kind: "memory", title: "A", content: "a", blastRadius: "invalid" },
+			],
+		});
+		const proposal = parseProposal(text);
+		expect(proposal.edits[0]?.blastRadius).toBeUndefined();
+	});
+
+	it("handles missing blastRadius gracefully", () => {
+		const text = JSON.stringify({
+			summary: "test",
+			rationale: "r",
+			expectedOutcome: "o",
+			edits: [
+				{ action: "create", kind: "memory", title: "A", content: "a" },
+			],
+		});
+		const proposal = parseProposal(text);
+		expect(proposal.edits[0]?.blastRadius).toBeUndefined();
 	});
 });

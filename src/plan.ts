@@ -105,6 +105,11 @@ export function parseProposal(text: string): RefinementProposal {
 			assignIfString(built, "content", edit["content"]);
 			assignIfString(built, "path", edit["path"]);
 			assignIfString(built, "reason", edit["reason"]);
+			// Gap C2: validate blastRadius values.
+			const br = asString(edit["blastRadius"]);
+			if (br === "general" || br === "project" || br === "session") {
+				built.blastRadius = br;
+			}
 			const reference = asRecord(edit["reference"]);
 			if (reference) built.reference = reference;
 			const argumentsRecord = asRecord(edit["arguments"]);

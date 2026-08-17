@@ -142,6 +142,14 @@ export interface RefinementEdit {
 	skill_kind?: SkillKind;
 	metadata?: Record<string, unknown>;
 	reason?: string;
+	/**
+	 * Gap C2: blast-radius annotation — how broadly this edit applies.
+	 * Values: "general" (cross-project tactical), "project" (single project),
+	 * "session" (one-off session-specific). The review gate checks that
+	 * local-scope edits are "session" or "project" and global-scope edits
+	 * are "general" or "project".
+	 */
+	blastRadius?: "general" | "project" | "session";
 }
 
 /** The structured output of a planning pass. */
