@@ -25,6 +25,8 @@ import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOU
 import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
 import { streamText } from "./llm-text.js";
+import { getUsageCount, loadUsage } from "./usage.js";
+import { recencyScore } from "./inject.js";
 
 /** What should happen to one local entry at session end. */
 export type WrapupVerdict = "promote" | "archive" | "keep";
@@ -83,6 +85,18 @@ export interface WrapupCandidate {
 	 * really covers the local content.
 	 */
 	globalHints: GlobalHint[];
+	/**
+	 * Injection usage count (gap B1): how many times this entry was included
+	 * in a system-prompt assembly. Zero means the entry was never used — a
+	 * strong staleness signal the assessor can weigh.
+	 */
+	injectionCount: number;
+	/**
+	 * Staleness flag (gap B2): true when the entry has both zero injection
+	 * usage AND a recency score below the staleness threshold (old + unused).
+	 * The assessor is instructed to prefer "archive" for stale entries.
+	 */
+	stale: boolean;
 }
 
 export function candidateKey(kind: RefinementKind, id: string): string {
@@ -163,13 +177,20 @@ export function globalHintsFor(
  * `coveredGlobally` flag so the assessor never wastes a promote on a topic
  * the global store already owns.
  */
-export function listLocalCandidates(state: HarnessState, globalState: HarnessState): WrapupCandidate[] {
+/** Staleness threshold: entries with recency below this AND zero usage are stale. */
+const STALE_RECENCY_THRESHOLD = 0.1;
+
+export function listLocalCandidates(state: HarnessState, globalState: HarnessState, baseDir?: string): WrapupCandidate[] {
+	const usage = baseDir ? loadUsage(baseDir) : undefined;
+	const now = Date.now();
 	const candidates: WrapupCandidate[] = [];
 	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
 		for (const entry of Object.values(state.entries[kind])) {
 			if (entry.scope !== "local") continue;
 			if (isArchived(entry)) continue;
 			if (typeof entry.metadata[PROMOTED_TO_KEY] === "string") continue;
+			const injectionCount = usage ? getUsageCount(usage, kind, entry.id) : 0;
+			const stale = injectionCount === 0 && recencyScore(entry, now) < STALE_RECENCY_THRESHOLD;
 			candidates.push({
 				kind,
 				id: entry.id,
@@ -180,6 +201,8 @@ export function listLocalCandidates(state: HarnessState, globalState: HarnessSta
 				metadata: entry.metadata,
 				coveredGlobally: globalCoverageDetected(globalState, kind, entry),
 				globalHints: globalHintsFor(globalState, kind, entry),
+				injectionCount,
+				stale,
 			});
 		}
 	}
@@ -462,12 +485,17 @@ listed entry exactly once:
   procedure or skill. Future sessions would benefit from seeing it.
 - "archive" — the content is session-specific task progress, one-off noise,
   superseded or obsolete, or already covered by the global store (note
-  "covered globally" in the reason).
+  "covered globally" in the reason), or stale (old + never injected — note
+  "stale (injectionCount=0, recency low)" in the reason).
 - "keep" — still actively useful to this session, or genuinely uncertain.
 
 Rules:
 - When an entry is marked "covered globally" in the listing, prefer "archive"
   or "keep" over "promote" — promoting a duplicate gains nothing.
+- When an entry is marked "stale" (injectionCount=0 and low recency), prefer
+  "archive" — the entry has never been used and is old, so it is unlikely to
+  be needed again. Only "keep" if the content is clearly valuable despite low
+  usage (e.g. a safety policy that rarely triggers but is critical).
 - Do not promote local task state, work-in-progress notes, or content tied to
   one session's ephemeral details.
 - Skills: only "promote" a skill entry that is a genuinely reusable procedure
@@ -520,11 +548,12 @@ export async function assessLocalEntries(
 		.map((candidate) => {
 			const key = candidateKey(candidate.kind, candidate.id);
 			const covered = candidate.coveredGlobally ? " (covered globally)" : "";
+			const stale = candidate.stale ? ` (stale: injectionCount=${candidate.injectionCount}, recency low)` : "";
 			const hints =
 				candidate.globalHints.length > 0
 					? ` | global≈${candidate.globalHints.map((hint) => hint.id + ":" + hint.title).join(", ")}`
 					: "";
-			return `- ${key} [${candidate.path}, v${candidate.version}] "${candidate.title}"${covered}${hints}: ${compactText(candidate.content, 220)}`;
+			return `- ${key} [${candidate.path}, v${candidate.version}] "${candidate.title}"${covered}${stale}${hints}: ${compactText(candidate.content, 220)}`;
 		})
 		.join("\n");
 	const userPrompt = [

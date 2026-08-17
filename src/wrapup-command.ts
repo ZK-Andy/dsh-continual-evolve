@@ -20,7 +20,7 @@ export async function executeWrapupCommand(
 	const sessionId = invocation.agent.id;
 	const localState = engine.load("local", sessionId);
 	const globalState = engine.load("global", undefined);
-	const candidates = listLocalCandidates(localState, globalState);
+	const candidates = listLocalCandidates(localState, globalState, engine.baseDir);
 	if (candidates.length === 0) {
 		return success(
 			`(nothing to wrap up: ${sessionId}'s local store has no active, un-promoted entries — use /evolve list to inspect it)`,

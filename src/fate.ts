@@ -302,7 +302,7 @@ export async function runLocalFatePhase(
 	const sessionId = agent.id;
 	const localState = engine.load("local", sessionId);
 	const globalState = engine.load("global", undefined);
-	const candidates = listLocalCandidates(localState, globalState);
+	const candidates = listLocalCandidates(localState, globalState, engine.baseDir);
 	if (candidates.length === 0) return;
 	if (!fateCadenceDue(state, reason, config.fateIntervalTurns)) return;
 	const setKey = fateSetKey(candidates);
