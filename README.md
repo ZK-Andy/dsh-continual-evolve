@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-290%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-302%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -119,7 +119,7 @@ dsh-continual-evolve/
 │   ├── rubric.ts         # rubric ACL (AES-256-GCM envelopes, auto-generated local key)
 │   ├── logfile.ts        # plugin-owned file logging (JSONL exporter + rotation)
 │   ├── score.ts          # code-owned aggregation + acceptance rule
-│   ├── evaluate.ts       # evaluation matrix runner (structured-output subagents)
+│   ├── evaluate.ts       # two-stage evaluation runner (executor evidence → independent reviewer) + failure-cell protocol
 │   ├── pool.ts           # bounded-concurrency worker pool for evaluation runs
 │   ├── store.ts          # store layout + snapshots + result history
 │   ├── service.ts        # evolution engine (onApplied hook)
@@ -295,11 +295,35 @@ profile (optional; the file log remains the baseline that always exists).
 The loop: freeze a reference score → evolve a candidate (`/evolve plan`) →
 run the same case × run matrix against the post-refinement state → the
 **code-owned** acceptance rule keeps the candidate only if the overall mean
-strictly improves with no case regressing (Self-Harness style). The model
-produces raw per-cell scores only; aggregation and decisions live in
-`src/score.ts`. Rubric isolation is by construction (the planner never sees
-rubric files); a rejection is recorded in the scoreboard and the refinement
-is rolled back automatically (`autoRollbackOnReject`, on by default).
+strictly improves with no case regressing (Self-Harness style).
+
+**Evaluator/scorer separation (two-stage, gap A1)** — each case × run unit
+is a PAIR of fresh subagents:
+
+1. the **executor** performs the task with its tools and records **concrete
+   evidence** of what it did and found — it NEVER sees the rubric, so the
+   agent under test cannot optimize toward or self-grade against the grading
+   criteria;
+2. an **independent reviewer** grades that evidence strictly against the
+   rubric (the only branch that receives the decrypted rubric), eliminating
+   the "self-produced and self-scored" bias.
+
+Each cell records the executor's session id, so a score can be drilled back
+to the exact transcript that produced it (trace evidence pointer, gap A4).
+
+**Failure-cell protocol (gap A2)** — a unit that cannot produce a score
+(rubric decrypt error, executor/reviewer crash, protocol error) is recorded
+as a **failed** cell, NEVER a zero: aggregation excludes failed cells from
+every mean and counts them (`/evolve benchmark status` shows `(N failed)`),
+and the acceptance rule rejects a round with more failed cells than
+`maxFailedCells` (0 by default) instead of silently averaging a 0 into the
+mean.
+
+Aggregation and decisions live in `src/score.ts`. Rubric isolation is by
+construction (the planner never sees rubric files, and the executor branch
+never decrypts); a rejection is recorded in the scoreboard and the
+refinement is rolled back automatically (`autoRollbackOnReject`, on by
+default).
 
 ### Real recorded run (ACCEPT)
 
@@ -313,9 +337,10 @@ acceptance:
 | re-evaluate | `/evolve benchmark run lint_convention candidate <id>` | **100** — evaluator ran `evolve_list`, hit the memory, quoted it verbatim |
 | decision | — | `overall: 90 → 100` · `lint_knowledge: 90 → 100` · **DECISION: ACCEPTED** |
 
-The evaluator does not grade model common sense — it inspects the actual
-harness state under test (grep, `evolve_list`) and scores against it, so a
-harness change measurably moves the score. Earlier runs in the same session
+The executor does not grade model common sense — it inspects the actual
+harness state under test (grep, `evolve_list`) and records what it found;
+the independent reviewer grades that record. A harness change measurably
+moves the score. Earlier runs in the same session
 produced honest `REJECTED` decisions (0 → 0 stub cases, and 100 → 100
 where the baseline was already perfect).
 
@@ -363,7 +388,7 @@ pnpm lint           # oxlint src test
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
-Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0: evaluator/scorer separation, failure-cell protocol).
+Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0 shipped: evaluator/scorer separation, failure-cell protocol; next: P1 runtime provenance checks, usage statistics, auto-decay).
 
 ## Roadmap
 
@@ -383,6 +408,10 @@ Where we still lag behind prime-agent `/refine` and penguin-harness — and what
 - **2026-08-17 wrap-up wave (done)**:
   - **`/evolve wrapup`** — a session's local entries get a real exit at session end: mechanical audit (local candidates + global-coverage detection; coverage judges **title similarity only** — a bare id collision with a different title is deliberately NOT coverage, and the real matching global titles are shown to the assessor) → LLM classification (`promote` / `archive` / `keep` + A-form split promotion: archive a mixed entry while promoting a cleaned durable sub-object) → deterministic guards re-checked at apply time (promote can never write a global duplicate; the symmetric archive guard requires user confirmation before an uncovered, user-sourced archive hides content; splits that duplicate a global topic drop to plain archive) → one human approval gate for every global create
   - **gate local-fate dimension** — the wrap-up machinery now runs inside the auto-review gate on its own cadence (`fateIntervalTurns`, compaction unconditional): local entries are audited, classified and partitioned while the session is still running; governed actions are consulted first (one dialog, decline cooldown), covered/operational entries archive silently, compaction applies only silent archives and defers governed actions with an audit record; every decision lands in `reviews.jsonl` and applied actions get a follow-up notice. Apply writes are shared with the wrap-up command (byte-identical proposals)
+- **2026-08-17 gap P0 (done)**:
+  - **evaluator/scorer separation** — benchmark evaluation is now two-stage (gap A1): the executor performs the task and records concrete evidence without ever seeing the rubric; an independent reviewer grades that evidence against the rubric (the only branch that decrypts it). The assessed agent can no longer optimize toward or self-grade against the criteria.
+  - **failure-cell protocol** — cells carry `status: ok|failed` (gap A2): failed units are excluded from every mean and counted, and the acceptance rule rejects rounds with failures beyond `maxFailedCells` (0 default) instead of averaging a zero into the mean. Scoreboard status/run surfaces failed counts and per-cell reasons.
+  - **trace evidence pointer** — each cell records the executor's session id (gap A4), so a score drills back to the exact transcript that earned it
 
 The upcoming/candidates list is empty for now — future work is driven by real usage.
 
