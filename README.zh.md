@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-362%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -105,7 +105,7 @@ dsh-continual-evolve/
 │   ├── service.ts        # 进化引擎（onApplied 钩子）
 │   ├── usage.ts          # 条目注入使用率追踪（持久计数、陈旧检测）
 │   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器；陈旧信号）
-└── test/                 # 26 个文件，332 个测试
+└── test/                 # 26 个文件，362 个测试
 ```
 
 ## 安装
@@ -187,6 +187,10 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 /evolve benchmark reset <bid>                         清空计分板（重跑参考线）
 /evolve benchmark run <bid>                           评估当前状态 → 参考线
 /evolve benchmark run <bid> candidate <refinementId>  评估进化后状态 → 决策
+/evolve benchmark casecheck <bid>                     质量门禁检查所有 case
+/evolve benchmark pilot <bid> <cid>                   单次 pilot 运行（校准用）
+/evolve benchmark freeze <bid> <cid>                  冻结 case 为正式基线
+/evolve benchmark meta <bid> <cid> <field> <value>    设置 case 元数据（capability/distinguisher/shortcuts）
 ```
 
 闭环：冻结参考分 → 进化候选（`/evolve plan`）→ 用同一 case × run 矩阵复测进化后状态 → **代码所有**的接受规则只在总体均值严格提高且无 case 退化时保留候选（Self-Harness 风格）。
@@ -234,6 +238,7 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 | `autoRollbackOnReject` | `true` | benchmark 决策拒绝候选后自动回滚该 refinement（与 `/evolve rollback` 同一引擎路径——确定性、快照、审计） |
 | `localFate` | `true` | 门禁 local 归宿维度：门禁按自有节奏审计本会话 local 条目并提议提升/归档——先征询、绝不静默写入（仅 `autoReview` 开启时有效） |
 | `fateIntervalTurns` | 跟随 `reviewIntervalTurns` | 回合间隔路径上两次 local 归宿评估的最小间隔（压缩时刻无条件触发） |
+| `reviewModel` | （使用 agent 自身模型） | review 门禁的可选模型覆盖（更便宜的模型）；格式：`"provider/model"` 或仅 `"model"` |
 
 示例（profile `cordis.patch.yml`）：
 
@@ -258,7 +263,7 @@ pnpm lint           # oxlint src test
 
 遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
 
-对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1 已交付：评估者/评分者分离、失败格协议、运行时实证校验、使用率统计、自动衰减；下一步 P2：校准 Pipeline、case 质检、review 模型分离）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
+对照 prime-agent `/refine` 与 penguin-harness 的差距与下一步实施项（P0+P1+P2 已交付：评估者/评分者分离、失败格协议、运行时实证校验、使用率统计、自动衰减、case 生命周期+质检、条目目录视图、review 模型分离、blast-radius 标注、耗时追踪；下一步 P3：扩展事件面、种子 benchmark）：[`docs/gap-analysis.md`](docs/gap-analysis.md)。
 
 ## 路线图
 
@@ -286,6 +291,12 @@ pnpm lint           # oxlint src test
   - **运行时实证校验（A3）**——cell 现在记录宿主写入的实际 `provider`、`model` 和 `caseHash`（statement + rubric 的 SHA-256 前缀）；参考线与候选运行之间的材料变化可检出
   - **条目使用率统计（B1）**——注入计数持久追踪（`<baseDir>/evolve/usage.json`）；`evolve_list` 展示使用次数；`zeroUsageEntries()` 筛选从未注入的 local 条目作为归档候选
   - **自动陈旧检测（B2）**——零注入且低新鲜度的条目标记为 `stale`；LLM 分类器被指示优先归档陈旧条目
+- **2026-08-18 差距 P2（完成）**：
+  - **case 生命周期 + 质量门禁（A5）**——case 遵循 `draft → calibrating → frozen` 状态机；`casecheck` 运行机械质量校验（能力合约、区分点、快捷方式）；`pilot` 执行单次校准运行；`freeze` 将 case 锁定为正式基线（需通过质量门禁）；`meta` 设置 case 元数据字段
+  - **条目目录视图（B3）**——注入块现在包含所有非归档条目的轻量目录（id + title，每条一行），在条目超出精选封顶时自动展示，为模型提供零成本全局概览
+  - **review 模型分离（C1）**——`reviewModel` 配置项让 review 门禁可使用比主 agent 更便宜的模型
+  - **blast-radius 标注（C2）**——每条编辑现在携带 `blastRadius` 字段（`general` / `project` / `session`）；规划器被要求标注该字段，解析器验证取值
+  - **耗时追踪（C3）**——每个评估单元格记录 `durationMs`（墙钟时间）；聚合总计和决策报告展示耗时对比
 - **2026-08-18 代码重构（完成）**：
   - **循环依赖拆解（P1-1）**——抽出 `skill-render.ts` 解耦 `skill.ts ↔ skillquality.ts`
   - **LLM 调用去重（P1-2）**——抽出 `llm-text.ts` 共享 `streamText()`（review/planner/wrapup 删除 ~107 行重复）

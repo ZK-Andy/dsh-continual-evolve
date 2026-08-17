@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-362%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -131,7 +131,7 @@ dsh-continual-evolve/
 │   ├── service.ts        # evolution engine (onApplied hook)
 │   ├── usage.ts          # entry injection usage tracking (durable counts, staleness detection)
 │   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders; staleness signal)
-└── test/                 # 26 files, 332 tests
+└── test/                 # 26 files, 362 tests
 ```
 
 ## Install
@@ -297,6 +297,10 @@ profile (optional; the file log remains the baseline that always exists).
 /evolve benchmark status <bid>                         scoreboard + decisions
 /evolve benchmark run <bid>                            evaluate current state → reference
 /evolve benchmark run <bid> candidate <refinementId>   evaluate post-refinement state → decide
+/evolve benchmark casecheck <bid>                      quality-gate check all cases
+/evolve benchmark pilot <bid> <cid>                    single pilot run for calibration
+/evolve benchmark freeze <bid> <cid>                   freeze a case as formal baseline
+/evolve benchmark meta <bid> <cid> <field> <value>     set case metadata (capability/distinguisher/shortcuts)
 ```
 
 The loop: freeze a reference score → evolve a candidate (`/evolve plan`) →
@@ -371,6 +375,7 @@ where the baseline was already perfect).
 | `autoRollbackOnReject` | `true` | after a benchmark decision rejects a candidate, roll the refinement back automatically (same engine path as `/evolve rollback` — deterministic, snapshotted, audited) |
 | `localFate` | `true` | gate local-fate dimension: the gate audits the session's local entries on its own cadence and proposes promote/archive — consulted first, never written silently (only meaningful with `autoReview`) |
 | `fateIntervalTurns` | follows `reviewIntervalTurns` | minimum turns between local-fate assessments on the turn-interval path (compaction is unconditional) |
+| `reviewModel` | (agent's own) | optional model override for the review gate (cheaper model); format: `"provider/model"` or just `"model"` |
 
 Example (profile `cordis.patch.yml`):
 
@@ -395,7 +400,7 @@ pnpm lint           # oxlint src test
 
 Hit a wall? See [`docs/FAQ.md`](docs/FAQ.md) — real failure/fix records (service planes, schema DSL, structured output, gate counting, verifying prompt injection).
 
-Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification, usage statistics, auto-decay; next: P2 calibration pipeline, case quality checks, review model separation).
+Where we still lag behind prime-agent `/refine` and penguin-harness — and what to build next: [`docs/gap-analysis.md`](docs/gap-analysis.md) (P0+P1+P2 shipped: evaluator/scorer separation, failure-cell protocol, runtime provenance verification, usage statistics, auto-decay, case lifecycle + quality gate, entry directory view, review model separation, blast-radius annotations, duration tracking; next: P3 expanded event surface, seed benchmark).
 
 ## Roadmap
 
@@ -423,6 +428,12 @@ Where we still lag behind prime-agent `/refine` and penguin-harness — and what
   - **runtime evidence verification (A3)** — cells now record actual `provider`, `model`, and `caseHash` (SHA-256 prefix of statement + rubric) written by the host, not the model; material changes between reference and candidate runs are detectable
   - **entry usage statistics (B1)** — injection counts are durably tracked per entry in `<baseDir>/evolve/usage.json`; `evolve_list` shows usage counts; `zeroUsageEntries()` surfaces never-injected local entries as archive candidates
   - **automatic staleness detection (B2)** — entries with zero injection usage AND old recency are flagged `stale` in wrap-up candidates; the LLM assessor is instructed to prefer "archive" for stale entries
+- **2026-08-18 gap P2 (done)**:
+  - **case lifecycle + quality gate (A5)** — cases follow a `draft → calibrating → frozen` state machine; `casecheck` runs mechanical quality validation (capability contract, distinguisher, shortcuts); `pilot` performs a single-run calibration; `freeze` locks a case as a formal baseline (requires quality gate pass); `meta` sets case metadata fields
+  - **entry directory view (B3)** — the injection block now includes a lightweight directory of ALL non-archived entries (id + title, one line each) when entries exceed the curated cap, giving the model a zero-cost overview
+  - **review model separation (C1)** — `reviewModel` config option lets the review gate use a cheaper model than the main agent
+  - **blast-radius annotations (C2)** — every edit now carries a `blastRadius` field (`general` / `project` / `session`); the planner is instructed to annotate it and the parser validates values
+  - **duration tracking (C3)** — each evaluation cell records `durationMs` (wall-clock time); aggregate totals and decision reports show timing comparison
 - **2026-08-18 code refactoring (done)**:
   - **circular dependency break (P1-1)** — extracted `skill-render.ts` to decouple `skill.ts ↔ skillquality.ts`
   - **LLM call deduplication (P1-2)** — extracted `llm-text.ts` with shared `streamText()` (~107 lines removed from review/planner/wrapup)
