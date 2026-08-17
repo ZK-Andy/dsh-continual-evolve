@@ -170,6 +170,18 @@ export type EvolveConfig = Partial<z.infer<typeof Config>>;
 2. 每步验收：`pnpm typecheck && pnpm test && pnpm lint`
 3. 总验收：`dsh plugin --profile web add dsh-continual-evolve` 的现有部署无需重装（仅代码内部重组，包导出面不变：`lib/index.js`、`lib/types.js`、`cordis.patch.yml` 均不动）
 
+### ✅ 全部完成（2026-08-18）
+
+| 提交 | 内容 |
+|---|---|
+| `98a0c3a` | P1-1：`skill-render.ts` 打破循环依赖 |
+| `700ee5a` | P1-2：`llm-text.ts` 统一流式调用 |
+| `b55139b` | P2-1：`EvolveConfig` 改为 `Schemastery.TypeT` 推断 |
+| `b45b9ea` | P2-2：command.ts 拆为 4 个子命令模块 |
+| `f1ff60d` | P3：cast 去重 + 死导出清理 + 注释修复 |
+
+验收：302 测试全绿、typecheck 通过、oxlint 0 警告。src 模块数 32→37（+5 新模块）。
+
 ---
 
 ## 5. 附带观察（非阻塞）
