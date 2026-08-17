@@ -4,8 +4,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { EvolutionEngine } from "./service.js";
-import type { QuestionService } from "./approval.js";
-import { requireGlobalApproval } from "./approval.js";
+import { questionServiceOf, requireGlobalApproval } from "./approval.js";
 import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, wholePromoteProposals } from "./wrapup.js";
 import type { WrapupCandidate, WrapupItem } from "./wrapup.js";
 
@@ -191,7 +190,7 @@ export async function executeWrapupCommand(
 	// 6. Review archives (symmetric guard): not covered globally + distilled
 	//    from real user messages — the user decides before this content is
 	//    hidden from future sessions. No question service → conservative keep.
-	const userQuestions = (ctx as unknown as { userQuestions?: QuestionService }).userQuestions;
+	const userQuestions = questionServiceOf(ctx);
 	for (const item of reviewArchives) {
 		const candidate = byKey.get(item.key);
 		if (!candidate) continue;

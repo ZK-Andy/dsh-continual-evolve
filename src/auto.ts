@@ -29,7 +29,7 @@ import { notifyAutoReview } from "./notify.js";
 import { runLocalFatePhase } from "./fate.js";
 import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
-import type { QuestionService } from "./approval.js";
+import { questionServiceOf } from "./approval.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -86,10 +86,9 @@ export interface ReviewRecord {
 }
 
 /**
- * Count completed turns from agent/status transitions alone. The runtime
- * emits `agent/status` with a `{status}` payload and (per host consumers like
- * dsh-host-apiproxy) an injected `agent` subject; `agent/turn-stopping` does
- * not reliably carry the agent, so it is NOT used for counting.
+ * Count completed turns from agent/status transitions (running → idle).
+ * Exported for unit testing; production counting uses agent/turn-stopping
+ * (see registerAutoReview) which empirically carries the agent subject.
  */
 export function advanceGateState(state: GateState, status: string): boolean {
 	if (status === "running") {
@@ -387,7 +386,7 @@ export async function consultSkillEdits(
 	if (lastReject !== undefined && gate.turns - lastReject < SKILL_CONSULT_COOLDOWN_TURNS) {
 		return false;
 	}
-	const userQuestions = (ctx as unknown as { userQuestions?: QuestionService }).userQuestions;
+	const userQuestions = questionServiceOf(ctx);
 	if (!userQuestions) {
 		return false;
 	}

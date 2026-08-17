@@ -35,7 +35,7 @@ import type { HarnessState, RefinementProposal, RefinementResult } from "./types
 import type { EvolutionEngine } from "./service.js";
 import type { AutoRefineReason } from "./review.js";
 import type { AutoReviewConfig, GateState, ReviewRecord } from "./auto.js";
-import type { QuestionService } from "./approval.js";
+import { questionServiceOf } from "./approval.js";
 import {
 	assessLocalEntries,
 	candidateKey,
@@ -160,7 +160,7 @@ export async function consultLocalFates(
 	if (lastReject !== undefined && gate.turns - lastReject < FATE_CONSULT_COOLDOWN_TURNS) {
 		return { approved: false, asked: false, reason: "cooldown" };
 	}
-	const userQuestions = (ctx as unknown as { userQuestions?: QuestionService }).userQuestions;
+	const userQuestions = questionServiceOf(ctx);
 	if (!userQuestions) {
 		return { approved: false, asked: false, reason: "unavailable" };
 	}

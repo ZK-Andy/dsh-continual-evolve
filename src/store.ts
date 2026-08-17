@@ -14,8 +14,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessScope, HarnessState, RefinementResult } from "./types.js";
-import { emptyHarnessState } from "./types.js";
+import type { HarnessScope, RefinementResult } from "./types.js";
 import { stateFilePath } from "./state.js";
 
 export const EVOLVE_DIR = "evolve";
@@ -78,11 +77,4 @@ export function loadResults(paths: StorePaths): RefinementResult[] {
 
 function isResult(data: unknown): data is RefinementResult {
 	return typeof data === "object" && data !== null && "id" in data && "appliedEdits" in data;
-}
-
-/** Load a state file into memory, returning empty state when absent. */
-export function loadStateFile(paths: StorePaths): HarnessState {
-	return existsSync(stateFilePath(paths.stateDir))
-		? (JSON.parse(readFileSync(stateFilePath(paths.stateDir), "utf8")) as HarnessState)
-		: emptyHarnessState();
 }

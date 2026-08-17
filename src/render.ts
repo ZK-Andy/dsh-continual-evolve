@@ -3,7 +3,7 @@
  * refinement history. Every cap exists to keep token cost predictable no
  * matter how large the store grows.
  */
-import type { HarnessEntry, HarnessRefinementEvent, HarnessState, RefinementResult } from "./types.js";
+import type { HarnessEntry, HarnessState, RefinementResult } from "./types.js";
 import { SOURCE_SESSION_KEY, SOURCE_SEQS_KEY, isArchived } from "./types.js";
 
 const DEFAULT_MAX_ENTRIES_PER_KIND = 6;
@@ -92,9 +92,4 @@ export function historyForPrompt(history: readonly RefinementResult[]): string {
 			return `[${item.id}]${rollback} ${item.summary}\n${edits}\nExpected outcome: ${item.expectedOutcome}`;
 		})
 		.join("\n\n");
-}
-
-/** Serialize a refinement event for persistence (lightweight). */
-export function eventToLine(event: HarnessRefinementEvent): string {
-	return JSON.stringify(event);
 }

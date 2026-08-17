@@ -65,5 +65,3 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 }
 
 export type EvolutionEngine = ReturnType<typeof createEvolutionEngine>;
-
-export { storePaths };

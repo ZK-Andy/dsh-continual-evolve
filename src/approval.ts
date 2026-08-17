@@ -16,6 +16,15 @@ export interface QuestionService {
 }
 
 /**
+ * Lazily resolve the userQuestions service from the context.
+ * Returns undefined when the service is not loaded — callers decide
+ * whether that is an error or a fallback.
+ */
+export function questionServiceOf(ctx: Context): QuestionService | undefined {
+	return (ctx as unknown as { userQuestions?: QuestionService }).userQuestions;
+}
+
+/**
  * Ask the user to approve a global edit. Throws when the service is missing,
  * the user declines, or the question cannot be answered.
  */
@@ -25,7 +34,7 @@ export async function requireGlobalApproval(
 	signal: AbortSignal | undefined,
 	what: string,
 ): Promise<void> {
-	const userQuestions = (ctx as unknown as { userQuestions?: QuestionService }).userQuestions;
+	const userQuestions = questionServiceOf(ctx);
 	if (!userQuestions) {
 		throw new Error("global evolution edits require the userQuestions service (load @deepseek-ai/dsh-user-questions)");
 	}

@@ -3,7 +3,7 @@
  * result, in reverse order. Rollback is pure data transformation — no LLM
  * is asked to "guess" the previous state.
  */
-import type { AppliedRefinementEdit, HarnessEntry, RefinementEdit, RefinementProposal, RefinementResult } from "./types.js";
+import type { AppliedRefinementEdit, RefinementEdit, RefinementProposal, RefinementResult } from "./types.js";
 
 /** Build the inverse proposal for an applied refinement. */
 export function rollbackProposal(target: RefinementResult): RefinementProposal {
@@ -64,13 +64,4 @@ function inverseEdit(edit: AppliedRefinementEdit, refinementId: string): Refinem
 		};
 	}
 	return undefined;
-}
-
-/** Recreate an entry from a prior snapshot (used when an inverse edit is an update). */
-export function restoreEntry(prior: HarnessEntry): HarnessEntry {
-	return {
-		...prior,
-		updated_at: new Date().toISOString(),
-		version: prior.version + 1,
-	};
 }
