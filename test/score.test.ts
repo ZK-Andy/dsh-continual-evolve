@@ -6,15 +6,27 @@ import { describe, expect, it } from "vitest";
 import { aggregate, decide, decisionReport, entryFromCells, type AggregateOptions } from "../src/score.js";
 import type { CellScore } from "../src/benchmark.js";
 
-const OPTS: AggregateOptions = { passThreshold: 60, regressionTolerance: 0 };
+const OPTS: AggregateOptions = { passThreshold: 60, regressionTolerance: 0, maxFailedCells: 0 };
 
 function cells(scores: [string, number][]): CellScore[] {
 	return scores.map(([caseId, score], i) => ({
 		caseId,
 		run: i + 1,
+		status: "ok",
 		score,
 		passed: score >= 60,
 		notes: "",
+	}));
+}
+
+function failedCells(caseIds: string[]): CellScore[] {
+	return caseIds.map((caseId, i) => ({
+		caseId,
+		run: i + 1,
+		status: "failed",
+		score: 0,
+		passed: false,
+		notes: "unit failed: provider down",
 	}));
 }
 
@@ -33,6 +45,23 @@ describe("aggregate", () => {
 
 	it("returns null overall for empty cells", () => {
 		expect(aggregate([]).overall).toBeNull();
+		expect(aggregate([]).failed).toBe(0);
+	});
+
+	it("excludes failed cells from means and counts them (failure-cell protocol)", () => {
+		const aggr = aggregate([...cells([["a", 80]]), ...failedCells(["a", "b"])]);
+		expect(aggr["a"]).toBe(80);
+		expect(aggr["b"]).toBeUndefined();
+		expect(aggr.overall).toBe(80);
+		expect(aggr.failed).toBe(2);
+		expect(aggr.total).toBe(3);
+	});
+
+	it("reports null per-case and overall when a case has only failed cells", () => {
+		const aggr = aggregate(failedCells(["a"]));
+		expect(aggr["a"]).toBeUndefined();
+		expect(aggr.overall).toBeNull();
+		expect(aggr.failed).toBe(1);
 	});
 });
 
@@ -93,5 +122,39 @@ describe("decide", () => {
 		const decision = decide(reference, incomplete, OPTS);
 		expect(decision.accepted).toBe(false);
 		expect(decision.reasons.join(" ")).toMatch(/incomplete/);
+	});
+
+	it("rejects when the candidate has failed cells beyond the threshold", () => {
+		const candidate = entryFromCells("candidate", [...cells([["a", 90]]), ...failedCells(["b"])]);
+		const decision = decide(reference, candidate, OPTS);
+		expect(decision.accepted).toBe(false);
+		expect(decision.reasons.join(" ")).toMatch(/failed cells/);
+	});
+
+	it("rejects when the reference has failed cells beyond the threshold", () => {
+		const badReference = entryFromCells("reference", [...cells([["a", 70]]), ...failedCells(["b"])]);
+		const candidate = entryFromCells("candidate", cells([["a", 90], ["b", 85]]));
+		const decision = decide(badReference, candidate, OPTS);
+		expect(decision.accepted).toBe(false);
+		expect(decision.reasons.join(" ")).toMatch(/reference has 1 failed/);
+	});
+
+	it("ignores failures inside a nonzero maxFailedCells threshold", () => {
+		const reference = entryFromCells("reference", cells([["a", 70]]));
+		// One ok cell + one failed cell for the SAME case: the failed run is
+		// tolerated, the mean still comes from real data and stays comparable.
+		const candidate = entryFromCells("candidate", [cells([["a", 90]])[0]!, ...failedCells(["a"])]);
+		const decision = decide(reference, candidate, { ...OPTS, maxFailedCells: 1 });
+		expect(decision.accepted).toBe(true);
+	});
+});
+
+describe("decisionReport with failed cells", () => {
+	it("flags failed cases and reports failure counts", () => {
+		const reference = entryFromCells("reference", [...cells([["a", 70]]), ...failedCells(["b"])]);
+		const candidate = entryFromCells("candidate", [...cells([["a", 90]]), ...failedCells(["b2"])]);
+		const decision = decide(reference, candidate, OPTS);
+		const lines = decisionReport(reference, candidate, decision).join("\n");
+		expect(lines).toMatch(/failed cells: reference 1\/2 · candidate 1\/2/);
 	});
 });

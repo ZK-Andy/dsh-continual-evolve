@@ -37,9 +37,23 @@ export interface BenchmarkDefinition {
 export interface CellScore {
 	caseId: string;
 	run: number;
+	/**
+	 * Failure-cell protocol (gap A2): "ok" = a real score; "failed" = the
+	 * unit could not produce one (rubric decrypt error, child crash, protocol
+	 * error). A failed cell is NOT a zero — aggregation excludes it and
+	 * counts it, and the acceptance rule rejects a round with more failures
+	 * than the threshold instead of silently averaging a 0 into the mean.
+	 */
+	status: "ok" | "failed";
 	score: number;
 	passed: boolean;
 	notes: string;
+	/**
+	 * Trace evidence pointer (gap A4): the executor child's session id whose
+	 * transcript produced this cell's evidence — the score can be drilled
+	 * back to the exact session steps that earned it.
+	 */
+	sessionId?: string;
 }
 
 export interface EvaluationEntry {

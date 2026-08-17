@@ -635,6 +635,12 @@ async function executeMountCommand(
 	}
 }
 
+/** " (N failed)" suffix when an evaluation entry carries failed cells. */
+function failedTextOf(entry: { cells: { status: string }[] }): string {
+	const failed = entry.cells.filter((cell) => cell.status === "failed").length;
+	return failed > 0 ? ` (${failed} failed)` : "";
+}
+
 async function executeBenchmarkCommand(
 	ctx: Context,
 	engine: EvolutionEngine,
@@ -702,12 +708,12 @@ async function executeBenchmarkCommand(
 			const board = loadScoreboard(baseDir, bid);
 			const lines: string[] = [];
 			if (board.reference) {
-				lines.push(`reference "${board.reference.label}": overall=${board.reference.overall ?? "?"} cells=${board.reference.cells.length}`);
+				lines.push(`reference "${board.reference.label}": overall=${board.reference.overall ?? "?"} cells=${board.reference.cells.length}${failedTextOf(board.reference)}`);
 			} else {
 				lines.push("(no reference evaluation yet)");
 			}
 			for (const c of board.candidates) {
-				lines.push(`candidate "${c.label}": overall=${c.overall ?? "?"} cells=${c.cells.length}${c.refinementId ? ` (${c.refinementId})` : ""}`);
+				lines.push(`candidate "${c.label}": overall=${c.overall ?? "?"} cells=${c.cells.length}${failedTextOf(c)}${c.refinementId ? ` (${c.refinementId})` : ""}`);
 			}
 			for (const d of board.decisions) {
 				lines.push(`decision: ${d.accepted ? "ACCEPTED" : "rejected"} ${d.candidateLabel} — ${d.reasons.join("; ") || "ok"}`);
@@ -741,18 +747,28 @@ async function executeBenchmarkCommand(
 				signal: invocation.signal,
 			});
 			const entry = entryFromCells(label, outcome.cells, candidateId);
+			const failedCells = outcome.cells.filter((cell) => cell.status === "failed").length;
 			const lines = [
-				`evaluation "${label}": ${outcome.cells.length} cells, overall=${entry.overall ?? "?"}`,
+				`evaluation "${label}": ${outcome.cells.length} cells${failedCells > 0 ? `, ${failedCells} failed` : ""}, overall=${entry.overall ?? "?"}`,
 				...Object.entries(entry.aggregate)
-					.filter(([key]) => key !== "overall")
+					.filter(([key]) => key !== "overall" && key !== "failed" && key !== "total")
 					.map(([key, value]) => `  ${key}: ${value ?? "?"}`),
 			];
+			if (failedCells > 0) {
+				for (const cell of outcome.cells.filter((cell) => cell.status === "failed")) {
+					lines.push(`  [failed] ${cell.caseId} r${cell.run}: ${cell.notes}`);
+				}
+			}
 			if (candidateId) {
 				if (!board.reference) {
 					lines.push("(no reference yet — this run only recorded the candidate)");
 					board.candidates.push(entry);
 				} else {
-					const decision = decide(board.reference, entry, { passThreshold: definition.passThreshold, regressionTolerance: 0 });
+					const decision = decide(board.reference, entry, {
+						passThreshold: definition.passThreshold,
+						regressionTolerance: 0,
+						maxFailedCells: 0,
+					});
 					board.candidates.push(entry);
 					board.decisions.push({
 						candidateLabel: label,
