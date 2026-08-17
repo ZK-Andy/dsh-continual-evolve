@@ -336,6 +336,9 @@ never decrypts); a rejection is recorded in the scoreboard and the
 refinement is rolled back automatically (`autoRollbackOnReject`, on by
 default).
 
+Ready-to-use seed cases are in [`examples/`](examples/) — copy-paste the
+statement and rubric to get started in under a minute.
+
 ### Real recorded run (ACCEPT)
 
 A live `dsh web` session, one case, one candidate — the first genuine

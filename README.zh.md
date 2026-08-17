@@ -205,6 +205,8 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 
 聚合与决策都在 `src/score.ts`。rubric 隔离靠构造（规划器的提示词永远不含 rubric 文件、执行者分支永不解密）；拒绝会记录进 scoreboard 并自动回滚该 refinement（`autoRollbackOnReject`，默认开）。
 
+开箱即用的种子 case 在 [`examples/`](examples/)——复制粘贴 statement 和 rubric 即可在一分钟内上手。
+
 ### 真实运行记录（ACCEPT）
 
 一次真实的 `dsh web` 会话，一个 case、一个候选——第一次真正的接受：
