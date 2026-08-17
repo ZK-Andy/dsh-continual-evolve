@@ -251,6 +251,33 @@ export function formatSubagentSpecsSection(entries: readonly HarnessEntry[], que
 }
 
 /**
+ * Gap B3: a lightweight directory of ALL non-archived entries across all
+ * kinds — one line per entry (`- [kind:id] title`), no content. This gives
+ * the model a zero-cost overview of what exists so it can ask for full text
+ * via `evolve_list` or `/evolve list`. The directory is appended after the
+ * curated top-N injection sections and adds minimal tokens.
+ */
+export function formatEntriesDirectory(
+	...kindEntries: readonly HarnessEntry[][]
+): string {
+	const allEntries = kindEntries.flat().filter((e) => !isArchived(e));
+	if (allEntries.length === 0) {
+		return "";
+	}
+	// Skip the directory when it would be redundant (all entries already shown
+	// in the curated sections above — 6/kind cap means ≤6 entries total).
+	const totalCapped = kindEntries.reduce((sum, entries) => sum + Math.min(entries.filter((e) => !isArchived(e)).length, MAX_INJECTED_ENTRIES_PER_KIND), 0);
+	if (allEntries.length <= totalCapped) {
+		return "";
+	}
+	const lines = ["# Continual Harness — Entry Directory", "All entries (use evolve_list for full text of any entry):"];
+	for (const entry of allEntries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`))) {
+		lines.push(`- [${entry.kind}:${entry.id}] ${entry.title}`);
+	}
+	return lines.join("\n");
+}
+
+/**
  * Walk the parent-session chain from `agent` upward and return the nearest
  * session whose local store is non-empty, if any. Children inherit their
  * ancestor's prompt notes and delegation specs; the chain walk stops at the
@@ -315,6 +342,15 @@ export function entriesSectionText(engine: EvolutionEngine, agent: AgentLike | u
 		}
 	}
 
-	const parts = [promptText, subagentText].filter((part) => part.length > 0);
+	// Gap B3: lightweight directory of ALL entries (id+title, one line each).
+	// Zero-cost index so the model knows what exists and can ask for full text.
+	const directoryText = formatEntriesDirectory(
+		Object.values(merged.entries.prompt),
+		Object.values(merged.entries.memory),
+		Object.values(merged.entries.skill),
+		Object.values(merged.entries.subagent),
+	);
+
+	const parts = [promptText, subagentText, directoryText].filter((part) => part.length > 0);
 	return parts.join("\n\n");
 }

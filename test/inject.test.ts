@@ -16,6 +16,7 @@ import { entryLine } from "../src/render.js";
 import {
 	MAX_INJECTED_ENTRIES_PER_KIND,
 	entriesSectionText,
+	formatEntriesDirectory,
 	formatPromptEntriesSection,
 	formatSubagentSpecsSection,
 	nearestLocalStateWithEntries,
@@ -268,7 +269,8 @@ describe("entriesSectionText", () => {
 			saveState(engine, "local", "session-main", stateWith(many));
 			const text = entriesSectionText(engine, { id: "session-main" });
 			expect(text).toContain("+3 more prompt notes");
-			expect(text.split("\n").filter((l) => l.startsWith("- [")).length).toBe(MAX_INJECTED_ENTRIES_PER_KIND);
+			// Filter for curated entries only (format: `- [local:...]`); directory uses `- [kind:...]` without scope.
+			expect(text.split("\n").filter((l) => l.includes("[local:")).length).toBe(MAX_INJECTED_ENTRIES_PER_KIND);
 		} finally {
 			cleanup(engine);
 		}
@@ -326,7 +328,8 @@ describe("entriesSectionText", () => {
 			// must lead the injected block even though the five newest entries
 			// (p8..p4) still fill the rest of the cap; p1 is old and irrelevant
 			// and must be dropped.
-			const lines = text.split("\n").filter((l) => l.startsWith("- ["));
+			// Filter for curated entries only (format: `- [local:...]`); directory uses `- [kind:...]` without scope.
+			const lines = text.split("\n").filter((l) => l.includes("[local:"));
 			expect(lines[0]).toContain("[local:p0]");
 			expect(lines).toHaveLength(MAX_INJECTED_ENTRIES_PER_KIND);
 			expect(text).not.toContain("[local:p1]");
@@ -483,6 +486,90 @@ describe("nearestLocalStateWithEntries", () => {
 			// with the child whose parent store exists.
 			expect(nearestLocalStateWithEntries(engine, parent)?.entries.prompt["gp"]?.title).toBe("Grandparent");
 			expect(nearestLocalStateWithEntries(engine, grandchild)).toBeUndefined();
+		} finally {
+			cleanup(engine);
+		}
+	});
+});
+
+// ── Gap B3: entry directory view ──────────────────────────────────────
+
+describe("formatEntriesDirectory (B3)", () => {
+	it("returns empty when no entries exist", () => {
+		const result = formatEntriesDirectory([], [], [], []);
+		expect(result).toBe("");
+	});
+
+	it("returns empty when all entries fit in curated sections", () => {
+		const entries = Array.from({ length: 3 }, (_, i) =>
+			entry({ id: `e${i}`, kind: "memory", title: `Memory ${i}` }),
+		);
+		const result = formatEntriesDirectory(entries);
+		expect(result).toBe("");
+	});
+
+	it("shows directory when entries exceed curated cap", () => {
+		const memories = Array.from({ length: 8 }, (_, i) =>
+			entry({ id: `mem${i}`, kind: "memory", title: `Memory ${i}` }),
+		);
+		const result = formatEntriesDirectory(memories);
+		expect(result).toContain("# Continual Harness — Entry Directory");
+		expect(result).toContain("[memory:mem0] Memory 0");
+		expect(result).toContain("[memory:mem7] Memory 7");
+	});
+
+	it("excludes archived entries", () => {
+		const memories = [
+			entry({ id: "live", kind: "memory", title: "Live", metadata: {} }),
+			entry({ id: "archived", kind: "memory", title: "Gone", metadata: { archivedAt: "2026-08-18T00:00:00.000Z" } }),
+			...Array.from({ length: 7 }, (_, i) => entry({ id: `extra${i}`, kind: "memory", title: `Extra ${i}` })),
+		];
+		const result = formatEntriesDirectory(memories);
+		expect(result).toContain("[memory:live] Live");
+		expect(result).not.toContain("[memory:archived]");
+	});
+
+	it("sorts by kind then id", () => {
+		const all = [
+			entry({ id: "z", kind: "skill", title: "Z Skill" }),
+			entry({ id: "a", kind: "memory", title: "A Mem" }),
+			entry({ id: "m", kind: "prompt", title: "M Prompt" }),
+			...Array.from({ length: 7 }, (_, i) => entry({ id: `pad${i}`, kind: "memory", title: `Pad ${i}` })),
+		];
+		const result = formatEntriesDirectory(all);
+		const lines = result.split("\n").filter((l) => l.startsWith("- ["));
+		expect(lines[0]).toContain("[memory:");
+		expect(lines[lines.length - 1]).toContain("[skill:z]");
+	});
+});
+
+describe("entriesSectionText directory integration (B3)", () => {
+	it("includes directory when total entries exceed curated cap", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			const state = emptyHarnessState();
+			for (let i = 0; i < 8; i++) {
+				state.entries.memory[`mem${i}`] = entry({ id: `mem${i}`, kind: "memory", title: `Memory ${i}` });
+			}
+			saveState(engine, "local", "session-b3", state);
+			const agent = { id: "session-b3" };
+			const text = entriesSectionText(engine, agent);
+			expect(text).toContain("Entry Directory");
+			expect(text).toContain("[memory:mem0]");
+			expect(text).toContain("[memory:mem7]");
+		} finally {
+			cleanup(engine);
+		}
+	});
+
+	it("omits directory when all entries fit in curated sections", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			const state = stateWith([entry({ id: "only", kind: "memory", title: "Only" })]);
+			saveState(engine, "local", "session-b3-small", state);
+			const agent = { id: "session-b3-small" };
+			const text = entriesSectionText(engine, agent);
+			expect(text).not.toContain("Entry Directory");
 		} finally {
 			cleanup(engine);
 		}
