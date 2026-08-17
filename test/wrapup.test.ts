@@ -4,8 +4,16 @@
  * itself stays out of unit tests (verified against the live plugin).
  */
 import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import type { HarnessEntry, HarnessState, RefinementKind } from "../src/types.js";
 import { PROMOTED_TO_KEY, emptyHarnessState } from "../src/types.js";
+
+function tmpBase(): string {
+	const base = join(process.cwd(), "test/.tmp");
+	mkdirSync(base, { recursive: true });
+	return mkdtempSync(join(base, "/"));
+}
 import {
 	filterPromotable,
 	globalCoverageDetected,
@@ -129,6 +137,42 @@ describe("listLocalCandidates", () => {
 
 	it("returns an empty list for an empty local store", () => {
 		expect(listLocalCandidates(emptyHarnessState(), emptyHarnessState())).toEqual([]);
+	});
+
+	it("includes injectionCount and stale fields in candidates", () => {
+		const local = emptyHarnessState();
+		local.entries.memory["m1"] = entry("m1", "memory", "Fresh entry");
+		local.entries.memory["m2"] = entry("m2", "memory", "Old entry", {
+			updated_at: "2020-01-01T00:00:00.000Z",
+		});
+		// No baseDir → injectionCount defaults to 0, stale depends on recency
+		const candidates = listLocalCandidates(local, emptyHarnessState());
+		expect(candidates).toHaveLength(2);
+		for (const c of candidates) {
+			expect(typeof c.injectionCount).toBe("number");
+			expect(typeof c.stale).toBe("boolean");
+		}
+	});
+
+	it("marks old zero-usage entries as stale when baseDir provided", () => {
+		const dir = tmpBase();
+		try {
+			const local = emptyHarnessState();
+			// Entry updated 60 days ago (well past the 30-day half-life)
+			local.entries.memory["old"] = entry("old", "memory", "Stale entry", {
+				updated_at: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
+			});
+			// Entry updated just now (fresh)
+			local.entries.memory["fresh"] = entry("fresh", "memory", "Fresh entry");
+			// No usage recorded → both have injectionCount=0
+			const candidates = listLocalCandidates(local, emptyHarnessState(), dir);
+			const oldCandidate = candidates.find((c) => c.id === "old");
+			const freshCandidate = candidates.find((c) => c.id === "fresh");
+			expect(oldCandidate?.stale).toBe(true);
+			expect(freshCandidate?.stale).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
