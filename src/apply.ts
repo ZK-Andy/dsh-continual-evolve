@@ -43,7 +43,7 @@ export function applyRefinementProposal(
 	for (const edit of proposal.edits) {
 		const computedId = edit.id ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
 		const id = computedId ?? "";
-		const validationError = validateEdit(edit, computedId);
+		const validationError = validateEdit(edit, computedId, options.scope);
 		if (validationError) {
 			appliedEdits.push({ ...edit, id, applied: false, error: validationError });
 			continue;

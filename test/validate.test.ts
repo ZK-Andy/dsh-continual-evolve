@@ -200,3 +200,44 @@ describe("validateEdit", () => {
 		).toMatch(/requires python reference/);
 	});
 });
+
+describe("validateEdit blastRadius/scope coherence (C2)", () => {
+	it("rejects a local-scope edit that claims general blast radius", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "general" }), undefined, "local"),
+		).toMatch(/local-scope edit must declare blastRadius/);
+	});
+
+	it("rejects a global-scope edit that claims session blast radius", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "session" }), undefined, "global"),
+		).toMatch(/global-scope edit must declare blastRadius/);
+	});
+
+	it("accepts coherent combinations", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "session" }), undefined, "local"),
+		).toBeUndefined();
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "project" }), undefined, "local"),
+		).toBeUndefined();
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "general" }), undefined, "global"),
+		).toBeUndefined();
+	});
+
+	it("does not enforce when blastRadius is absent (pre-C2 compatibility)", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c" }), undefined, "local"),
+		).toBeUndefined();
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c" }), undefined, "global"),
+		).toBeUndefined();
+	});
+
+	it("does not enforce when scope is unknown to the validator", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "general" }), undefined),
+		).toBeUndefined();
+	});
+});

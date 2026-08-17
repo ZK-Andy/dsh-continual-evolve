@@ -4,15 +4,37 @@
  * the base system prompt, required fields per action, and the executable
  * contract skill entries must carry.
  */
-import type { PythonReference, RefinementEdit, RefinementKind } from "./types.js";
+import type { HarnessScope, PythonReference, RefinementEdit, RefinementKind } from "./types.js";
 import { validateSkillEntryContent } from "./skillquality.js";
 
 const ACTIONS = new Set(["create", "update", "delete", "archive"]);
 const KINDS = new Set<RefinementKind>(["prompt", "memory", "skill", "subagent"]);
 export const BASE_SYSTEM_PROMPT_ID = "base_system_prompt";
 
+/**
+ * Gap C2: mechanical check that an edit's declared blast radius is coherent
+ * with the scope it targets. A session-scoped edit claiming "general" would
+ * silently read like a cross-project tactical rule; a global edit claiming
+ * "session" would contradict its persistence. Absent blastRadius is NOT
+ * rejected (pre-C2 data and manual edits stay compatible) — the planner is
+ * instructed to always declare it, and this rule catches what it declares
+ * incoherently.
+ */
+export function validateBlastRadiusScope(
+	scope: HarnessScope,
+	blastRadius: "general" | "project" | "session",
+): string | undefined {
+	if (scope === "local" && blastRadius === "general") {
+		return "local-scope edit must declare blastRadius \"session\" or \"project\" (\"general\" would claim a cross-project rule)";
+	}
+	if (scope === "global" && blastRadius === "session") {
+		return "global-scope edit must declare blastRadius \"general\" or \"project\" (\"session\" contradicts cross-session persistence)";
+	}
+	return undefined;
+}
+
 /** Returns a human-readable failure reason, or undefined when the edit passes. */
-export function validateEdit(edit: RefinementEdit, computedId: string | undefined): string | undefined {
+export function validateEdit(edit: RefinementEdit, computedId: string | undefined, scope?: HarnessScope): string | undefined {
 	if (!ACTIONS.has(edit.action)) {
 		return `unsupported action ${String(edit.action)}`;
 	}
@@ -24,6 +46,12 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 	}
 	if (edit.action !== "create" && !edit.id) {
 		return `${edit.action} requires id`;
+	}
+	// Gap C2: blast-radius/scope coherence is a mechanical property of the
+	// edit payload itself — checked for every action, not only create/update.
+	if (scope && edit.blastRadius !== undefined) {
+		const blastError = validateBlastRadiusScope(scope, edit.blastRadius);
+		if (blastError) return blastError;
 	}
 	// Archive only names an existing entry: no title/content payload, and the
 	// base system prompt stays immutable under every action.
