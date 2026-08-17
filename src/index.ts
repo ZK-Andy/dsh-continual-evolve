@@ -70,31 +70,11 @@ export const Config = z.object({
 	fateIntervalTurns: z.natural(),
 });
 
-/** Structurally typed resolved config (loader passes the validated object). */
-export interface EvolveConfig {
-	baseDir?: string;
-	sectionOrder?: number;
-	autoReview?: boolean;
-	reviewIntervalTurns?: number;
-	maxReviewInputChars?: number;
-	reviewBudgetTokens?: number;
-	notifyOnAutoReview?: boolean;
-	requireGlobalApproval?: boolean;
-	skillsDir?: string;
-	rubricKey?: string;
-	/** Write all cordis log messages to <baseDir>/evolve/plugin.log (JSONL). */
-	logToFile?: boolean;
-	/** File log level: 0=error, 1=info, 2=warn, 3=debug. */
-	logLevel?: number;
-	/** Rotate the file log when it exceeds this many bytes. */
-	logMaxBytes?: number;
-	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
-	autoRollbackOnReject?: boolean;
-	/** Gate local-fate dimension: propose promote/archive of local entries automatically. */
-	localFate?: boolean;
-	/** Minimum turns between local-fate assessments (compaction is unconditional). */
-	fateIntervalTurns?: number;
-}
+/**
+ * Structurally typed resolved config (loader passes the validated object).
+ * Derived from the schemastery schema — single source of truth, no manual sync.
+ */
+export type EvolveConfig = Partial<Schemastery.TypeT<typeof Config>>;
 
 export interface EvolutionService {
 	readonly engine: EvolutionEngine;
