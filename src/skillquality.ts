@@ -22,7 +22,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HarnessEntry } from "./types.js";
-import { renderSkillMarkdown, skillNameOf } from "./skill.js";
+import { renderSkillMarkdown } from "./skill-render.js";
 
 /** Skill-name regex the platform enforces (skill-filesystem). */
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -316,4 +316,4 @@ export function skillResourceRefs(content: string): string[] {
 }
 
 /** Kebab-case name under which the entry materializes (exported for diagnostics). */
-export { skillNameOf };
+export { skillNameOf } from "./skill-render.js";

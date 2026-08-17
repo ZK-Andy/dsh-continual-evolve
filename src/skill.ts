@@ -10,12 +10,10 @@
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { HarnessEntry, RefinementResult } from "./types.js";
+import { renderSkillMarkdown, skillNameOf } from "./skill-render.js";
 import { skillResourceRefs, validateRenderedSkill } from "./skillquality.js";
 
-/** Convert a harness entry id (underscore slug) to a kebab-case skill name. */
-export function skillNameOf(id: string): string {
-	return id.toLowerCase().replace(/_/g, "-");
-}
+export { renderSkillMarkdown, skillNameOf } from "./skill-render.js";
 
 /** Resolve and defend the skill directory for an entry id. */
 export function skillDir(skillsRoot: string, id: string): string {
@@ -25,29 +23,6 @@ export function skillDir(skillsRoot: string, id: string): string {
 		throw new Error(`skill path escapes skills root: ${dir}`);
 	}
 	return dir;
-}
-
-/** Render a harness skill entry as a discoverable SKILL.md document. */
-export function renderSkillMarkdown(entry: HarnessEntry): string {
-	const lines = [
-		"---",
-		`name: ${skillNameOf(entry.id)}`,
-		`description: ${oneLine(entry.title)}`,
-		"---",
-		"",
-		entry.content.trim(),
-	];
-	const reference = entry.reference;
-	if (reference && typeof reference === "object" && Object.keys(reference).length > 0) {
-		lines.push("", "## Invocation");
-		for (const [key, value] of Object.entries(reference)) {
-			lines.push(`- ${key}: ${JSON.stringify(value)}`);
-		}
-	}
-	if (Object.keys(entry.arguments).length > 0) {
-		lines.push("", "## Arguments", "```json", JSON.stringify(entry.arguments, null, 2), "```");
-	}
-	return `${lines.join("\n").trimEnd()}\n`;
 }
 
 /**
@@ -107,8 +82,4 @@ function removeSkill(skillsRoot: string, id: string): void {
 	if (existsSync(dir)) {
 		rmSync(dir, { recursive: true, force: true });
 	}
-}
-
-function oneLine(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
 }
