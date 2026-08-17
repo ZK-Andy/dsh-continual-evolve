@@ -174,4 +174,4 @@ export type EvolveConfig = Partial<z.infer<typeof Config>>;
 
 ## 5. 附带观察（非阻塞）
 
-- rc.7 兼容性已核查：插件的 `^0.1.0-rc.6` peerDeps 满足 rc.7；三个新功能（插件设置卡片 / Codex 子代理后台 Job / MCP-ACP 图片附件）对本插件均无影响（无设置 UI、无产品工具行、无图片路径）。见会话记录 2026-08-18。
+- rc.7 兼容性已核查并锁定：devDependencies 已从 `0.1.0-rc.6` 升级到 `0.1.0-rc.7`（2026-08-18）；`pnpm typecheck` 通过、302 测试全绿、`oxlint` 0 警告；peerDependencies `^0.1.0-rc.6` 已满足 rc.7 无需改。rc.7 变更：`ReplayEnvelope` 接口新增（adapter-private replay metadata）、`BlockAssembler.replayState` 返回类型增强——均为 additive，本插件不使用这些 API，无影响。
