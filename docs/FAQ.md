@@ -129,5 +129,5 @@ for await (const chunk of ctx.llm.stream({
         levels:
           default: 3
 ```
-输出到 stdout（终端或重定向文件，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。级别按 logger 名配 `levels`（3=debug 全开，2=warn+）。
+输出到 stdout（终端或重定向文件，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。**级别语义（cordis 源码实证）：级别数字 error=0 / info=1 / warn=2 / debug=3，exporter 导出"消息级别 ≤ 配置值"的前缀集**——`default: 3` = 全开，`default: 2` = error+info+warn（只挡 debug），`default: 1` = error+info，`default: 0` = 只 error。"warn 及以上但不含 info"的中间集**无法表达**（info 卡在中间，线性前缀集）；想安静就 `default: 0`（本机 2026-08-17 已按此配置，info/warn 全进 plugin.log 不受影响）。
 
