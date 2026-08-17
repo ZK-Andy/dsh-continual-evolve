@@ -11,6 +11,7 @@ import { formatHarnessStateForPrompt } from "./render.js";
 import { requireGlobalApproval } from "./approval.js";
 import { entrySourceOf } from "./source.js";
 import { getUsageCount, loadUsage } from "./usage.js";
+import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 
 const SCOPES: HarnessScope[] = ["local", "global"];
 
@@ -216,6 +217,10 @@ function applyEditsText(
 	);
 	const applied = result.appliedEdits.filter((e) => e.applied);
 	const failed = result.appliedEdits.filter((e) => !e.applied);
+	// Gap C4: emit structured evolve_complete event for third-party consumers.
+	if (applied.length > 0 && sessionId) {
+		emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, "manual_tool", sessionId));
+	}
 	const lines = [`refinement ${result.id}: ${applied.length} applied, ${failed.length} failed`];
 	for (const e of applied) {
 		lines.push(`- ${e.action} ${e.kind}:${e.id} (v${(e.after?.version ?? e.before?.version) ?? "?"})`);

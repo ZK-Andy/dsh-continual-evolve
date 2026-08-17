@@ -30,6 +30,7 @@ import { runLocalFatePhase } from "./fate.js";
 import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
 import { questionServiceOf } from "./approval.js";
+import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -356,6 +357,8 @@ async function runReviewPhase(
 		`auto-review approved (${reason}) [${sessionId}] after ${turnsSinceLastReview} turns; auto-refine ${result.id}: ${result.appliedEdits.filter((e) => e.applied).length} applied, ${result.appliedEdits.filter((e) => !e.applied).length} failed — ${review.rationale}`,
 	);
 	record({ sessionId, reason, turnsSinceLastReview, outcome: "approved", rationale: review.rationale, refinementId: result.id });
+	// Gap C4: emit structured evolve_complete event for third-party consumers.
+	emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, `auto_review:${reason}`, sessionId));
 	// Visibility: tell the user what the gate just persisted. Only the
 	// turn-interval path notifies — a compaction-triggered gate must not wake
 	// the agent mid-compaction — and only when something was actually applied
