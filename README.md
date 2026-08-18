@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-396%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-401%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe layer of harness state — prompt notes, memories, skills, and subagent specs — refined from session trajectories.
@@ -132,7 +132,7 @@ dsh-continual-evolve/
 │   ├── usage.ts          # entry injection usage tracking (durable counts, staleness detection)
 │   ├── failures.ts       # failure-signature aggregation (gate + benchmark failures by class, /evolve failures)
 │   └── wrapup.ts         # session wrap-up lifecycle (promote / split-promote → global, guarded archive; shared proposal builders; staleness signal)
-└── test/                 # 28 files, 396 tests
+└── test/                 # 28 files, 401 tests
 ```
 
 ## Install

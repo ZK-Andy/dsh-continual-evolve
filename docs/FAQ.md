@@ -131,3 +131,13 @@ for await (const chunk of ctx.llm.stream({
 ```
 输出到 stdout（终端或重定向文件，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。**级别语义（cordis 源码实证）：级别数字 error=0 / info=1 / warn=2 / debug=3，exporter 导出"消息级别 ≤ 配置值"的前缀集**——`default: 3` = 全开，`default: 2` = error+info+warn（只挡 debug），`default: 1` = error+info，`default: 0` = 只 error。"warn 及以上但不含 info"的中间集**无法表达**（info 卡在中间，线性前缀集）；想安静就 `default: 0`（本机 2026-08-17 已按此配置，info/warn 全进 plugin.log 不受影响）。
 
+## 11. benchmark 候选分数大涨却被拒：`case totalDurationMs regressed`
+
+**症状**：候选 overall 从 0 涨到 100，决策却 `REJECTED`，reasons 是 `case totalDurationMs regressed: 82854 < 85127 - 0`；且 `autoRollbackOnReject`（默认 true）把刚沉淀的知识条目**连坐回滚删除**。
+
+**原因**：`aggregate()` 的返回值把 per-case 均值与元数据键（`overall`/`failed`/`total`/`totalDurationMs`——C3 新增）混在**同一个对象**。`decide()`/`decisionReport()` 遍历 `Object.entries(reference.aggregate)` 做按 case 回归判断时只排除了 overall/failed/total，漏了 `totalDurationMs`——耗时被当成分数参与回归比较，方向还写反了（更短 = 更差），把"这轮跑得更快"判定为"回归"。
+
+**修复**（`00c3b37`）：两函数改为从 `reference.cells` 派生**真实 caseId 集合**再逐 case 比对，元数据键永不进入分级/展示；`87c85cc` 补上回滚 refinement 的 `rollbackOf` 审计链（此前回滚记录只有 summary 文本"Rollback refinement <id>"，字段为空）。
+
+**教训**：任何"超类型对象 + 遍历键当 case"的逻辑都脆弱（聚合对象迟早会加新元数据键）。判定对象、报告对象都从 `entry.cells` 派生的 case 集合出发，只在明确键名上取元数据。
+
