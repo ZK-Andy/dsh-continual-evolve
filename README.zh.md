@@ -222,6 +222,17 @@ tail -f ~/.dsh/evolve/plugin.log          # 实时跟随
 
 执行者评的不是模型常识，而是**实际检查被测 harness 状态**（grep、`evolve_list`）并记录产出，再由独立评审者按 rubric 评分——所以 harness 的改动会真实地反映在分数上。同一会话早些时候还产生过诚实的 `REJECTED` 决策（0→0 占位符 case、100→100 满分基线无法超越）。
 
+**第二次真实运行（2026-08-19，从空基线到满分）**——case 主题在 harness 中完全缺席时参考线为 0，沉淀一条策略后一次冲到干净接受：
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 参考线 | `/evolve benchmark run bootstrap2` | **0**——harness 中无任何性能相关条目，执行者如实报告"一无所获" |
+| 进化候选 | `/evolve plan 记住：写代码前必须先评估算法复杂度、性能优先、profile 再优化` | 创建 local prompt `performance-first-coding-policy` |
+| 复测 | `/evolve benchmark run bootstrap2 candidate <id>` | **100**——评估器跑 `evolve_list` 命中新策略，按 rubric 满分 |
+| 决策 | — | `overall: 0 → 100` · **DECISION: ACCEPTED**（候选 `caseHash` 与参考线一致——材料未漂移） |
+
+这次运行还在当前代码上端到端走通了整套测量链路：两段式执行者/评审者、运行时实证字段（每个 cell 都记录 `provider`/`model`/`caseHash`/`sessionId`/`durationMs`）、失败格协议（0 失败）。
+
 ## 配置
 
 | 键 | 默认值 | 含义 |

@@ -360,6 +360,22 @@ moves the score. Earlier runs in the same session
 produced honest `REJECTED` decisions (0 → 0 stub cases, and 100 → 100
 where the baseline was already perfect).
 
+**Second recorded run (2026-08-19, gap-free baseline → 100)** — a case whose
+topic was absent from the harness starts at 0, and a single distilled policy
+carries it all the way to a clean accept:
+
+| Step | Command | Outcome |
+|---|---|---|
+| reference | `/evolve benchmark run bootstrap2` | **0** — no performance-related entry exists, the executor honestly reports *nothing found* |
+| candidate | `/evolve plan 记住：写代码前必须先评估算法复杂度、性能优先、profile 再优化` | creates local prompt `performance-first-coding-policy` |
+| re-evaluate | `/evolve benchmark run bootstrap2 candidate <id>` | **100** — evaluator runs `evolve_list`, hits the new policy, scores the full rubric |
+| decision | — | `overall: 0 → 100` · **DECISION: ACCEPTED** (candidate `caseHash` matched the reference — no material drift) |
+
+This run also exercised the whole measured pipeline end-to-end on the
+current code: the two-stage executor/reviewer pair, runtime evidence
+(`provider`/`model`/`caseHash`/`sessionId`/`durationMs` recorded on every
+cell), and the failure-cell protocol (0 failures).
+
 ## Configuration
 
 | Key | Default | Meaning |
