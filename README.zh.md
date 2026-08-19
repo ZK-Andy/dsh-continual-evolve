@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-401%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-463%20passing-brightgreen)]()
 [![Status](https://img.shields.io/badge/status-all%20phases%20complete%20%C2%B7%20maintenance-ff69b4)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -106,7 +106,7 @@ dsh-continual-evolve/
 │   ├── usage.ts          # 条目注入使用率追踪（持久计数、陈旧检测）
 │   ├── failures.ts       # 失败签名聚合（门禁 + benchmark 失败按类统计，/evolve failures）
 │   └── wrapup.ts         # 会话收尾生命周期（提升/拆解提升到 global、带守卫的归档；共享 proposal 构造器；陈旧信号）
-└── test/                 # 28 个文件，401 个测试
+└── test/                 # 32 个文件，463 个测试
 ```
 
 ## 安装
@@ -274,7 +274,8 @@ pnpm install        # 安装开发依赖
 pnpm dev            # tsc --watch
 pnpm build          # tsc -> lib/
 pnpm test           # vitest run
-pnpm lint           # oxlint src test
+pnpm test:coverage  # vitest run --coverage（v8，CI 强制阈值）
+pnpm lint           # oxlint src test（correctness 类目已开）
 ```
 
 遇到问题先看 [`docs/FAQ.md`](docs/FAQ.md)（真实踩坑记录：服务平面、schema DSL、结构化输出、门禁计数、注入验证等）。
