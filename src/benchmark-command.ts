@@ -276,6 +276,8 @@ export async function executeBenchmarkCommand(
 			const scoreText = cell?.status === "ok" ? `${cell.score} (${cell.passed ? "passed" : "below threshold"})` : `failed: ${cell?.notes ?? "unknown"}`;
 			// Record in calibration history.
 			const updatedMeta = loadCaseMeta(baseDir, bid, cid) ?? { status: "calibrating" as const, capability: "", distinguisher: "", shortcuts: "", calibrationHistory: [] };
+			// Older or externally-written meta.json may lack the history array.
+			updatedMeta.calibrationHistory ??= [];
 			updatedMeta.calibrationHistory.push({
 				runAt: new Date().toISOString(),
 				score: cell?.status === "ok" ? cell.score : 0,
