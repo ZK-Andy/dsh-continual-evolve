@@ -3,7 +3,7 @@
  * and reviews.jsonl emission.
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { buildEvolveCompleteEvent, emitEvolveComplete, type EvolveCompleteEvent } from "../src/evolve-event.js";
 import type { RefinementResult } from "../src/types.js";

@@ -597,6 +597,7 @@ describe("runLocalFatePhase", () => {
 			saveHarnessState(storePaths(dir, "local", "session-fate").stateDir, local);
 			const ctx = {
 				llm: {
+					// oxlint-disable-next-line require-yield -- intentional: the mock stream always throws before yielding
 					stream: async function* () {
 						throw new Error("provider down");
 					},

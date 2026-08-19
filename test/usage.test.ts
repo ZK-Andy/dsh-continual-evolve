@@ -2,7 +2,7 @@
  * Tests for entry usage tracking (gap B1): load/save persistence, injection
  * recording, count retrieval, and zero-usage detection.
  */
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadUsage, saveUsage, usageKey, recordInjection, getUsageCount, zeroUsageEntries } from "../src/usage.js";
