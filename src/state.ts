@@ -85,7 +85,7 @@ export function loadHarnessState(stateDir: string, scope: HarnessScope = "global
 					reference: objectRecord(entry["reference"]) ?? {},
 					arguments: objectRecord(entry["arguments"]) ?? {},
 					metadata: objectRecord(entry["metadata"]) ?? {},
-					source: entry["source"] === "evolve" ? "evolve" : "evolve",
+					source: "evolve",
 					created_at: typeof entry["created_at"] === "string" ? entry["created_at"] : new Date(0).toISOString(),
 					updated_at: typeof entry["updated_at"] === "string" ? entry["updated_at"] : new Date(0).toISOString(),
 					version: typeof entry["version"] === "number" ? entry["version"] : 1,

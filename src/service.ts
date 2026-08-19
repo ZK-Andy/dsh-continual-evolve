@@ -5,6 +5,7 @@
  */
 import type { EntrySource, HarnessScope, RefinementProposal, RefinementResult } from "./types.js";
 import { applyRefinementProposal } from "./apply.js";
+import { randomUUID } from "node:crypto";
 import { rollbackProposal } from "./rollback.js";
 import { loadHarnessState, saveHarnessState } from "./state.js";
 import { appendResult, loadResults, snapshotBefore, storePaths } from "./store.js";
@@ -33,7 +34,7 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 	function apply(scope: HarnessScope, sessionId: string | undefined, proposal: RefinementProposal, context?: ApplyContext): RefinementResult {
 		const paths = storePaths(baseDir, scope, sessionId);
 		const state = context?.baselineState ?? load(scope, sessionId);
-		const id = `evolve_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+		const id = `evolve_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
 		// Code-enforced snapshot: runs before any mutation, cannot be skipped by the model.
 		snapshotBefore(paths, id);
 		const result = applyRefinementProposal(state, proposal, {
