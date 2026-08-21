@@ -1,0 +1,53 @@
+name: Test Feedback / 使用反馈
+description: 真实环境使用反馈（不同 DSH 版本 / Profile / 平台）——告诉我们使用环境与效果，30 秒可填完
+title: "[Test] "
+labels: ["test-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing dsh-continual-evolve! 感谢参与真实环境测试！
+
+        Real-world feedback on different DSH versions / profiles is especially valuable. Even a "it works" report helps.
+        尤其欢迎不同 DSH 版本、不同 Profile 下的真实使用反馈，哪怕只是"能正常跑"。
+  - type: dropdown
+    id: platform
+    attributes:
+      label: OS / Platform
+      description: 操作系统与架构
+      options:
+        - Linux (x64)
+        - Linux (arm64)
+        - macOS (Intel / x64)
+        - macOS (Apple Silicon / arm64)
+        - Windows (x64)
+        - other
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: Run `dsh --version`
+      placeholder: "0.1.1-rc.2"
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: 插件版本（Releases 页或 package.json 可见）
+      placeholder: "v0.3.0"
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: Result / 使用效果
+      description: 哪些命令/流程试了、效果如何、期望 vs 实际
+      placeholder: "1. 运行 /evolve … 2. 期望… 实际…"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots / 日志或截图
+      description: 相关日志（`/evolve log 200` 或 `~/.dsh/evolve/plugin.log`）或截图（可拖入本框；注意脱敏）

@@ -15,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: 文档门禁
+        run: |
+          python3 scripts/verify-adr-format.py
+          python3 scripts/verify-doc-budgets.py --manifest scripts/doc-budgets.manifest.json
+          python3 scripts/verify-md-links.py
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

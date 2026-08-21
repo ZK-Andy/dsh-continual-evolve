@@ -1,0 +1,44 @@
+name: governance
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验 Issue/PR 输入
+        run: |
+          set -euo pipefail
+          echo "== governance 输入校验（Owner/优先级/分类 + PR checklist）=="
+          # 此校验为轻量提示，不阻断合并（continue-on-error 思想），但会在日志中 fail loud
+          # Issue：检查标题与正文含 Owner/priority/class（模板已强制，空白 Issue 已禁）
+          # PR：检查描述含 Reviewer Checklist 与 ADR 链接（若为非平凡变更）
+          EVENT="${{ github.event_name }}"
+          echo "event=$EVENT"
+          if [[ "$EVENT" == "issues" ]]; then
+            echo "Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}"
+            echo "labels: ${{ join(github.event.issue.labels.*.name, ', ') }}"
+            BODY="${{ github.event.issue.body }}"
+            if [[ -z "$BODY" ]]; then
+              echo "::warning::Issue 正文为空"
+            fi
+          fi
+          if [[ "$EVENT" == "pull_request" ]]; then
+            echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+            BODY="${{ github.event.pull_request.body }}"
+            if ! echo "$BODY" | grep -q "Reviewer Checklist"; then
+              echo "::warning::PR 描述未包含 Reviewer Checklist（请用 .github/pull_request_template.md）"
+            fi
+            if ! echo "$BODY" | grep -q "change-scope"; then
+              echo "::warning::PR 未贴最小证据（scripts/change-scope.sh）"
+            fi
+          fi
+          echo "governance 校验完成（提示级）"

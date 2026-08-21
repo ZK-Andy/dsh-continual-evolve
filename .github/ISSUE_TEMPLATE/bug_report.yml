@@ -4,6 +4,31 @@ title: "[Bug]: "
 labels: ["bug", "triage"]
 body:
   - type: input
+    id: owner
+    attributes:
+      label: Owner
+      description: 负责人（@提及）
+      placeholder: "@ZK-Andy"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [p0, p1, p2, p3]
+      default: 1
+    validations:
+      required: true
+  - type: dropdown
+    id: class
+    attributes:
+      label: Class
+      description: 分类
+      options: [bug-fix, feature, architecture, testing, process]
+      default: 0
+    validations:
+      required: true
+  - type: input
     id: dsh-version
     attributes:
       label: DSH version

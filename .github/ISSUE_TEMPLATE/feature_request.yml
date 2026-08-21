@@ -3,6 +3,29 @@ description: Suggest an improvement or new capability for dsh-continual-evolve.
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
+  - type: input
+    id: owner
+    attributes:
+      label: Owner
+      placeholder: "@ZK-Andy"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [p0, p1, p2, p3]
+      default: 1
+    validations:
+      required: true
+  - type: dropdown
+    id: class
+    attributes:
+      label: Class
+      options: [feature, bug-fix, architecture, testing, process]
+      default: 0
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -21,4 +44,4 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Anything you tried or workarounds you currently use.
+      description: Anything you tried or workarounds you currently use (ADR 要求).
