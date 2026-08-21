@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# pre-commit — 快检查（仅暂存区，不跑全量 build/test，CI 拥有穷尽矩阵）
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+echo "== pre-commit: 空白与门禁快检 =="
+
+# 1) 空白错误（git 内置 check；--quiet 会因存在 diff 就返 1，需单独 --check）
+if ! git diff --cached --check; then
+  echo "error: 发现空白错误（行尾空格/缺换行），请修复后重试" >&2
+  exit 1
+fi
+
+# 2) ADR 格式（仅当 .agents/notes/** 有暂存变更时）
+if git diff --cached --name-only | grep -q "^\.agents/notes/"; then
+  echo "-> verify-adr-format.py"
+  python3 scripts/verify-adr-format.py
+fi
+
+# 3) Markdown 相对链接（快）
+echo "-> verify-md-links.py"
+python3 scripts/verify-md-links.py
+
+# 4) doc-budgets（快）
+echo "-> verify-doc-budgets.py"
+python3 scripts/verify-doc-budgets.py --manifest scripts/doc-budgets.manifest.json
+
+echo "pre-commit OK"
