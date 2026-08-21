@@ -15,6 +15,9 @@ test/.tmp/
 npm-debug.log*
 pnpm-debug.log*
 
+# Publish scratch
+.npm-pack-tmp/
+
 # Editor / OS
 .DS_Store
 .idea/
