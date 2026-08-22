@@ -221,9 +221,12 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 
 /**
  * Gap C1: parse a "provider/model" or "model" string into its components.
- * Returns undefined when the input is empty (no override).
+ * Returns undefined when the input is empty (no override). A bare model name
+ * falls back to the agent's provider, then "deepseek".
+ * Exported for unit testing (the advanceGateState precedent); production
+ * resolves it inside runReviewPhase.
  */
-function parseReviewModel(
+export function parseReviewModel(
 	reviewModel: string | undefined,
 	fallbackProvider: string | undefined,
 ): { provider: string; model: string } | undefined {
