@@ -141,3 +141,11 @@ for await (const chunk of ctx.llm.stream({
 
 **教训**：任何"超类型对象 + 遍历键当 case"的逻辑都脆弱（聚合对象迟早会加新元数据键）。判定对象、报告对象都从 `entry.cells` 派生的 case 集合出发，只在明确键名上取元数据。
 
+
+## 12. 门禁批量 failed：`LLM call failed: provider "opencode-go"`
+
+**症状**：`reviews.jsonl` 里出现成串 `gate error: evolve: LLM call failed: provider "opencode-go"`（2026-08-19 前后 14 次）。
+
+**原因**：未配置 `reviewModel` 时门禁走 agent 自身 provider；该 provider 间歇不可用，门禁每次都失败。
+
+**修复与要点**：失败被完全遏制（记录 + 回退 lastReviewAt，不干扰 agent 循环），但会浪费一次调用并污染审计。两个选项：① 在 profile patch 里给 `continual-evolve` 配 `reviewModel: "<稳定provider>/<model>"` 把门禁路由到便宜且稳定的模型；② 接受遏制行为，用 `/evolve failures` 观察频率。判断数据源：`/evolve failures` 的按类计数。
