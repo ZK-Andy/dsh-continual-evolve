@@ -84,6 +84,11 @@ export function loadHarnessState(stateDir: string, scope: HarnessScope = "global
 					scope: normalizeScope(entry["scope"], scope),
 					reference: objectRecord(entry["reference"]) ?? {},
 					arguments: objectRecord(entry["arguments"]) ?? {},
+					// skill_kind must survive persistence: /evolve mount and the
+					// listing render branch on it (guidance vs executable).
+					...(entry["skill_kind"] === "guidance" || entry["skill_kind"] === "executable"
+						? { skill_kind: entry["skill_kind"] }
+						: {}),
 					metadata: objectRecord(entry["metadata"]) ?? {},
 					source: "evolve",
 					created_at: typeof entry["created_at"] === "string" ? entry["created_at"] : new Date(0).toISOString(),
