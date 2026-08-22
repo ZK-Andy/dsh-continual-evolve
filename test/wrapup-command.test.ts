@@ -49,7 +49,7 @@ function seedLocal(engine: ReturnType<typeof createEvolutionEngine>, sessionId: 
 		summary: `create ${id}`,
 		rationale: "test",
 		expectedOutcome: "entry exists",
-		edits: [{ action: "create", kind: "memory", id, title: `Entry ${id}`, content: "durable lesson content", metadata }],
+		edits: [{ action: "create", kind: "memory", id, title: `Entry ${id}`, content: PROMOTABLE_COMMAND_BODY, metadata }],
 	});
 }
 
@@ -57,6 +57,10 @@ const approvedQuestions: Questions = { answers: [{ id: "approve-global-evolve", 
 const declinedQuestions: Questions = { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
 const archiveConfirmedQuestions: Questions = { answers: [{ id: "evolve-wrapup-archive-review", selected: ["归档"] }] };
 const archiveDeclinedQuestions: Questions = { answers: [{ id: "evolve-wrapup-archive-review", selected: ["保留"] }] };
+
+/** Portable fixture body clearing the promotion floor (>=100 chars). */
+const PROMOTABLE_COMMAND_BODY =
+	"Durable cross-session lesson distilled from this session; portable phrasing with no project-scoped paths or session identifiers inside.";
 
 describe("executeWrapupCommand", () => {
 	it("reports nothing to wrap up on an empty local store", async () => {
@@ -206,7 +210,7 @@ describe("executeWrapupCommand", () => {
 						key: "memory:mixed_1",
 						verdict: "archive",
 						reason: "snapshot half",
-						promote: { title: "Clean durable vision", content: "the durable part only" },
+						promote: { title: "Clean durable vision", content: PROMOTABLE_COMMAND_BODY + " Cleaned durable conclusion." },
 					},
 				],
 			});
@@ -217,7 +221,7 @@ describe("executeWrapupCommand", () => {
 			const globalEntries = Object.values(engine.load("global", undefined).entries.memory);
 			expect(globalEntries).toHaveLength(1);
 			expect(globalEntries[0]?.title).toBe("Clean durable vision");
-			expect(globalEntries[0]?.content).toBe("the durable part only");
+			expect(globalEntries[0]?.content).toContain("Cleaned durable conclusion.");
 			expect(isArchived(engine.load("local", "session-x").entries.memory["mixed_1"]!)).toBe(true);
 		} finally {
 			rmSync(base, { recursive: true, force: true });
@@ -236,7 +240,7 @@ describe("executeWrapupCommand", () => {
 						key: "memory:mixed_2",
 						verdict: "archive",
 						reason: "snapshot half",
-						promote: { title: "Clean durable vision", content: "the durable part only" },
+						promote: { title: "Clean durable vision", content: PROMOTABLE_COMMAND_BODY + " Cleaned durable conclusion." },
 					},
 				],
 			});

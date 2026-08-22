@@ -3,6 +3,14 @@
  * optimistic-concurrency rejection and per-edit failure accounting.
  */
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createEvolutionEngine } from "../src/service.js";
+
+/** Portable fixture body clearing validation floors. */
+const PREFIX_BODY =
+	"Portable durable content used by prefix-hygiene regression tests; long enough for any minimum length guard.";
 import { applyRefinementProposal } from "../src/apply.js";
 import { rollbackProposal } from "../src/rollback.js";
 import { baselineOf, loadHarnessState, saveHarnessState } from "../src/state.js";
@@ -405,10 +413,56 @@ describe("persistence integration", () => {
 	});
 });
 
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 function mkdtempSafe(): string {
 	const base = join(process.cwd(), "test/.tmp");
 	mkdirSync(base, { recursive: true });
 	return mkdtempSync(join(base, "/"));
 }
+
+describe("create id store-prefix hygiene (2026-08-22)", () => {
+	function engineOn(dir: string) {
+		return createEvolutionEngine(dir);
+	}
+
+	it("strips merged-view local:/global: prefixes from CREATE ids only", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-prefix-"));
+		try {
+			const engine = engineOn(dir);
+			const result = engine.apply("global", undefined, {
+				summary: "planner-style create with merged-view id",
+				rationale: "regression: global entries named local:foo",
+				expectedOutcome: "entry id has no store prefix",
+				edits: [{ action: "create", kind: "memory", id: "local:handoff_todo", title: "clean id", content: PREFIX_BODY }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+			expect(result.appliedEdits[0]?.id).toBe("handoff_todo");
+			expect(engine.load("global").entries.memory["handoff_todo"]).toBeTruthy();
+			expect(engine.load("global").entries.memory["local:handoff_todo"]).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps update/delete ids untouched (they address existing entries)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-prefix-update-"));
+		try {
+			const engine = engineOn(dir);
+			engine.apply("global", undefined, {
+				summary: "seed",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", id: "weird:id", title: "t", content: PREFIX_BODY }],
+			}, { scope: "global" });
+			const result = engine.apply("global", undefined, {
+				summary: "update keeps raw id",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "update", kind: "memory", id: "weird:id", title: "t2", content: PREFIX_BODY }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+			expect(engine.load("global").entries.memory["weird:id"]?.title).toBe("t2");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

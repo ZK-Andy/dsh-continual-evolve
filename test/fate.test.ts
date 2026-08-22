@@ -31,12 +31,16 @@ import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
 import type { WrapupCandidate } from "../src/wrapup.js";
 
+/** Portable fixture body clearing the promotion floor (>=100 chars). */
+const PROMOTABLE_BODY =
+	"Prefer small evidence-backed edits and verify assumptions against the actual repository state before writing any code change.";
+
 function entry(id: string, kind: RefinementKind, title: string, overrides: Partial<HarnessEntry> = {}): HarnessEntry {
 	return {
 		id,
 		kind,
 		title,
-		content: "body",
+		content: PROMOTABLE_BODY,
 		path: "general",
 		scope: "local",
 		reference: {},
@@ -163,7 +167,10 @@ describe("planLocalFates", () => {
 		const noSource = entry("m3", "memory", "操作性条目");
 		const mixed = entry("m4", "memory", "混合条目", { metadata: { sourceSeqs: [2], sourceSession: "session-x" } });
 		const global = emptyHarnessState();
-		global.entries.memory["m2"] = entry("m2", "memory", "已被全局覆盖的话题", { scope: "global" });
+		global.entries.memory["m2"] = entry("m2", "memory", "已被全局覆盖的话题", {
+			scope: "global",
+			content: "已被全局覆盖话题的独立正文，避免与新守卫的内容去重误撞。",
+		});
 		const candidates = [
 			candidateOf(sourced),
 			candidateOf(covered, /* coveredGlobally */ true),
@@ -178,7 +185,7 @@ describe("planLocalFates", () => {
 				key: "memory:m4",
 				verdict: "archive" as const,
 				reason: "snapshot half",
-				promote: { title: "清洗后的持久部分", content: "only the durable part" },
+				promote: { title: "清洗后的持久部分", content: PROMOTABLE_BODY + " 清洗后仅保留可跨会话复用的持久结论。" },
 			},
 		];
 		const plan = planWith(candidates, items, global);
@@ -315,7 +322,7 @@ describe("applyLocalFates", () => {
 						key: "memory:spl",
 						verdict: "archive",
 						reason: "snapshot",
-						promote: { title: "清洗结论", content: "cleaned" },
+						promote: { title: "清洗结论", content: PROMOTABLE_BODY + " Cleaned durable conclusion for the split path." },
 					},
 					{ key: "memory:arc", verdict: "archive", reason: "operational" },
 				],
@@ -338,7 +345,7 @@ describe("applyLocalFates", () => {
 			expect(globalState.entries.memory["prom"]?.scope).toBe("global");
 			expect(globalState.entries.memory["prom"]?.metadata[SOURCED_FROM_KEY]).toBe("session-fate:prom");
 			expect(globalState.entries.memory["spl"]?.title).toBe("清洗结论");
-			expect(globalState.entries.memory["spl"]?.content).toBe("cleaned");
+			expect(globalState.entries.memory["spl"]?.content).toContain("Cleaned durable conclusion");
 
 			const after = engine.load("local", "session-fate");
 			expect(after.entries.memory["prom"]?.metadata[PROMOTED_TO_KEY]).toBe("prom");
@@ -530,7 +537,10 @@ describe("runLocalFatePhase", () => {
 			local.entries.memory["m1"] = entry("m1", "memory", "持久结论");
 			saveHarnessState(storePaths(dir, "local", "session-fate").stateDir, local);
 			const global = emptyHarnessState();
-			global.entries.memory["dup"] = entry("dup", "memory", "已被全局覆盖的话题", { scope: "global" });
+			global.entries.memory["dup"] = entry("dup", "memory", "已被全局覆盖的话题", {
+				scope: "global",
+				content: "已被全局覆盖话题的全局正文（独立内容，避免内容去重误撞本地候选）。",
+			});
 			saveHarnessState(storePaths(dir, "global", undefined).stateDir, global);
 			let asked = false;
 			const ctx = {
@@ -574,7 +584,12 @@ describe("runLocalFatePhase", () => {
 				dup: entry("dup", "memory", "已被全局覆盖的话题"),
 				m1: entry("m1", "memory", "持久结论"),
 			},
-			{ dup: entry("dup", "memory", "已被全局覆盖的话题", { scope: "global" }) },
+			{
+				dup: entry("dup", "memory", "已被全局覆盖的话题", {
+					scope: "global",
+					content: "已被全局覆盖话题的全局正文（独立内容，避免内容去重误撞本地候选）。",
+				}),
+			},
 		);
 		const gate = gateWith({ turns: 5, lastFateAt: 0 });
 		await runAgainst(h, gate, "compact");

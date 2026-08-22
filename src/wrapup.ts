@@ -27,6 +27,7 @@ import { compactText } from "./render.js";
 import { streamText } from "./llm-text.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { recencyScore } from "./inject.js";
+import { DEFAULT_PROMOTION_POLICY, mostSimilarGlobalEntry, projectScopedReason, type PromotionPolicy } from "./promotion.js";
 
 /** What should happen to one local entry at session end. */
 export type WrapupVerdict = "promote" | "archive" | "keep";
@@ -267,12 +268,20 @@ export interface PromotableSplit {
  * Apply-time deterministic guard: re-check every promote verdict against the
  * global store right before it lands. The LLM classification may be stale
  * (a gate ran while assessing) or wrong; this ensures a promote never writes
- * a duplicate global entry. Pure and unit-tested.
+ * a duplicate, project-scoped, or too-thin global entry. Pure and unit-tested.
+ *
+ * Guards (2026-08-22 promotion policy):
+ * - audited candidate list + title coverage (pre-existing),
+ * - project-scoped content markers (absolute paths / session ids) — the
+ *   global store is shared across projects and must stay portable,
+ * - thin content below the policy floor (framing outweighs the fact),
+ * - near-duplicate of an existing global entry by content overlap.
  */
 export function filterPromotable(
 	items: readonly WrapupItem[],
 	globalState: HarnessState,
 	candidates: readonly WrapupCandidate[],
+	policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
 ): PromotableSplit {
 	const byKey = new Map(candidates.map((candidate) => [candidateKey(candidate.kind, candidate.id), candidate]));
 	const promotable: WrapupItem[] = [];
@@ -286,6 +295,26 @@ export function filterPromotable(
 		}
 		if (candidate.coveredGlobally || globalCoverageDetected(globalState, candidate.kind, candidate)) {
 			skipped.push({ key: item.key, reason: "already covered globally" });
+			continue;
+		}
+		const scoped = projectScopedReason(`${candidate.title}\n${candidate.content}`, policy);
+		if (scoped) {
+			skipped.push({ key: item.key, reason: scoped });
+			continue;
+		}
+		if (candidate.content.length < policy.minPromoteChars) {
+			skipped.push({
+				key: item.key,
+				reason: `too thin to promote (${candidate.content.length} < ${policy.minPromoteChars} chars) — keep local or merge`,
+			});
+			continue;
+		}
+		const similar = mostSimilarGlobalEntry(globalState, candidate.kind, candidate.title, candidate.content, policy);
+		if (similar) {
+			skipped.push({
+				key: item.key,
+				reason: `near-duplicate of global ${candidate.kind}:${similar.id} "${similar.title}" (overlap ${similar.score.toFixed(2)}) — update that entry instead`,
+			});
 			continue;
 		}
 		promotable.push(item);
@@ -347,14 +376,29 @@ export function splitArchiveGuards(items: readonly WrapupItem[], candidates: rea
 
 /**
  * Apply-time guard for a split promotion (archive + promote sub-object):
- * the cleaned title must not duplicate a topic already covered globally. A
- * duplicate split is dropped (the entry still archives plain) rather than
- * half-promoting a redundancy.
+ * the cleaned payload must pass the same promotion policy as a whole
+ * promote — no global coverage duplicate, no project-scoped content, not
+ * too thin, no near-duplicate global entry. A blocked split is dropped (the
+ * entry still archives plain) rather than half-promoting a redundancy.
  */
-export function splitPromoteBlocked(item: WrapupItem, globalState: HarnessState, kind: RefinementKind): string | undefined {
+export function splitPromoteBlocked(
+	item: WrapupItem,
+	globalState: HarnessState,
+	kind: RefinementKind,
+	policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
+): string | undefined {
 	if (!item.promote) return "no split payload";
 	if (globalCoverageDetected(globalState, kind, { id: "", title: item.promote.title })) {
 		return "split promotion duplicates a globally covered topic";
+	}
+	const scoped = projectScopedReason(`${item.promote.title}\n${item.promote.content}`, policy);
+	if (scoped) return `split promotion is ${scoped}`;
+	if (item.promote.content.length < policy.minPromoteChars) {
+		return `split promotion too thin (${item.promote.content.length} < ${policy.minPromoteChars} chars)`;
+	}
+	const similar = mostSimilarGlobalEntry(globalState, kind, item.promote.title, item.promote.content, policy);
+	if (similar) {
+		return `split promotion near-duplicates global ${kind}:${similar.id} "${similar.title}" (overlap ${similar.score.toFixed(2)})`;
 	}
 	return undefined;
 }

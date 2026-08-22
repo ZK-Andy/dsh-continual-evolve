@@ -20,6 +20,7 @@ import { entriesSectionText } from "./inject.js";
 import { resolveRubricKey } from "./rubric.js";
 import { restoreMounted } from "./mount.js";
 import { registerFileLogger } from "./logfile.js";
+import { resolvePromotionPolicy } from "./promotion.js";
 
 export const name = "continual-evolve";
 
@@ -80,6 +81,17 @@ export const Config = z.object({
 	 * assessment so the encounter is distilled. 0 disables.
 	 */
 	goalBlockedWrapupTurns: z.natural().min(0).default(3),
+	/**
+	 * Promotion policy (2026-08-22): regex sources whose match in a
+	 * candidate's title/content marks it project-scoped — such entries are
+	 * never promoted to the cross-session global store. Replaces the built-in
+	 * defaults when set.
+	 */
+	promotionBlockPatterns: z.array(z.string()),
+	/** Whole promotions below this content length stay local (chars). */
+	promotionMinChars: z.natural().default(100),
+	/** Entry-directory lines injected per build before folding into a counter. */
+	injectionDirectoryLines: z.natural().default(15),
 });
 
 /**
@@ -126,14 +138,19 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 	ctx.systemPrompt.section({
 		name: "tool:continual-evolve:entries",
 		order: (config.sectionOrder ?? 118) + 1,
-		text: (context) => entriesSectionText(engine, context.agent),
+		text: (context) => entriesSectionText(engine, context.agent, undefined, { directoryLines: config.injectionDirectoryLines ?? 15 }),
 	});
 
 	const gate = { requireGlobalApproval: config.requireGlobalApproval ?? true };
+	const promotionPolicy = resolvePromotionPolicy({
+		blockPatterns: config.promotionBlockPatterns,
+		minPromoteChars: config.promotionMinChars,
+	});
 	registerEvolveTools(ctx, engine, gate);
 	registerEvolveCommand(ctx, engine, gate, {
 		rubricKey: resolveRubricKey(baseDir, config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m)),
 		autoRollbackOnReject: config.autoRollbackOnReject ?? true,
+		promotionPolicy,
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in
@@ -160,6 +177,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			localFate: config.localFate ?? true,
 			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
 			goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
+			promotionPolicy,
 			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
 		});
 		ctx.logger("continual-evolve").info(

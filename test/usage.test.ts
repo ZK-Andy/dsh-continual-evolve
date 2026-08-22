@@ -15,6 +15,56 @@ function tmpBase(): string {
 	return mkdtempSync(join(base, "/"));
 }
 
+describe("usage store v2 (session dedup)", () => {
+	it("dedups counting per session and keeps legacy always-increment without one", () => {
+		const dir = tmpBase();
+		try {
+			recordInjection(dir, ["memory:a", "memory:b"], "session-1");
+			recordInjection(dir, ["memory:a", "memory:b"], "session-1"); // same session: no-op
+			recordInjection(dir, ["memory:a"], "session-2");
+			let store = loadUsage(dir);
+			expect(store.counts["memory:a"]).toBe(2);
+			expect(store.counts["memory:b"]).toBe(1);
+			expect(store.lastSession?.["memory:a"]).toBe("session-2");
+
+			recordInjection(dir, ["memory:c"]); // no sessionId: legacy increment
+			store = loadUsage(dir);
+			expect(store.counts["memory:c"]).toBe(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("persists the v2 shape and reads back counts + lastSession", () => {
+		const dir = tmpBase();
+		try {
+			recordInjection(dir, ["skill:s1"], "session-x");
+			const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "evolve", "usage.json"), "utf8")) as Record<string, unknown>;
+			expect(raw["version"]).toBe(2);
+			expect((raw["counts"] as Record<string, number>)["skill:s1"]).toBe(1);
+			expect((raw["lastSession"] as Record<string, string>)["skill:s1"]).toBe("session-x");
+			expect(loadUsage(dir).counts["skill:s1"]).toBe(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reads the legacy flat-map shape without a version key", () => {
+		const dir = tmpBase();
+		try {
+			mkdirSync(join(dir, "evolve"), { recursive: true });
+			require("node:fs").writeFileSync(join(dir, "evolve", "usage.json"), JSON.stringify({ "prompt:old": 2311 }), "utf8");
+			const store = loadUsage(dir);
+			expect(store.counts["prompt:old"]).toBe(2311);
+			// legacy data keeps counting under session dedup (no lastSession yet)
+			recordInjection(dir, ["prompt:old"], "session-new");
+			expect(loadUsage(dir).counts["prompt:old"]).toBe(2312);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("usageKey", () => {
 	it("formats kind:id", () => {
 		expect(usageKey("memory", "foo")).toBe("memory:foo");

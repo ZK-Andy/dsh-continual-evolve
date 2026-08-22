@@ -26,12 +26,16 @@ import {
 	type WrapupCandidate,
 } from "../src/wrapup.js";
 
+/** Portable fixture body clearing the promotion floor (>=100 chars). */
+const PROMOTABLE_BODY =
+	"Prefer small evidence-backed edits and verify assumptions against the actual repository state before writing any code change.";
+
 function entry(id: string, kind: RefinementKind, title: string, overrides: Partial<HarnessEntry> = {}): HarnessEntry {
 	return {
 		id,
 		kind,
 		title,
-		content: "body",
+		content: PROMOTABLE_BODY,
 		path: "general",
 		scope: "local",
 		reference: {},
@@ -321,7 +325,7 @@ describe("split promotion (A-form)", () => {
 	});
 
 	it("splitPromoteBlocked allows a fresh cleaned title", () => {
-		const item = { key: "memory:mem_1", verdict: "archive" as const, reason: "x", promote: { title: "全新主题", content: "body" } };
+		const item = { key: "memory:mem_1", verdict: "archive" as const, reason: "x", promote: { title: "全新主题", content: PROMOTABLE_BODY + " 全新主题的持久结论，与既有全局条目无重叠。" } };
 		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory")).toBeUndefined();
 	});
 });

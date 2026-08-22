@@ -6,6 +6,7 @@ import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands
 import type { EvolutionEngine } from "./service.js";
 import { questionServiceOf, requireGlobalApproval } from "./approval.js";
 import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, wholePromoteProposals } from "./wrapup.js";
+import { DEFAULT_PROMOTION_POLICY, type PromotionPolicy } from "./promotion.js";
 import type { WrapupCandidate, WrapupItem } from "./wrapup.js";
 
 function success(text: string): CommandResult {
@@ -16,6 +17,7 @@ export async function executeWrapupCommand(
 	ctx: Context,
 	engine: EvolutionEngine,
 	invocation: CommandInvocation,
+	policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
 ): Promise<CommandResult> {
 	const sessionId = invocation.agent.id;
 	const localState = engine.load("local", sessionId);
@@ -33,7 +35,7 @@ export async function executeWrapupCommand(
 
 	// 2. Partition by action. Deterministic guards re-check the LIVE global
 	//    store right before anything lands (state may have changed mid-call).
-	const { promotable, skipped } = filterPromotable(assessment.items, globalState, candidates);
+	const { promotable, skipped } = filterPromotable(assessment.items, globalState, candidates, policy);
 	const promoteItems = promotable.filter((item) => item.verdict === "promote");
 	const archiveItems = assessment.items.filter((item) => item.verdict === "archive");
 	// Split promotion (A-form): archive a mixed entry but promote ONLY the
@@ -49,7 +51,7 @@ export async function executeWrapupCommand(
 			splitSkipped.push({ key: item.key, reason: "not in the audited candidate list" });
 			continue;
 		}
-		const blocked = splitPromoteBlocked(item, globalState, candidate.kind);
+		const blocked = splitPromoteBlocked(item, globalState, candidate.kind, policy);
 		if (blocked) {
 			splitSkipped.push({ key: item.key, reason: blocked });
 			continue;

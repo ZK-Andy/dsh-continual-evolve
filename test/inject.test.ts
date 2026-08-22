@@ -4,6 +4,7 @@
  * delegation seam (design.md §7 Phase 2 remaining items).
  */
 import { describe, expect, it } from "vitest";
+import { loadUsage } from "../src/usage.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -25,6 +26,8 @@ import {
 	recencyScore,
 	relevanceHits,
 	tokenize,
+	formatEntriesDirectoryCapped,
+	DEFAULT_DIRECTORY_LINES,
 } from "../src/inject.js";
 
 function entry(overrides: Partial<HarnessEntry> & { id: string; kind: HarnessEntry["kind"]; title: string }): HarnessEntry {
@@ -572,6 +575,52 @@ describe("entriesSectionText directory integration (B3)", () => {
 			expect(text).not.toContain("Entry Directory");
 		} finally {
 			cleanup(engine);
+		}
+	});
+});
+
+describe("entry directory cap (2026-08-22 throttle)", () => {
+	it("folds directory lines beyond the cap into a counter", () => {
+		const entries = Array.from({ length: 20 }, (_, i) =>
+			entry({ id: `mem_${i}`, kind: "memory", title: `Memory ${i}` }),
+		);
+		const text = formatEntriesDirectoryCapped(5, entries);
+		const lines = text.split("\n");
+		expect(lines.some((l) => l.startsWith("- [memory:mem_"))).toBe(true);
+		expect(lines.filter((l) => l.startsWith("- [")).length).toBe(5);
+		expect(text).toContain("and 15 more entries");
+	});
+
+	it("keeps the legacy unlimited helper delegating to the default cap", () => {
+		const entries = Array.from({ length: 20 }, (_, i) =>
+			entry({ id: `mem_${i}`, kind: "memory", title: `Memory ${i}` }),
+		);
+		expect(formatEntriesDirectory(...[entries])).toBe(formatEntriesDirectoryCapped(DEFAULT_DIRECTORY_LINES, entries));
+	});
+});
+
+describe("all-kind usage recording with session dedup (2026-08-22)", () => {
+	it("counts memory and skill directory impressions once per session", () => {
+		const engine = makeEngine();
+		try {
+			saveState(engine, "global", undefined, stateWith([
+				entry({ id: "note", kind: "prompt", title: "Prompt note" }),
+				entry({ id: "fact", kind: "memory", title: "Durable fact" }),
+				entry({ id: "proc", kind: "skill", title: "Procedure" }),
+			]));
+			const agent = { id: "session-u1" };
+			entriesSectionText(engine, agent);
+			entriesSectionText(engine, agent); // same session again
+			let store = loadUsage(engine.baseDir);
+			expect(store.counts["prompt:note"]).toBe(1);
+			expect(store.counts["memory:fact"]).toBe(1);
+			expect(store.counts["skill:proc"]).toBe(1);
+
+			entriesSectionText(engine, { id: "session-u2" });
+			store = loadUsage(engine.baseDir);
+			expect(store.counts["memory:fact"]).toBe(2);
+		} finally {
+			cleanup(engine as ReturnType<typeof createEvolutionEngine> & { _dir: string });
 		}
 	});
 });

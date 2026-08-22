@@ -134,6 +134,20 @@ function withDir(fn: (harness: ReturnType<typeof commandHarness>) => Promise<voi
 	};
 }
 
+
+/** Seed one GLOBAL entry and return its id (for demote tests). */
+function seedGlobal(harness: ReturnType<typeof commandHarness>): string {
+	const result = harness.engine.apply("global", undefined, {
+		summary: "seed global",
+		rationale: "test",
+		expectedOutcome: "one global memory",
+		edits: [{ action: "create", kind: "memory", title: "global noise", content: "cross-project noise entry" }],
+	}, { scope: "global" });
+	const applied = result.appliedEdits.find((e) => e.applied);
+	if (!applied?.id) throw new Error("global seed failed");
+	return applied.id;
+}
+
 async function seedMemory(harness: ReturnType<typeof commandHarness>): Promise<{ entryId: string; refinementId: string }> {
 	const result = harness.engine.apply("local", "session-cmd", {
 		summary: "seed",
@@ -344,5 +358,29 @@ describe("executeEvolveCommand — plan", () => {
 		const result = await h.run("plan write it down");
 		expect(result.kind).toBe("error");
 		expect(result.text.length).toBeGreaterThan(0);
+	}));
+});
+
+describe("executeEvolveCommand — demote (2026-08-22)", () => {
+	it("archives a global entry in place and reports the restore path", withDir(async (h) => {
+		const id = seedGlobal(h);
+		const demoted = await h.run(`demote ${id}`);
+		expect(demoted.kind).toBe("success");
+		expect(demoted.text).toContain(`demoted memory:${id} from the global store`);
+		const entry = h.engine.load("global").entries.memory[id];
+		expect(entry?.metadata[ARCHIVED_AT_KEY]).toBeTruthy(); // data kept
+	}));
+
+	it("falls back to the local store when global lacks the id", withDir(async (h) => {
+		await seedMemory(h);
+		const demoted = await h.run("demote seed_entry");
+		expect(demoted.kind).toBe("success");
+		expect(demoted.text).toContain("from the local store");
+	}));
+
+	it("errors when the id exists nowhere", withDir(async (h) => {
+		const missing = await h.run("demote nope");
+		expect(missing.kind).toBe("error");
+		expect(missing.text).toContain("not found in the global or local store");
 	}));
 });

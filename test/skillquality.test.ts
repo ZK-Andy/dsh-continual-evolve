@@ -182,7 +182,9 @@ describe("validateRenderedSkillMarkdown", () => {
 	});
 
 	it("rejects a missing description", () => {
-		const md = renderSkillMarkdown(skillEntry({ title: "" }));
+		// Renderer falls back to a content routing hint; with neither title nor
+		// content there is nothing to route on and the description stays empty.
+		const md = renderSkillMarkdown(skillEntry({ title: "", content: "" }));
 		const problems = validateRenderedSkillMarkdown(md);
 		expect(problems.join(" ")).toMatch(/requires non-empty `description`/);
 	});

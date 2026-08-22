@@ -41,7 +41,13 @@ export function applyRefinementProposal(
 	const now = new Date().toISOString();
 
 	for (const edit of proposal.edits) {
-		const computedId = edit.id ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
+		// Store-prefix hygiene: planner edits are written against the MERGED
+		// view, where colliding local ids carry a `local:` / `global:` prefix.
+		// A CREATE must never bake that view prefix into a permanent id
+		// (observed: global entries literally named "local:handoff_todo_…").
+		// Updates/deletes keep the raw id — they address existing entries.
+		const requestedId = edit.action === "create" ? edit.id?.replace(/^(?:local|global):/, "") : edit.id;
+		const computedId = requestedId ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
 		const id = computedId ?? "";
 		const validationError = validateEdit(edit, computedId, options.scope);
 		if (validationError) {

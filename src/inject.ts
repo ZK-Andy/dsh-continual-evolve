@@ -256,23 +256,52 @@ export function formatSubagentSpecsSection(entries: readonly HarnessEntry[], que
  * the model a zero-cost overview of what exists so it can ask for full text
  * via `evolve_list` or `/evolve list`. The directory is appended after the
  * curated top-N injection sections and adds minimal tokens.
+ *
+ * 2026-08-22 throttle: the directory is CAPPED at {@link DEFAULT_DIRECTORY_LINES}
+ * lines (oldest-sorted stable order) with the remainder folded into a single
+ * counter line — an uncapped directory across a polluted global store was
+ * measured at ~2K chars of every build in every project.
  */
+export const DEFAULT_DIRECTORY_LINES = 15;
+
+/** How many of the variadic arrays are content-section kinds (prompt, subagent). */
+const CONTENT_SECTION_KINDS = 2;
+
 export function formatEntriesDirectory(
+	...kindEntries: readonly HarnessEntry[][]
+): string {
+	return formatEntriesDirectoryCapped(DEFAULT_DIRECTORY_LINES, ...kindEntries);
+}
+
+/** {@link formatEntriesDirectory} with an explicit cap (configurable). */
+export function formatEntriesDirectoryCapped(
+	maxLines: number,
 	...kindEntries: readonly HarnessEntry[][]
 ): string {
 	const allEntries = kindEntries.flat().filter((e) => !isArchived(e));
 	if (allEntries.length === 0) {
 		return "";
 	}
-	// Skip the directory when it would be redundant (all entries already shown
-	// in the curated sections above — 6/kind cap means ≤6 entries total).
-	const totalCapped = kindEntries.reduce((sum, entries) => sum + Math.min(entries.filter((e) => !isArchived(e)).length, MAX_INJECTED_ENTRIES_PER_KIND), 0);
-	if (allEntries.length <= totalCapped) {
+	// Skip the directory only when EVERY entry is already content-visible.
+	// Only the first two arrays (prompt, subagent) have curated sections —
+	// memories and skills have NO content injection, so they are invisible
+	// unless the directory lists them (pre-2026-08-22 the redundancy check
+	// wrongly counted them as "already shown", hiding small stores entirely).
+	const contentVisible = kindEntries
+		.slice(0, CONTENT_SECTION_KINDS)
+		.reduce((sum, entries) => sum + Math.min(entries.filter((e) => !isArchived(e)).length, MAX_INJECTED_ENTRIES_PER_KIND), 0);
+	if (allEntries.length <= contentVisible) {
 		return "";
 	}
+	const sorted = [...allEntries].sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
 	const lines = ["# Continual Harness — Entry Directory", "All entries (use evolve_list for full text of any entry):"];
-	for (const entry of allEntries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`))) {
+	const shown = sorted.slice(0, Math.max(maxLines, 1));
+	for (const entry of shown) {
 		lines.push(`- [${entry.kind}:${entry.id}] ${entry.title}`);
+	}
+	const hidden = sorted.length - shown.length;
+	if (hidden > 0) {
+		lines.push(`- …and ${hidden} more entries (evolve_list for the full index)`);
 	}
 	return lines.join("\n");
 }
@@ -306,8 +335,18 @@ export function nearestLocalStateWithEntries(engine: EvolutionEngine, agent: Age
  * (relevance first, then recency; see {@link rankEntries}). Returns "" when
  * nothing is injectable — the prompt renderer then drops the section, so an
  * empty store adds zero tokens to every assembly.
+ *
+ * `opts.directoryLines` caps the entry-directory index (2026-08-22 throttle).
+ * Usage recording covers ALL kinds — memories and skills appear as directory
+ * lines, prompts/subagents as content — and is deduped per session so the
+ * counts read "how many sessions saw this", not "how many prompt builds".
  */
-export function entriesSectionText(engine: EvolutionEngine, agent: AgentLike | undefined, query?: string): string {
+export function entriesSectionText(
+	engine: EvolutionEngine,
+	agent: AgentLike | undefined,
+	query?: string,
+	opts?: { directoryLines?: number },
+): string {
 	if (!agent) {
 		return "";
 	}
@@ -321,35 +360,49 @@ export function entriesSectionText(engine: EvolutionEngine, agent: AgentLike | u
 	// Build injected text and collect which entries were included (gap B1).
 	const promptText = formatPromptEntriesSection(promptEntries, relevanceQuery);
 	const subagentText = formatSubagentSpecsSection(subagentEntries, relevanceQuery);
-	const injectedKeys: string[] = [];
+	const injectedKeys = new Set<string>();
 
 	// Collect keys from the visible (ranked, capped) entries that actually appear.
 	const visiblePrompt = promptEntries.filter((e) => !isArchived(e));
 	const visibleSubagent = subagentEntries.filter((e) => !isArchived(e));
 	for (const entry of rankEntries(visiblePrompt, relevanceQuery).slice(0, MAX_INJECTED_ENTRIES_PER_KIND)) {
-		injectedKeys.push(`prompt:${entry.id}`);
+		injectedKeys.add(`prompt:${entry.id}`);
 	}
 	for (const entry of rankEntries(visibleSubagent, relevanceQuery).slice(0, MAX_INJECTED_ENTRIES_PER_KIND)) {
-		injectedKeys.push(`subagent:${entry.id}`);
-	}
-
-	// Record usage durably (best-effort: failure never blocks injection).
-	if (injectedKeys.length > 0) {
-		try {
-			recordInjection(engine.baseDir, injectedKeys);
-		} catch {
-			// Usage recording is diagnostic; never interrupt the injection path.
-		}
+		injectedKeys.add(`subagent:${entry.id}`);
 	}
 
 	// Gap B3: lightweight directory of ALL entries (id+title, one line each).
 	// Zero-cost index so the model knows what exists and can ask for full text.
-	const directoryText = formatEntriesDirectory(
+	const directoryText = formatEntriesDirectoryCapped(
+		opts?.directoryLines ?? DEFAULT_DIRECTORY_LINES,
 		Object.values(merged.entries.prompt),
 		Object.values(merged.entries.memory),
 		Object.values(merged.entries.skill),
 		Object.values(merged.entries.subagent),
 	);
+
+	// Directory-visible keys count too: a memory's injection IS its directory
+	// line. Set semantics keep content-injected entries single-counted.
+	for (const kind of ["prompt", "memory", "skill", "subagent"] as const) {
+		for (const entry of Object.values(merged.entries[kind])) {
+			if (isArchived(entry)) continue;
+			const key = `${kind}:${entry.id}`;
+			if (injectedKeys.has(key) || directoryText.includes(`[${key}]`)) {
+				injectedKeys.add(key);
+			}
+		}
+	}
+
+	// Record usage durably (best-effort: failure never blocks injection).
+	// Deduped per session — see recordInjection.
+	if (injectedKeys.size > 0) {
+		try {
+			recordInjection(engine.baseDir, [...injectedKeys], agent.id);
+		} catch {
+			// Usage recording is diagnostic; never interrupt the injection path.
+		}
+	}
 
 	const parts = [promptText, subagentText, directoryText].filter((part) => part.length > 0);
 	return parts.join("\n\n");

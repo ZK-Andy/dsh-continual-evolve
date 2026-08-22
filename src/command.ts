@@ -21,6 +21,7 @@ import { executeGoalCommand } from "./goal-command.js";
 import { executeMountCommand, executeUnmountCommand } from "./mount-command.js";
 import { executeBenchmarkCommand } from "./benchmark-command.js";
 import { executeWrapupCommand } from "./wrapup-command.js";
+import type { PromotionPolicy } from "./promotion.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
@@ -32,6 +33,7 @@ const USAGE = `Usage:
                            to the global store (approval required), archive one-offs
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
+  /evolve demote <id>             hide a (global) entry from injection, keep data
   /evolve log [tail N]            show the recent plugin log (default 50 lines)
   /evolve failures               aggregated failure counts (gate + benchmark, by class)
   /evolve export [global] <path>  backup a store to a JSON file
@@ -51,6 +53,8 @@ export interface CommandRuntimeOptions {
 	rubricKey: Buffer;
 	/** When a benchmark decision rejects a candidate, roll the refinement back automatically. */
 	autoRollbackOnReject: boolean;
+	/** Mechanical promotion guards for wrapup/fate (2026-08-22 policy). */
+	promotionPolicy: PromotionPolicy;
 }
 
 export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
@@ -170,11 +174,15 @@ async function executeEvolveCommand(
 				return success(renderResult(result));
 			}
 			case "archive":
-			case "unarchive": {
+			case "unarchive":
+			case "demote": {
 				const { scope, rest: after } = scopeArg(rest);
 				const id = stripAngleBrackets(after[0] ?? "");
 				if (!id) {
 					return error(`${sub} requires an entry id.\n${USAGE}`);
+				}
+				if (sub === "demote") {
+					return demoteEntry(engine, id, sessionId);
 				}
 				const state = engine.load(scope, sessionId);
 				const found = findEntryById(state, id);
@@ -330,7 +338,7 @@ async function executeEvolveCommand(
 				return success(renderResult(result));
 			}
 			case "wrapup": {
-				return await executeWrapupCommand(ctx, engine, invocation);
+				return await executeWrapupCommand(ctx, engine, invocation, runtime.promotionPolicy);
 			}
 			case "goal": {
 				return executeGoalCommand(ctx, invocation, rest);
@@ -352,8 +360,45 @@ async function executeEvolveCommand(
 	}
 }
 
-function renderResult(result: RefinementResult): string {
-	const applied = result.appliedEdits.filter((e) => e.applied);
+/**
+ * Demote (2026-08-22): hide an entry from injection WITHOUT deleting it —
+ * the one-command remedy for global-store pollution. Searches the global
+ * store first (the primary target: cross-project noise), then the session's
+ * local store. The data stays; `/evolve unarchive` restores it.
+ */
+function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string): CommandResult {
+	for (const scope of ["global", "local"] as const) {
+		const state = engine.load(scope, sessionId);
+		const found = findEntryById(state, id);
+		if (!found) continue;
+		const [kind, entry] = found;
+		const result = engine.apply(
+			scope,
+			sessionId,
+			{
+				summary: `demote: archive ${kind}:${id} from the ${scope} store`,
+				rationale: "Human-invoked demote via the /evolve command.",
+				expectedOutcome: "The entry is hidden from injection in every scope it touched; data is kept and restorable.",
+				edits: [
+					{
+						action: "update",
+						kind,
+						id,
+						title: entry.title,
+						content: entry.content,
+						metadata: { ...entry.metadata, [ARCHIVED_AT_KEY]: new Date().toISOString() },
+					},
+				],
+			},
+			{ scope },
+		);
+		const restoreScope = scope === "global" ? " global" : "";
+		return success(`demoted ${kind}:${id} from the ${scope} store (archived — restore with /evolve unarchive ${id}${restoreScope})\n${renderResult(result)}`);
+	}
+	return error(`entry ${id} not found in the global or local store`);
+}
+
+function renderResult(result: RefinementResult): string {	const applied = result.appliedEdits.filter((e) => e.applied);
 	const failed = result.appliedEdits.filter((e) => !e.applied);
 	const lines = [
 		`refinement ${result.id}${result.rollbackOf ? ` (rollback of ${result.rollbackOf})` : ""}: ${applied.length} applied, ${failed.length} failed`,

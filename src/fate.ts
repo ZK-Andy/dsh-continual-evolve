@@ -35,6 +35,7 @@ import type { HarnessState, RefinementProposal, RefinementResult } from "./types
 import type { EvolutionEngine } from "./service.js";
 import type { AutoRefineReason } from "./review.js";
 import type { AutoReviewConfig, GateState, ReviewRecord } from "./auto.js";
+import { DEFAULT_PROMOTION_POLICY, type PromotionPolicy } from "./promotion.js";
 import { questionServiceOf } from "./approval.js";
 import {
 	assessLocalEntries,
@@ -80,9 +81,10 @@ export function planLocalFates(
 	items: readonly WrapupItem[],
 	candidates: readonly WrapupCandidate[],
 	globalState: HarnessState,
+	policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
 ): FatePlan {
 	const byKey = new Map(candidates.map((candidate) => [candidateKey(candidate.kind, candidate.id), candidate]));
-	const { promotable, skipped } = filterPromotable(items, globalState, candidates);
+	const { promotable, skipped } = filterPromotable(items, globalState, candidates, policy);
 	const promoteItems = promotable.filter((item) => item.verdict === "promote");
 	const archiveItems = items.filter((item) => item.verdict === "archive");
 	const splits: { item: WrapupItem; candidate: WrapupCandidate }[] = [];
@@ -94,7 +96,7 @@ export function planLocalFates(
 			splitSkipped.push({ key: item.key, reason: "not in the audited candidate list" });
 			continue;
 		}
-		const blocked = splitPromoteBlocked(item, globalState, candidate.kind);
+		const blocked = splitPromoteBlocked(item, globalState, candidate.kind, policy);
 		if (blocked) {
 			splitSkipped.push({ key: item.key, reason: blocked });
 			continue;
@@ -331,7 +333,7 @@ export async function runLocalFatePhase(
 		});
 		return;
 	}
-	const plan = planLocalFates(assessment.items, candidates, globalState);
+	const plan = planLocalFates(assessment.items, candidates, globalState, config.promotionPolicy);
 	const needsDialog = plan.promotable.length + plan.splits.length + plan.reviewArchives.length > 0;
 
 	let consent: FateConsultResult = { approved: false, asked: false, reason: "nothing-to-ask" };

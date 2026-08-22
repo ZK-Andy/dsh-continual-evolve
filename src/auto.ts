@@ -31,6 +31,7 @@ import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
 import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
+import type { PromotionPolicy } from "./promotion.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -67,6 +68,11 @@ export interface AutoReviewConfig {
 	 * proposal then follows the normal fate cooldown.
 	 */
 	goalBlockedWrapupTurns: number;
+	/**
+	 * Promotion policy (2026-08-22): mechanical promote guards applied by the
+	 * local-fate dimension before anything reaches the global store.
+	 */
+	promotionPolicy: PromotionPolicy;
 }
 
 export interface GateState {

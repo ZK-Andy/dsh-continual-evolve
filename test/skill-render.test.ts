@@ -88,3 +88,20 @@ describe("renderSkillMarkdown", () => {
 		expect(md.endsWith("\n\n")).toBe(false);
 	});
 });
+
+describe("description routing hint (2026-08-22)", () => {
+	it("appends the first meaningful content line as a use-when hint", () => {
+		const md = renderSkillMarkdown(entry({
+			id: "release_check",
+			kind: "skill",
+			title: "Release check",
+			content: "# Steps\nRun the release checklist before tagging a version.",
+		}));
+		expect(md).toMatch(/description: Release check — use when: Run the release checklist before tagging a version\./);
+	});
+
+	it("falls back to bare content hint when the title is empty", () => {
+		const md = renderSkillMarkdown(entry({ id: "x", kind: "skill", title: "", content: "Only the body speaks." }));
+		expect(md).toContain("description: Only the body speaks.");
+	});
+});
