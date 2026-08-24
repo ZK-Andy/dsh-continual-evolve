@@ -18,6 +18,9 @@ pnpm-debug.log*
 # Publish scratch
 .npm-pack-tmp/
 
+# Code intelligence index (codegraph)
+.codegraph/
+
 # Editor / OS
 .DS_Store
 .idea/
