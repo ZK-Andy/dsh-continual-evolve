@@ -23,6 +23,10 @@ import type { EvolutionEngine } from "./service.js";
 import { mergeHarnessStates } from "./state.js";
 import { entryLine } from "./render.js";
 import { recordInjection } from "./usage.js";
+import { buildRelevanceIndex, relevanceScore, tokenize } from "./search.js";
+
+/** CJK-bigram tokenizer re-exported for ranking consumers (see search.ts). */
+export { tokenize };
 
 /** Prompt sections render at most this many entries per kind. */
 export const MAX_INJECTED_ENTRIES_PER_KIND = 6;
@@ -75,33 +79,6 @@ function stableCompare(a: HarnessEntry, b: HarnessEntry): number {
 }
 
 /**
- * Lowercase tokenization for the keyword relevance scorer: runs of ASCII
- * alphanumerics and CJK characters become tokens (CJK is not split so whole
- * Chinese words/characters stay comparable), everything else is a separator.
- */
-export function tokenize(text: string): string[] {
-	return text
-		.toLowerCase()
-		.split(/[^a-z0-9\u4e00-\u9fff]+/)
-		.filter((token) => token.length > 0);
-}
-
-/**
- * Keyword hit count of `query` tokens inside an entry: title hits weigh 2×,
- * content/path hits 1×. BM25-level relevance without any external service.
- */
-export function relevanceHits(entry: HarnessEntry, query: string): number {
-	const titleTokens = tokenize(entry.title);
-	const bodyTokens = tokenize(`${entry.content} ${entry.path}`);
-	let hits = 0;
-	for (const token of tokenize(query)) {
-		hits += titleTokens.filter((t) => t === token).length * 2;
-		hits += bodyTokens.filter((t) => t === token).length;
-	}
-	return hits;
-}
-
-/**
  * Normalized recency in [0, 1]: 1 when the entry was just updated, decaying
  * linearly to 0 after {@link RECENCY_HALF_LIFE_MS}. Unparseable timestamps
  * score 0 (never preferred over a timestamped entry).
@@ -120,20 +97,34 @@ export function recencyScore(entry: HarnessEntry, now: number): number {
 
 /**
  * Rank entries for injection, best first. With no query the ranking is pure
- * recency (newest first). With a query, any entry with at least one keyword
- * hit outranks every hit-less entry (`hits * 2 + recency <= 1` for the
- * latter), and hits decide the order among relevant entries; recency then
- * breaks remaining ties, and the stable dictionary order is the final
- * tiebreak, so the result is deterministic.
+ * recency (newest first). With a query, entries are scored once against a
+ * per-call BM25 index (CJK bigrams; field-weighted title ×2 — see
+ * search.ts): any entry with a positive score (≥1 matched token) outranks
+ * every hit-less entry (score exactly 0), scores decide the order among
+ * relevant entries, recency breaks remaining ties, and the stable dictionary
+ * order is the final tiebreak, so the result is deterministic. The input is
+ * never mutated.
  */
 export function rankEntries(entries: readonly HarnessEntry[], query?: string, now: number = Date.now()): HarnessEntry[] {
 	const q = (query ?? "").trim();
-	return [...entries].sort((a, b) => {
-		if (q.length > 0) {
-			const relevanceDelta = relevanceHits(b, q) * 2 - relevanceHits(a, q) * 2;
-			if (relevanceDelta !== 0) {
-				return relevanceDelta;
+	if (q.length === 0) {
+		return [...entries].sort((a, b) => {
+			const recencyDelta = recencyScore(b, now) - recencyScore(a, now);
+			if (recencyDelta !== 0) {
+				return recencyDelta;
 			}
+			return stableCompare(a, b);
+		});
+	}
+	// Precompute scores once: the old comparator re-tokenized both sides on
+	// every comparison (O(n log n) tokenizations); one index + one score per
+	// entry turns the pass into table lookups.
+	const index = buildRelevanceIndex(entries);
+	const scores = new Map<HarnessEntry, number>(entries.map((entry) => [entry, relevanceScore(index, entry, q)]));
+	return [...entries].sort((a, b) => {
+		const relevanceDelta = (scores.get(b) ?? 0) - (scores.get(a) ?? 0);
+		if (relevanceDelta !== 0) {
+			return relevanceDelta;
 		}
 		const recencyDelta = recencyScore(b, now) - recencyScore(a, now);
 		if (recencyDelta !== 0) {

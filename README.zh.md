@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-527%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-531%20passing-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
@@ -100,7 +100,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（527 例）
+pnpm test                    # vitest（531 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

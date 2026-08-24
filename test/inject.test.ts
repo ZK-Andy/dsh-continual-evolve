@@ -24,11 +24,11 @@ import {
 	rankEntries,
 	recentUserText,
 	recencyScore,
-	relevanceHits,
 	tokenize,
 	formatEntriesDirectoryCapped,
 	DEFAULT_DIRECTORY_LINES,
 } from "../src/inject.js";
+import { buildRelevanceIndex, relevanceScore } from "../src/search.js";
 
 function entry(overrides: Partial<HarnessEntry> & { id: string; kind: HarnessEntry["kind"]; title: string }): HarnessEntry {
 	return {
@@ -410,16 +410,36 @@ describe("rankEntries", () => {
 	});
 });
 
-describe("tokenize / relevanceHits / recencyScore", () => {
-	it("tokenizes lowercase words and keeps CJK runs intact", () => {
+describe("tokenize / relevanceScore / recencyScore", () => {
+	it("splits ASCII words and CJK runs into overlapping bigrams", () => {
 		expect(tokenize("Run OXlint 记忆 before code!")).toEqual(["run", "oxlint", "记忆", "before", "code"]);
+		expect(tokenize("记忆条目")).toEqual(["记忆", "忆条", "条目"]);
+		expect(tokenize("记")).toEqual(["记"]);
+		expect(tokenize("深色主题dark主题")).toEqual(["深色", "色主", "主题", "dark", "主题"]);
 	});
 
-	it("weighs title hits twice as much as content hits", () => {
+	it("weighs title matches above body matches for the same term", () => {
 		const inTitle = entry({ id: "t", kind: "prompt", title: "Lint first", content: "x" });
-		const inBody = entry({ id: "b", kind: "prompt", title: "Notes", content: "lint everything" });
-		expect(relevanceHits(inTitle, "lint")).toBe(2);
-		expect(relevanceHits(inBody, "lint")).toBe(1);
+		const inBody = entry({ id: "b", kind: "prompt", title: "Notes", content: "lint" });
+		const index = buildRelevanceIndex([inTitle, inBody]);
+		expect(relevanceScore(index, inTitle, "lint")).toBeGreaterThan(relevanceScore(index, inBody, "lint"));
+	});
+
+	it("scores entries with no matching token exactly 0 (relevance-first invariant)", () => {
+		const hit = entry({ id: "hit", kind: "prompt", title: "Lint first", content: "x" });
+		const miss = entry({ id: "miss", kind: "prompt", title: "Baking", content: "oven" });
+		const index = buildRelevanceIndex([hit, miss]);
+		expect(relevanceScore(index, miss, "lint")).toBe(0);
+		expect(relevanceScore(index, hit, "lint")).toBeGreaterThan(0);
+	});
+
+	it("gives distinctive terms more weight than corpus-wide terms (IDF)", () => {
+		const unique = entry({ id: "unique", kind: "prompt", title: "Widget tuning", content: "x" });
+		const commonA = entry({ id: "common-a", kind: "prompt", title: "code notes", content: "x" });
+		const commonB = entry({ id: "common-b", kind: "prompt", title: "more code", content: "x" });
+		const index = buildRelevanceIndex([unique, commonA, commonB]);
+		expect(relevanceScore(index, unique, "widget code")).toBeGreaterThan(relevanceScore(index, commonA, "widget code"));
+		expect(relevanceScore(index, unique, "widget code")).toBeGreaterThan(relevanceScore(index, commonB, "widget code"));
 	});
 
 	it("scores recent entries 1 and decays to 0 after the half life", () => {
@@ -427,6 +447,48 @@ describe("tokenize / relevanceHits / recencyScore", () => {
 		const ancient = entry({ id: "a", kind: "prompt", title: "x", updated_at: "2020-01-01T00:00:00.000Z" });
 		expect(recencyScore(fresh, Date.parse("2026-08-15T00:00:00.000Z"))).toBe(1);
 		expect(recencyScore(ancient, Date.parse("2026-08-15T00:00:00.000Z"))).toBe(0);
+	});
+});
+
+describe("rankEntries CJK recall regression (R1)", () => {
+	const NOW = Date.parse("2026-08-24T00:00:00.000Z");
+
+	it("recalls a Chinese entry through shared bigrams even when wording differs", () => {
+		// Pre-R1 this failed: the whole CJK run 「用户偏好深色主题」 was one
+		// token and never equaled any query token.
+		const cjk = entry({
+			id: "cjk",
+			kind: "memory",
+			title: "用户偏好深色主题",
+			content: "界面配色以深色为主，浅色仅在打印场景使用",
+			updated_at: "2026-07-01T00:00:00.000Z",
+		});
+		const newerUnrelated = entry({
+			id: "unrelated",
+			kind: "memory",
+			title: "烘焙记录",
+			content: "烤箱温度与发酵时长",
+			updated_at: "2026-08-23T00:00:00.000Z",
+		});
+		expect(rankEntries([newerUnrelated, cjk], "深色主题偏好", NOW).map((e) => e.id)).toEqual(["cjk", "unrelated"]);
+	});
+
+	it("recalls reworded English queries through IDF weighting rather than exact run equality only", () => {
+		const lint = entry({
+			id: "lint",
+			kind: "prompt",
+			title: "Lint before writing code",
+			content: "run oxlint on every change",
+			updated_at: "2026-07-01T00:00:00.000Z",
+		});
+		const newerUnrelated = entry({
+			id: "other",
+			kind: "prompt",
+			title: "Release checklist",
+			content: "bump version and tag",
+			updated_at: "2026-08-23T00:00:00.000Z",
+		});
+		expect(rankEntries([newerUnrelated, lint], "linter oxlint", NOW)[0]!.id).toBe("lint");
 	});
 });
 
