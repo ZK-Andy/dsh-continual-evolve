@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-538%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-543%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -20,6 +20,7 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 - **Local scope** per session; **global scope** across sessions with merge semantics — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
 - **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
 - **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
+- **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives
 
 ## How it works
 
@@ -52,6 +53,7 @@ Commands (in-session):
 | `/evolve plan [msg]` | run the LLM planner against the store |
 | `/evolve wrapup` | assess this session's local entries: promote / archive / keep |
 | `/evolve archive · unarchive · demote <id>` | hide from injection (data kept, restorable) — `demote` targets global noise |
+| `/evolve consolidate [apply]` | report (or apply) one batch archive of conflict-hinted + stale zero-use global entries |
 | `/evolve failures` | aggregated failure classes (gate + benchmark) |
 | `/evolve log [tail N] [session <id>]` | plugin log |
 | `/evolve export · import <path>` | backup / restore a store |
@@ -100,7 +102,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (538 tests)
+pnpm test                    # vitest (543 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```

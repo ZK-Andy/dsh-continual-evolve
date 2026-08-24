@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-538%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-543%20passing-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
@@ -20,6 +20,7 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 - **local 会话级 / global 跨会话** 双作用域与合并语义——配合机械化晋升守卫，只有可携带、有分量、非重复的知识才能进全局
 - **确定性回滚**：逆操作编辑由已应用结果生成——不靠 LLM 重新猜测
 - **benchmark 闭环**：候选沉淀先经冻结用例 + 独立评分者评估再接受（rubric 加密落盘）
+- **store 卫生**：`/evolve consolidate` 把写入时冲突提示与零使用陈旧条目变成一次批准、完全可逆的批量归档
 
 ## 工作原理
 
@@ -52,6 +53,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve plan [msg]` | 对 store 运行 LLM 规划器 |
 | `/evolve wrapup` | 收尾本会话 local 条目：晋升 / 归档 / 保留 |
 | `/evolve archive · unarchive · demote <id>` | 从注入中隐藏（数据保留可恢复）——`demote` 针对全局噪声 |
+| `/evolve consolidate [apply]` | 报告（或应用）冲突提示 + 零使用陈旧全局条目的批量归档 |
 | `/evolve failures` | 失败类聚合（门禁 + benchmark） |
 | `/evolve log [tail N] [session <id>]` | 插件日志 |
 | `/evolve export · import <path>` | 备份 / 恢复 store |
@@ -100,7 +102,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（538 例）
+pnpm test                    # vitest（543 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

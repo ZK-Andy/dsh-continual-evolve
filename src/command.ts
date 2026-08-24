@@ -22,6 +22,8 @@ import { executeMountCommand, executeUnmountCommand } from "./mount-command.js";
 import { executeBenchmarkCommand } from "./benchmark-command.js";
 import { executeWrapupCommand } from "./wrapup-command.js";
 import type { PromotionPolicy } from "./promotion.js";
+import { loadUsage } from "./usage.js";
+import { planConsolidation } from "./consolidate.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
@@ -34,6 +36,8 @@ const USAGE = `Usage:
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
   /evolve demote <id>             hide a (global) entry from injection, keep data
+  /evolve consolidate [apply]     report (or apply) a batch archive of conflict-hinted
+                                  and stale zero-use global entries
   /evolve log [tail N]            show the recent plugin log (default 50 lines)
   /evolve failures               aggregated failure counts (gate + benchmark, by class)
   /evolve export [global] <path>  backup a store to a JSON file
@@ -209,6 +213,33 @@ async function executeEvolveCommand(
 					{ scope },
 				);
 				return success(renderResult(result));
+			}
+			case "consolidate": {
+				// R3: deterministic global-store hygiene. Report by default;
+				// `apply` re-scans fresh state and lands the whole batch as ONE
+				// refinement (single snapshot + audit record, fully rollback-able).
+				const apply = rest[0] === "apply";
+				const state = engine.load("global", undefined);
+				const { candidates, edits } = planConsolidation(state, loadUsage(engine.baseDir));
+				if (candidates.length === 0) {
+					return success("global store is already consolidated — no conflict-hinted or stale zero-use entries.");
+				}
+				const report = candidates.map((candidate, index) => `${index + 1}. [${candidate.kind}:${candidate.id}] ${candidate.title}\n   ${candidate.reason}`).join("\n");
+				if (!apply) {
+					return success(`consolidation plan — ${candidates.length} archive candidate(s):\n${report}\n(run "/evolve consolidate apply" to archive all of them in one refinement)`);
+				}
+				const result = engine.apply(
+					"global",
+					undefined,
+					{
+						summary: `Consolidate global store: archive ${candidates.length} entries`,
+						rationale: "Human-invoked batch consolidation via /evolve consolidate apply.",
+						expectedOutcome: "Candidate entries are hidden from injection (data kept; restorable via /evolve unarchive).",
+						edits,
+					},
+					{ scope: "global" },
+				);
+				return success(`${report}\n\napplied:\n${renderResult(result)}`);
 			}
 			case "failures": {
 				// /evolve failures — failure-signature aggregation (D1 observation):
