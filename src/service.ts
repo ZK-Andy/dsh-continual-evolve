@@ -4,11 +4,13 @@
  * accounting, persistence, and result history are enforced in one place.
  */
 import type { EntrySource, HarnessScope, RefinementProposal, RefinementResult } from "./types.js";
+import { CONFLICT_HINT_KEY } from "./types.js";
 import { applyRefinementProposal } from "./apply.js";
 import { randomUUID } from "node:crypto";
 import { rollbackProposal } from "./rollback.js";
 import { loadHarnessState, saveHarnessState } from "./state.js";
 import { appendResult, loadResults, snapshotBefore, storePaths } from "./store.js";
+import { CONFLICT_BLOCK_SCORE, CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry, type SimilarEntryHit } from "./promotion.js";
 
 export interface ApplyContext {
 	scope: HarnessScope;
@@ -34,6 +36,26 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 	function apply(scope: HarnessScope, sessionId: string | undefined, proposal: RefinementProposal, context?: ApplyContext): RefinementResult {
 		const paths = storePaths(baseDir, scope, sessionId);
 		const state = context?.baselineState ?? load(scope, sessionId);
+		// Write-time conflict guard (R2): global creates are checked against
+		// the existing same-kind entries BEFORE any side effect — a
+		// near-duplicate is rejected with an actionable error (evolve_update
+		// instead), a moderate overlap proceeds stamped with
+		// CONFLICT_HINT_KEY. Rollbacks bypass the guard: re-creating an entry
+		// that resembles its successor is the point of rollback. Local scope
+		// is never blocked (scratch space); the wrapup/fate promotion path
+		// already enforces its own overlap policy there.
+		const warnHits = new Map<number, SimilarEntryHit>();
+		if (scope === "global" && !context?.rollbackOf) {
+			for (const [index, edit] of proposal.edits.entries()) {
+				if (edit.action !== "create") continue;
+				const hit = mostSimilarEntry(Object.values(state.entries[edit.kind]), edit.title ?? "", edit.content ?? "", CONFLICT_WARN_SCORE);
+				if (!hit) continue;
+				if (hit.score >= CONFLICT_BLOCK_SCORE) {
+					throw new Error(`create blocked: ${buildConflictNotice(hit)} already lives in the global ${edit.kind} store — use evolve_update on it instead of adding a duplicate`);
+				}
+				warnHits.set(index, hit);
+			}
+		}
 		const id = `evolve_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
 		// Code-enforced snapshot: runs before any mutation, cannot be skipped by the model.
 		snapshotBefore(paths, id);
@@ -44,6 +66,20 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 			...(context?.baselineState ? { baselineState: context.baselineState } : {}),
 			...(context?.rollbackOf ? { rollbackOf: context.rollbackOf } : {}),
 		});
+		// Stamp warn-tier conflicts onto the freshly created entries (both the
+		// live state and the result's after-snapshot stay coherent).
+		for (const [index, hit] of warnHits) {
+			const applied = result.appliedEdits[index];
+			if (!applied?.applied || applied.action !== "create" || !applied.id) continue;
+			const hint = `${applied.kind}:${hit.id}:${hit.score.toFixed(2)}`;
+			const live = state.entries[applied.kind][applied.id];
+			if (live) {
+				live.metadata[CONFLICT_HINT_KEY] = hint;
+				if (applied.after) {
+					applied.after.metadata[CONFLICT_HINT_KEY] = hint;
+				}
+			}
+		}
 		saveHarnessState(paths.stateDir, state);
 		appendResult(paths, result);
 		hooks.onApplied?.(result);

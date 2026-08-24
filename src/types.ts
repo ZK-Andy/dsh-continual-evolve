@@ -68,6 +68,15 @@ export const PROMOTED_AT_KEY = "promotedAt";
 export const SOURCED_FROM_KEY = "sourcedFromLocal";
 
 /**
+ * Metadata key stamped on a GLOBAL entry that was created despite a
+ * moderate-similarity overlap with an existing entry (write-time conflict
+ * guard, warn tier): `<kind>:<id>:<score>` — points at the entry it may
+ * duplicate so wrapup/fate can consolidate later. Creates at/above the block
+ * threshold never reach this stamp; they are rejected outright.
+ */
+export const CONFLICT_HINT_KEY = "conflictHint";
+
+/**
  * True when the entry is archived (hidden from injection, restorable).
  * Absent or empty archivedAt means the entry is active.
  */

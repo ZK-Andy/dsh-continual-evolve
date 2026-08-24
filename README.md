@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-531%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-538%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -24,7 +24,7 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 ## How it works
 
 1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from the session trajectory (turn-interval + compaction checkpoints).
-2. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection keep the global store clean).
+2. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection keep the global store clean). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
 3. **Approve** — global writes require explicit human approval; local-fate proposals are consulted before they land.
 4. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, zero tokens when empty); memories/skills appear as a capped directory index.
 5. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically.
@@ -100,7 +100,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (531 tests)
+pnpm test                    # vitest (538 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```

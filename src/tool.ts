@@ -9,6 +9,7 @@ import type { HarnessScope, RefinementEdit, RefinementKind } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt } from "./render.js";
 import { requireGlobalApproval } from "./approval.js";
+import { CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry } from "./promotion.js";
 import { entrySourceOf } from "./source.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
@@ -100,7 +101,13 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 			execute: async (args, exec) => {
 				const scope = scopeOf(args.global, "local");
 				if (scope === "global" && opts.requireGlobalApproval) {
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_add ${args.kind} "${args.title}" → 跨会话全局 store`);
+					// Informed approval: surface a similarity hit against the
+					// existing global store BEFORE the human decides — the
+					// engine's write-time guard still has the final say.
+					const globalState = engine.load("global", undefined);
+					const hit = mostSimilarEntry(Object.values(globalState.entries[args.kind as RefinementKind]), args.title ?? "", args.content ?? "", CONFLICT_WARN_SCORE);
+					const conflictNote = hit ? ` ⚠️ ${buildConflictNotice(hit)}——建议改用 evolve_update` : "";
+					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_add ${args.kind} "${args.title}" → 跨会话全局 store${conflictNote}`);
 				}
 				const edit: RefinementEdit = {
 					action: "create",

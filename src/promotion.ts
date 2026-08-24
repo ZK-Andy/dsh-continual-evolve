@@ -14,7 +14,7 @@
  * Pure functions only — the callers (wrapup command, gate local-fate phase)
  * supply the resolved {@link PromotionPolicy}.
  */
-import type { HarnessState, RefinementKind } from "./types.js";
+import type { HarnessEntry, HarnessState, RefinementKind } from "./types.js";
 import { isArchived } from "./types.js";
 
 /** Regex sources that mark content as project-scoped (never global). */
@@ -38,6 +38,17 @@ export const DEFAULT_PROMOTION_POLICY: PromotionPolicy = {
 	minPromoteChars: 100,
 	maxContentOverlap: 0.6,
 };
+
+/**
+ * Write-time conflict guard (R2): a global create whose similarity against an
+ * existing same-kind entry reaches this score is rejected outright — a
+ * near-duplicate adds zero information and the model should evolve_update
+ * the existing entry instead.
+ */
+export const CONFLICT_BLOCK_SCORE = 0.8;
+
+/** Similarity at/above this stamps {@link CONFLICT_HINT_KEY} but lets the write proceed. */
+export const CONFLICT_WARN_SCORE = 0.5;
 
 /**
  * Build a policy from config values (schemastery strings compiled here so
@@ -125,9 +136,40 @@ export interface SimilarEntryHit {
 }
 
 /**
+ * Human/LLM-readable description of a similarity hit, shared by the block
+ * error and the approval-question suffix so both surfaces explain the same
+ * way.
+ */
+export function buildConflictNotice(hit: SimilarEntryHit): string {
+	return `near-duplicate of ${hit.id} 「${hit.title}」 (similarity ${Math.round(hit.score * 100)}%)`;
+}
+
+/**
+ * The most similar entry of the list, above `minScore`. Title and content
+ * both feed the comparison (titles are short; content carries the real
+ * signal). Generic form of {@link mostSimilarGlobalEntry} — callers decide
+ * which corpus (global store, merged view) the candidates come from.
+ */
+export function mostSimilarEntry(
+	entries: readonly HarnessEntry[],
+	title: string,
+	content: string,
+	minScore: number,
+): SimilarEntryHit | undefined {
+	let best: SimilarEntryHit | undefined;
+	for (const other of entries) {
+		if (isArchived(other)) continue;
+		const score = Math.max(contentOverlap(title, other.title), contentOverlap(content, other.content));
+		if (score >= minScore && (best === undefined || score > best.score)) {
+			best = { id: other.id, title: other.title, score };
+		}
+	}
+	return best;
+}
+
+/**
  * The most similar non-archived global entry of the same kind, above the
- * policy threshold. Title and content both feed the comparison (titles are
- * short; content carries the real signal).
+ * policy threshold.
  */
 export function mostSimilarGlobalEntry(
 	globalState: HarnessState,
@@ -136,13 +178,5 @@ export function mostSimilarGlobalEntry(
 	content: string,
 	policy: PromotionPolicy,
 ): SimilarEntryHit | undefined {
-	let best: SimilarEntryHit | undefined;
-	for (const other of Object.values(globalState.entries[kind])) {
-		if (isArchived(other)) continue;
-		const score = Math.max(contentOverlap(title, other.title), contentOverlap(content, other.content));
-		if (score >= policy.maxContentOverlap && (best === undefined || score > best.score)) {
-			best = { id: other.id, title: other.title, score };
-		}
-	}
-	return best;
+	return mostSimilarEntry(Object.values(globalState.entries[kind]), title, content, policy.maxContentOverlap);
 }
