@@ -13,14 +13,16 @@ if [[ -x scripts/change-scope.sh ]]; then
 fi
 
 # 仅当 src/** 或 test/** 有变更时才跑 TS 工程链；否则跳过以省时（CI 仍会全量矩阵）
+# 直调 node_modules/.bin 而非 pnpm run：pnpm 的 deps-status 检查要开其 store 的
+# sqlite（只读 /home 下必炸，2026-08-24 实证），二进制直调语义等价且无此依赖。
 CHANGED="$(git diff --name-only HEAD 2>/dev/null || true; git diff --cached --name-only 2>/dev/null || true)"
 if echo "$CHANGED" | grep -qE "^(src|test)/"; then
-  echo "-> pnpm typecheck"
-  pnpm typecheck
-  echo "-> pnpm lint"
-  pnpm lint
-  echo "-> pnpm test"
-  pnpm test
+  echo "-> typecheck (tsc)"
+  ./node_modules/.bin/tsc -p tsconfig.json --noEmit
+  echo "-> lint (oxlint)"
+  ./node_modules/.bin/oxlint --config .oxlintrc.json src test
+  echo "-> test (vitest)"
+  ./node_modules/.bin/vitest run
 else
   echo "src/test 无变更，跳过 typecheck/lint/test（CI 仍会全量）"
 fi
