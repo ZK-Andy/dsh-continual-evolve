@@ -8,6 +8,14 @@ DeepSeek Harness 的持续自我进化插件：从会话轨迹中提炼**版本�
 - 每次动手前说清变更范围；**非平凡变更必须同变更携带 Agent Note（ADR）**（见 `.agents/notes/README.md`）。改行为、架构、跨模块契约、状态/wire 格式、流程者皆属非平凡；纯机械、局部编辑豁免。
 - 讨论与取舍落成 ADR，不散在会话里；ADR 强制 `## Alternatives considered`。
 
+## 流程卡（索引）
+
+会话与开发流程按卡执行：
+
+- [session-modes](.agents/workflows/session-modes.md)——模式契约：讨论/调研/实现/发布的许可边界；**会话开场必须声明模式**
+- [session-open](.agents/workflows/session-open.md) / [session-close](.agents/workflows/session-close.md)——会话开、收尾检查单
+- [feature-flow](.agents/workflows/feature-flow.md) / [release-flow](.agents/workflows/release-flow.md)——开发与发版主链路
+
 ## 文档纪律
 
 - **每个事实只有一个家**：rationale → Agent Notes；使用方法 → README/docs；规则 → 本文件 + 链接。
@@ -23,6 +31,14 @@ DeepSeek Harness 的持续自我进化插件：从会话轨迹中提炼**版本�
 - 测试：vitest（`pnpm test`）；覆盖边界、错误路径、事件顺序、并发；**行为级变更必须配套回归测试**；mock 只用于昂贵/非确定性边界（LLM 调用、时钟）。
 - 构建产物只进 `lib/`（tsc），源码只在 `src/`；不手改 `lib/`。
 
+## GitHub 调研纪律（强制）
+
+调研 GitHub 项目一律 gh CLI；禁以 web 检索开局、禁全量克隆作首选。六步配方见 [.agents/workflows/github-research.md](.agents/workflows/github-research.md)。
+
+## 检索通道路由（强制）
+
+web 检索优先 anysearch 纵向面（zone/tag/params 富参数）；GitHub 归 gh；无纵向诉求的快查可用内置 web_search。路由表见 [.agents/workflows/search-routing.md](.agents/workflows/search-routing.md)。
+
 ## Git 纪律
 
 - 改写历史必须 `--force-with-lease=<branch>:<observed-oid>`；**raw `--force` 永远禁止**；改写后重新审计评审状态。
@@ -35,6 +51,7 @@ pnpm typecheck && pnpm lint && pnpm test   # TS 工程链（vitest + oxlint）
 python3 scripts/verify-adr-format.py       # ADR 头/骨架/状态-目录一致性
 python3 scripts/verify-doc-budgets.py --manifest scripts/doc-budgets.manifest.json  # 字数预算
 python3 scripts/verify-md-links.py         # 相对链接/锚点（skills/ 排除）
+python3 scripts/verify-governance.py       # 治理面快检（与 CI governance.yml 同逻辑）
 scripts/change-scope.sh [<base> <head>]    # 变更范围（评审/push 前置）
 ```
 
