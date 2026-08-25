@@ -185,7 +185,7 @@
 
 **三级阶梯**：
 
-- **L0 约定适配（Phase 0 即用）**：上述文件布局约定——复制即用、零版本耦合
+- **L0 约定适配（Phase 0 即用，installer-first）**：文件布局约定由安装器一条命令物化（`npx <框架名> init --dsh` 式），零版本耦合——手动「搬文件+改路径」不可发布（§9 市场铁律）
 - **L1 技能化增强（Phase 0 后期可选）**：session-open/close、handoff 等流程卡打包为 `.agents/skills/`——skill 目录摘要随会话开场自动注入，触发可靠性高于「AGENTS.md 一句话指向卡片」；仍零代码
 - **L2 插件伴生（自进化阶段才启用）**：外环需要命令面/提示词注入/事件监听时才上 cordis 插件；形态即 dsh-continual-evolve 内核的演进，作为框架可选伴生件推荐安装
 
@@ -194,3 +194,29 @@
 **连带发现（安装器必备组件）**：七张流程卡目前在 dotnet 仓与本仓是两份拷贝，已在漂移轨道上（本仓 release-flow 已含 npm 发版坑位重写）。模板类产品的核心问题是**采用者如何拿到更新**——安装器从第一天起须带升级通道：卡片单一事实源在框架仓并带版本号，升级走 diff 式覆盖＋本地适配保护标记（先例：本仓 verify-md-links 的「勿用模板版覆盖」适配）。
 
 **冷启动产品矩阵**：框架新仓（产品本体：方法论+流程卡+安装器，L0/L1 适配 DSH）；dotnet-deepseek-harness-desktop（参考采用者 #1，C# 栈公开仓）；dsh-continual-evolve（参考采用者 #2，TS 栈＋未来 L2 伴生插件的内核供体）。叙事：「诞生于两个真实开源项目的 AI 协作开发，跨双技术栈验证」。
+
+## 9. 方法论框架竞品快扫：superpowers / Oh-My 系（2026-08-25）
+
+| 项目 | 星数 | 创建 | 定位 | 安装体验 |
+|---|---|---|---|---|
+| obra/superpowers | **277k** | 2025-10 | 完整软件开发方法论（可组合技能+自动触发） | Anthropic **官方插件市场**一行装 + 自建 marketplace；覆盖 14 个 harness（Codex/Cursor/OpenCode/Gemini/Copilot/Devin/Kimi/Hermes/Pi…） |
+| github/spec-kit | 131k | — | Spec 驱动开发工具包 | CLI 一键 |
+| code-yeongyu/oh-my-openagent | 68k | 2025-12 | coding agent harness 配置套件 | `npx lazycodex-ai install` 一行装；多 harness Agent OS 重构中 |
+| bmad-code-org/BMAD-METHOD | 52k | — | 敏捷 AI 驱动开发方法论 | 安装器 |
+| Yeachan-Heo/oh-my-claudecode | 39k | — | Claude Code 多代理编排 | 市场两行装或 `npm i -g` |
+
+健康度：superpowers 24.8k forks、push 至 08-19；OmO 30 贡献者日更。企业服务层已出现（superpowers 背后 primeradiant.com 商业支持 + 可选遥测）。
+
+### 三条市场铁律
+
+1. **安装 = 一行命令**：官方市场 `/plugin install`、`npx xxx install`、`npm i -g`——无任何头部产品要求手动搬文件
+2. **单仓多 manifest 分发**：superpowers 单仓并排 `.claude-plugin/` `.codex-plugin/` `.cursor-plugin/` `.devin-plugin/` `.hermes-plugin/` `.kimi-plugin/` `.opencode/`——一份内容十四个入口，更新走各家市场原生机制（often automatic）
+3. **方法论即自动触发技能**：装完零学习成本，技能按场景自动触发
+
+### 对本项目判断的三个修正
+
+1. **品类是超级红海而非空白**：此前四簇扫描（搜索词锚定自进化/记忆/控制台）漏掉整个「方法论即技能包」品类；该市场已被验证到 GitHub 顶级仓库量级
+2. **Phase 0 改为 installer-first**：安装器升级为第一个交付物（§8.2 L0 已同步修订）；单仓多 manifest 结构直接借鉴，预留未来 `.claude-plugin/` 等 manifest 位
+3. **差异化依然成立且更清晰**：superpowers 技能库（TDD/systematic-debugging/brainstorming/writing-plans/code-review/worktrees）全是英文通用流程且靠模型自觉触发；无人提供中文工程文档治理（ADR/字数预算/taxonomy/HANDOFF）、机器可校验门禁（verify-* 强制层）、决策版本化审计、自进化外环。「工程治理纪律 × 机械门禁 × 一键安装」交集仍空。
+
+风险重估：正面进攻通用方法论必败（277k 网络效应已成）；但方法论分发基础设施（市场/manifest 机制）已成熟，可直接站在上面做差异化内容。
