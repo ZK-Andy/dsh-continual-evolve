@@ -1,6 +1,6 @@
 {
   "name": "dsh-continual-evolve",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Continual self-evolution plugin for DeepSeek Harness: versioned, auditable, rollback-safe harness state (prompt notes, memories, skills, subagent specs) refined from session trajectories.",
   "license": "MIT",
   "repository": {
