@@ -36,8 +36,10 @@ const USAGE = `Usage:
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
   /evolve demote <id>             hide a (global) entry from injection, keep data
-  /evolve consolidate [apply]     report (or apply) a batch archive of conflict-hinted
-                                  and stale zero-use global entries
+  /evolve consolidate [apply] [merge]
+                                  report (or apply) a batch archive of conflict-hinted
+                                  and stale zero-use global entries; "merge" folds
+                                  near-duplicate content into the surviving original
   /evolve log [tail N]            show the recent plugin log (default 50 lines)
   /evolve failures               aggregated failure counts (gate + benchmark, by class)
   /evolve export [global] <path>  backup a store to a JSON file
@@ -218,23 +220,32 @@ async function executeEvolveCommand(
 				// R3: deterministic global-store hygiene. Report by default;
 				// `apply` re-scans fresh state and lands the whole batch as ONE
 				// refinement (single snapshot + audit record, fully rollback-able).
+				// `merge` (P1 反膨胀) additionally merges conflict-pair content
+				// into the surviving original instead of only archiving.
 				const apply = rest[0] === "apply";
+				const merge = rest.includes("merge");
 				const state = engine.load("global", undefined);
-				const { candidates, edits } = planConsolidation(state, loadUsage(engine.baseDir));
+				const { candidates, edits } = planConsolidation(state, loadUsage(engine.baseDir), Date.now(), { mergeDuplicates: merge });
 				if (candidates.length === 0) {
 					return success("global store is already consolidated — no conflict-hinted or stale zero-use entries.");
 				}
-				const report = candidates.map((candidate, index) => `${index + 1}. [${candidate.kind}:${candidate.id}] ${candidate.title}\n   ${candidate.reason}`).join("\n");
+				const mergeCount = merge ? candidates.filter((candidate) => candidate.mergeInto).length : 0;
+				const report = candidates
+					.map((candidate, index) => {
+						const mergeNote = candidate.mergeInto && merge ? ` → 内容并入 ${candidate.mergeInto.id}` : "";
+						return `${index + 1}. [${candidate.kind}:${candidate.id}] ${candidate.title}${mergeNote}\n   ${candidate.reason}`;
+					})
+					.join("\n");
 				if (!apply) {
-					return success(`consolidation plan — ${candidates.length} archive candidate(s):\n${report}\n(run "/evolve consolidate apply" to archive all of them in one refinement)`);
+					return success(`consolidation plan — ${candidates.length} archive candidate(s):\n${report}\n(run "/evolve consolidate apply" to archive all of them in one refinement; add "merge" to fold near-duplicate content into the survivors)`);
 				}
 				const result = engine.apply(
 					"global",
 					undefined,
 					{
-						summary: `Consolidate global store: archive ${candidates.length} entries`,
+						summary: `Consolidate global store: archive ${candidates.length} entries${mergeCount > 0 ? `, merge ${mergeCount} into survivors` : ""}`,
 						rationale: "Human-invoked batch consolidation via /evolve consolidate apply.",
-						expectedOutcome: "Candidate entries are hidden from injection (data kept; restorable via /evolve unarchive).",
+						expectedOutcome: "Candidate entries are hidden from injection (data kept; restorable via /evolve unarchive). Merged survivors carry the near-duplicate content with a mergedFrom provenance stamp.",
 						edits,
 					},
 					{ scope: "global" },

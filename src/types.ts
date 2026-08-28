@@ -85,6 +85,14 @@ export const CONFLICT_HINT_KEY = "conflictHint";
 export const VALENCE_NEGATIVE_KEY = "valenceNegative";
 
 /**
+ * Provenance of entries merged INTO this one by the consolidation command
+ * (P1 反膨胀): array of `<kind>:<id>` — the near-duplicate sources whose
+ * content was appended before they archived. The trail keeps an unarchive of
+ * the source explainable and lets audits find the merge provenance.
+ */
+export const MERGED_FROM_KEY = "mergedFrom";
+
+/**
  * True when the entry is archived (hidden from injection, restorable).
  * Absent or empty archivedAt means the entry is active.
  */

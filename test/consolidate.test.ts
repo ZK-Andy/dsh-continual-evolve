@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessEntry, HarnessState } from "../src/types.js";
-import { ARCHIVED_AT_KEY, CONFLICT_HINT_KEY, emptyHarnessState } from "../src/types.js";
+import { ARCHIVED_AT_KEY, CONFLICT_HINT_KEY, MERGED_FROM_KEY, emptyHarnessState } from "../src/types.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { storePaths } from "../src/store.js";
 import { loadUsage, saveUsage, usageKey } from "../src/usage.js";
@@ -161,6 +161,93 @@ describe("consolidate end-to-end through the engine", () => {
 
 		function isArchivedLike(candidate: HarnessEntry | undefined): boolean {
 			return typeof candidate?.metadata[ARCHIVED_AT_KEY] === "string" && candidate.metadata[ARCHIVED_AT_KEY].length > 0;
+		}
+	});
+});
+
+describe("planConsolidation merge tier (P1 反膨胀)", () => {
+	const MERGE_STATE = () =>
+		seed([
+			entry({ id: "original", kind: "memory", title: "幸存条目", content: "original body" }),
+			entry({ id: "hinted", kind: "memory", title: "重复条目", content: "extra details", metadata: { [CONFLICT_HINT_KEY]: "memory:original:0.66" } }),
+		]);
+
+	it("without mergeDuplicates: archive-only behavior is unchanged", () => {
+		const dir = mkdtempSync(join(tmpdir(), "consolidate-nomerge-"));
+		try {
+			const { candidates, edits } = planConsolidation(MERGE_STATE(), loadUsage(dir), NOW);
+			expect(candidates[0]!.mergeInto).toEqual({ kind: "memory", id: "original", title: "幸存条目" });
+			expect(edits).toHaveLength(1);
+			expect(edits[0]!.id).toBe("hinted");
+			expect(edits[0]!.metadata?.[MERGED_FROM_KEY]).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("with mergeDuplicates: survivor gets the attributed content and mergedFrom stamp", () => {
+		const dir = mkdtempSync(join(tmpdir(), "consolidate-merge-"));
+		try {
+			const { edits } = planConsolidation(MERGE_STATE(), loadUsage(dir), NOW, { mergeDuplicates: true });
+			expect(edits).toHaveLength(2);
+			const mergeEdit = edits.find((edit) => edit.id === "original")!;
+			const archiveEdit = edits.find((edit) => edit.id === "hinted")!;
+			expect(edits[0]!.id).toBe("original"); // merge edit precedes the archive edit
+			expect(archiveEdit.metadata?.[ARCHIVED_AT_KEY]).toBeTruthy();
+			expect(mergeEdit.content).toContain("original body");
+			expect(mergeEdit.content).toContain("[Merged from memory:hinted on 2026-08-24");
+			expect(mergeEdit.content).toContain("extra details");
+			expect(mergeEdit.metadata?.[MERGED_FROM_KEY]).toEqual(["memory:hinted"]);
+			expect(mergeEdit.metadata?.[ARCHIVED_AT_KEY]).toBeUndefined(); // survivor stays active
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("composes two hints into one survivor instead of clobbering", () => {
+		const state = seed([
+			entry({ id: "original", kind: "memory", title: "幸存条目", content: "original body" }),
+			entry({ id: "hintedA", kind: "memory", title: "重复A", content: "detail A", metadata: { [CONFLICT_HINT_KEY]: "memory:original:0.61" } }),
+			entry({ id: "hintedB", kind: "memory", title: "重复B", content: "detail B", metadata: { [CONFLICT_HINT_KEY]: "memory:original:0.58" } }),
+		]);
+		const dir = mkdtempSync(join(tmpdir(), "consolidate-compose-"));
+		try {
+			const { edits } = planConsolidation(state, loadUsage(dir), NOW, { mergeDuplicates: true });
+			expect(edits).toHaveLength(3);
+			const mergeEdit = edits.find((edit) => edit.id === "original")!;
+			expect(mergeEdit.content).toContain("detail A");
+			expect(mergeEdit.content).toContain("detail B");
+			expect(mergeEdit.metadata?.[MERGED_FROM_KEY]).toEqual(["memory:hintedA", "memory:hintedB"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("stale-only candidates never merge (no mergeInto on staleness)", () => {
+		const state = seed([entry({ id: "old", kind: "prompt", title: "old", content: "x", updated_at: "2026-06-01T00:00:00.000Z" })]);
+		const dir = mkdtempSync(join(tmpdir(), "consolidate-staleonly-"));
+		try {
+			const { candidates, edits } = planConsolidation(state, loadUsage(dir), NOW, { mergeDuplicates: true });
+			expect(candidates[0]!.mergeInto).toBeUndefined();
+			expect(edits).toHaveLength(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("applies the merged batch through the engine as one refinement", () => {
+		const dir = mkdtempSync(join(tmpdir(), "consolidate-apply-"));
+		try {
+			saveHarnessState(storePaths(dir, "global", undefined).stateDir, MERGE_STATE());
+			const engine = createEvolutionEngine(dir);
+			const { edits } = planConsolidation(engine.load("global", undefined), loadUsage(dir), NOW, { mergeDuplicates: true });
+			engine.apply("global", undefined, { summary: "merge batch", rationale: "test", expectedOutcome: "merged", edits }, { scope: "global" });
+			const reloaded = loadHarnessState(storePaths(dir, "global", undefined).stateDir, "global");
+			expect(reloaded.entries.memory.original?.content).toContain("extra details");
+			expect(reloaded.entries.memory.original?.metadata[MERGED_FROM_KEY]).toEqual(["memory:hinted"]);
+			expect(typeof reloaded.entries.memory.hinted?.metadata[ARCHIVED_AT_KEY]).toBe("string");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
