@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-543%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-571%20passing-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
@@ -20,15 +20,15 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 - **local 会话级 / global 跨会话** 双作用域与合并语义——配合机械化晋升守卫，只有可携带、有分量、非重复的知识才能进全局
 - **确定性回滚**：逆操作编辑由已应用结果生成——不靠 LLM 重新猜测
 - **benchmark 闭环**：候选沉淀先经冻结用例 + 独立评分者评估再接受（rubric 加密落盘）
-- **store 卫生**：`/evolve consolidate` 把写入时冲突提示与零使用陈旧条目变成一次批准、完全可逆的批量归档
+- **store 卫生**：`/evolve consolidate` 把写入时冲突提示与零使用陈旧条目变成一次批准、完全可逆的批量归档——加 `merge` 可将近重复内容并入幸存原条目
 
 ## 工作原理
 
 1. **沉淀**——模型经 `evolve_add` 创建条目，或自动 review 门禁从会话轨迹提议（回合间隔 + 压缩检查点）。
-2. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测保持全局库干净）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
+2. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 3. **审批**——全局写入需明确人工批准；local 归宿提议先征询后落地。
-4. **应用与注入**——原子应用带快照与审计事件。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、空 store 零 token）；memory/skill 以目录索引出现。
-5. **验证与回滚**——benchmark 用冻结用例为候选打分；被拒候选确定性回滚。
+4. **应用与注入**——原子应用带快照与审计事件。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；memory/skill 以目录索引出现。
+5. **验证与回滚**——benchmark 用冻结用例为候选打分；被拒候选确定性回滚，并自动沉淀为 draft 回归用例（`auto_regression` 基准）。
 
 ## 安装
 
@@ -53,7 +53,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve plan [msg]` | 对 store 运行 LLM 规划器 |
 | `/evolve wrapup` | 收尾本会话 local 条目：晋升 / 归档 / 保留 |
 | `/evolve archive · unarchive · demote <id>` | 从注入中隐藏（数据保留可恢复）——`demote` 针对全局噪声 |
-| `/evolve consolidate [apply]` | 报告（或应用）冲突提示 + 零使用陈旧全局条目的批量归档 |
+| `/evolve consolidate [apply] [merge]` | 报告（或应用）冲突提示 + 零使用陈旧全局条目的批量归档；`merge` 将近重复内容并入幸存原条目 |
 | `/evolve failures` | 失败类聚合（门禁 + benchmark） |
 | `/evolve log [tail N] [session <id>]` | 插件日志 |
 | `/evolve export · import <path>` | 备份 / 恢复 store |
@@ -87,6 +87,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `rubricKey` | 自动生成本地密钥文件 | benchmark rubric 的 AES-256-GCM 口令（`DSH_EVOLVE_RUBRIC_KEY` 可覆盖） |
 | `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | 插件自带 JSONL 文件日志带轮转 |
 | `autoRollbackOnReject` | `true` | benchmark 拒绝后自动确定性回滚 |
+| `autoCase` | `true` | 失败的进化尝试自动沉淀为 draft 回归用例（`auto_regression` 基准） |
 | `reviewModel` | agent 自身 | 门禁可选更便宜的模型（`"provider/model"`） |
 
 profile patch 示例：
@@ -102,7 +103,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（543 例）
+pnpm test                    # vitest（571 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```
@@ -111,12 +112,13 @@ pnpm lint                    # oxlint src test
 
 ```
 ├── src/                   # 引擎、工具、命令、门禁、fate、benchmark、usage…
-├── test/                  # vitest 测试套件（33 个文件）
+├── test/                  # vitest 测试套件（36 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
 │   ├── design.md          # 完整设计文档（硬化矩阵）
 │   ├── FAQ.md             # 真实踩坑记录
 │   ├── gap-analysis.md    # 对照 prime-agent /refine + penguin-harness
+│   ├── research/pi-dsh-competitor-gap-analysis.md  # pi/dsh 生态竞品差距分析
 │   ├── experiment-bootstrap.md
 │   ├── archive/           # 已完结的一次性报告
 │   └── research/          # penguin 报告 + prime-agent 注释源码

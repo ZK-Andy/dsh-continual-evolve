@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-543%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-571%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -20,15 +20,15 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 - **Local scope** per session; **global scope** across sessions with merge semantics — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
 - **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
 - **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
-- **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives
+- **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives — with `merge`, near-duplicate content folds into the surviving original
 
 ## How it works
 
 1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from the session trajectory (turn-interval + compaction checkpoints).
-2. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection keep the global store clean). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
+2. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
 3. **Approve** — global writes require explicit human approval; local-fate proposals are consulted before they land.
-4. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, zero tokens when empty); memories/skills appear as a capped directory index.
-5. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically.
+4. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a capped directory index.
+5. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically and are captured as draft regression cases (`auto_regression` benchmark).
 
 ## Install
 
@@ -53,7 +53,7 @@ Commands (in-session):
 | `/evolve plan [msg]` | run the LLM planner against the store |
 | `/evolve wrapup` | assess this session's local entries: promote / archive / keep |
 | `/evolve archive · unarchive · demote <id>` | hide from injection (data kept, restorable) — `demote` targets global noise |
-| `/evolve consolidate [apply]` | report (or apply) one batch archive of conflict-hinted + stale zero-use global entries |
+| `/evolve consolidate [apply] [merge]` | report (or apply) one batch archive of conflict-hinted + stale zero-use global entries; `merge` folds near-duplicate content into the survivors |
 | `/evolve failures` | aggregated failure classes (gate + benchmark) |
 | `/evolve log [tail N] [session <id>]` | plugin log |
 | `/evolve export · import <path>` | backup / restore a store |
@@ -87,6 +87,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `rubricKey` | auto-generated key file | AES-256-GCM passphrase for benchmark rubrics (`DSH_EVOLVE_RUBRIC_KEY` overrides) |
 | `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | plugin-owned JSONL file log with rotation |
 | `autoRollbackOnReject` | `true` | deterministic rollback after a benchmark rejection |
+| `autoCase` | `true` | failed evolution attempts are captured as draft regression cases (`auto_regression` benchmark) |
 | `reviewModel` | agent's own | optional cheaper model for the gate (`"provider/model"`) |
 
 Example profile patch:
@@ -102,7 +103,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (543 tests)
+pnpm test                    # vitest (571 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -111,12 +112,13 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, gate, fate, benchmark, usage…
-├── test/                  # vitest suites (33 files)
+├── test/                  # vitest suites (36 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)
 │   ├── FAQ.md             # real failure/fix records
 │   ├── gap-analysis.md    # vs prime-agent /refine + penguin-harness
+│   ├── research/pi-dsh-competitor-gap-analysis.md  # pi/dsh ecosystem competitors
 │   ├── experiment-bootstrap.md
 │   ├── archive/           # closed point-in-time reports
 │   └── research/          # penguin report + prime-agent annotated source
