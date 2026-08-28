@@ -18,7 +18,7 @@
  *   summary index, not a duplicate of the store.
  */
 import type { HarnessEntry, HarnessState } from "./types.js";
-import { isArchived } from "./types.js";
+import { isArchived, VALENCE_NEGATIVE_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { mergeHarnessStates } from "./state.js";
 import { entryLine } from "./render.js";
@@ -96,19 +96,36 @@ export function recencyScore(entry: HarnessEntry, now: number): number {
 }
 
 /**
- * Rank entries for injection, best first. With no query the ranking is pure
- * recency (newest first). With a query, entries are scored once against a
- * per-call BM25 index (CJK bigrams; field-weighted title ×2 — see
- * search.ts): any entry with a positive score (≥1 matched token) outranks
- * every hit-less entry (score exactly 0), scores decide the order among
- * relevant entries, recency breaks remaining ties, and the stable dictionary
- * order is the final tiebreak, so the result is deterministic. The input is
- * never mutated.
+ * Negative-valence counter (P1 效价反馈): entries contradicted by later
+ * assessments sink below clean ones at equal relevance/recency — the
+ * behavioral analog of a confidence penalty (pi-continuous-learning's
+ * contradicted −0.15), without inventing a new score axis.
+ */
+function negativeValence(entry: HarnessEntry): number {
+	const value = entry.metadata[VALENCE_NEGATIVE_KEY];
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Rank entries for injection, best first. With no query the ranking is
+ * negative-valence first (contradicted entries last), then pure recency
+ * (newest first). With a query, entries are scored once against a per-call
+ * BM25 index (CJK bigrams; field-weighted title ×2 — see search.ts): any
+ * entry with a positive score (≥1 matched token) outranks every hit-less
+ * entry (score exactly 0), scores decide the order among relevant entries,
+ * the negative-valence counter breaks remaining ties (contradicted entries
+ * sink), recency breaks remaining ties, and the stable dictionary order is
+ * the final tiebreak, so the result is deterministic. The input is never
+ * mutated.
  */
 export function rankEntries(entries: readonly HarnessEntry[], query?: string, now: number = Date.now()): HarnessEntry[] {
 	const q = (query ?? "").trim();
 	if (q.length === 0) {
 		return [...entries].sort((a, b) => {
+			const valenceDelta = negativeValence(a) - negativeValence(b);
+			if (valenceDelta !== 0) {
+				return valenceDelta;
+			}
 			const recencyDelta = recencyScore(b, now) - recencyScore(a, now);
 			if (recencyDelta !== 0) {
 				return recencyDelta;
@@ -125,6 +142,10 @@ export function rankEntries(entries: readonly HarnessEntry[], query?: string, no
 		const relevanceDelta = (scores.get(b) ?? 0) - (scores.get(a) ?? 0);
 		if (relevanceDelta !== 0) {
 			return relevanceDelta;
+		}
+		const valenceDelta = negativeValence(a) - negativeValence(b);
+		if (valenceDelta !== 0) {
+			return valenceDelta;
 		}
 		const recencyDelta = recencyScore(b, now) - recencyScore(a, now);
 		if (recencyDelta !== 0) {

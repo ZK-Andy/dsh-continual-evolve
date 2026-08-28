@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import type { HarnessEntry, HarnessState } from "../src/types.js";
-import { emptyHarnessState } from "../src/types.js";
+import { emptyHarnessState, VALENCE_NEGATIVE_KEY } from "../src/types.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { storePaths } from "../src/store.js";
 import { saveHarnessState } from "../src/state.js";
@@ -371,8 +371,8 @@ describe("entriesSectionText", () => {
 describe("rankEntries", () => {
 	const NOW = Date.parse("2026-08-15T00:00:00.000Z");
 
-	function dated(id: string, updatedAt: string, title = `Note ${id}`, content = "body"): HarnessEntry {
-		return entry({ id, kind: "prompt", title, content, updated_at: updatedAt, created_at: updatedAt });
+	function dated(id: string, updatedAt: string, title = `Note ${id}`, content = "body", metadata: Record<string, unknown> = {}): HarnessEntry {
+		return entry({ id, kind: "prompt", title, content, updated_at: updatedAt, created_at: updatedAt, metadata });
 	}
 
 	it("ranks by recency (newest first) when there is no query", () => {
@@ -407,6 +407,30 @@ describe("rankEntries", () => {
 		const before = entries.map((e) => e.id);
 		rankEntries(entries, undefined, NOW);
 		expect(entries.map((e) => e.id)).toEqual(before);
+	});
+
+	it("sinks negatively-valenced entries below clean ones without a query (P1)", () => {
+		const entries = [
+			dated("contradicted", "2026-08-14T00:00:00.000Z", "Contradicted", "body", { [VALENCE_NEGATIVE_KEY]: 2 }),
+			dated("clean", "2026-07-01T00:00:00.000Z", "Clean", "body"),
+		];
+		expect(rankEntries(entries, undefined, NOW).map((e) => e.id)).toEqual(["clean", "contradicted"]);
+	});
+
+	it("sinks negatively-valenced entries among equally relevant query hits (P1)", () => {
+		const entries = [
+			dated("hit-contradicted", "2026-08-14T00:00:00.000Z", "Lint policy", "run oxlint", { [VALENCE_NEGATIVE_KEY]: 1 }),
+			dated("hit-clean", "2026-07-01T00:00:00.000Z", "Lint rules", "run oxlint"),
+		];
+		expect(rankEntries(entries, "lint", NOW).map((e) => e.id)).toEqual(["hit-clean", "hit-contradicted"]);
+	});
+
+	it("never lets valence override query relevance (relevant contradicted still beats irrelevant)", () => {
+		const entries = [
+			dated("hit-contradicted", "2026-07-01T00:00:00.000Z", "Lint policy", "run oxlint", { [VALENCE_NEGATIVE_KEY]: 3 }),
+			dated("irrelevant", "2026-08-14T00:00:00.000Z", "Baking", "oven temperature"),
+		];
+		expect(rankEntries(entries, "lint", NOW).map((e) => e.id)).toEqual(["hit-contradicted", "irrelevant"]);
 	});
 });
 

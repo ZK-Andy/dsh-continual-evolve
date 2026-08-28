@@ -5,7 +5,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { EvolutionEngine } from "./service.js";
 import { questionServiceOf, requireGlobalApproval } from "./approval.js";
-import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, wholePromoteProposals } from "./wrapup.js";
+import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, valenceStampProposal, wholePromoteProposals } from "./wrapup.js";
 import { DEFAULT_PROMOTION_POLICY, type PromotionPolicy } from "./promotion.js";
 import type { WrapupCandidate, WrapupItem } from "./wrapup.js";
 
@@ -234,6 +234,20 @@ export async function executeWrapupCommand(
 		} else {
 			applied.push(`kept ${item.key} — user declined the archive`);
 		}
+	}
+
+	// 7. Valence stamps (P1 效价反馈): keep-verdict entries the assessor marked
+	//    contradicted get their negative counter bumped — the entry stays live
+	//    but sinks in injection ranking and the next assessment prefers
+	//    archiving it. Deterministic local action, no approval needed.
+	for (const item of keepItems) {
+		if (!item.contradicted) continue;
+		const candidate = byKey.get(item.key);
+		if (!candidate) continue;
+		const proposal = valenceStampProposal(item, candidate);
+		if (!proposal) continue;
+		const result = engine.apply("local", sessionId, proposal, { scope: "local", baselineState: localState });
+		applied.push(`contradicted stamp ${item.key} → valenceNegative=${candidate.negativeCount + 1} (${result.id})`);
 	}
 
 	lines.push(...(applied.length > 0 ? applied : ["(no changes applied — all entries kept)"]));

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createEvolutionEngine } from "../src/service.js";
 import { executeWrapupCommand } from "../src/wrapup-command.js";
-import { PROMOTED_TO_KEY, ARCHIVED_AT_KEY, isArchived } from "../src/types.js";
+import { PROMOTED_TO_KEY, ARCHIVED_AT_KEY, VALENCE_NEGATIVE_KEY, isArchived } from "../src/types.js";
 
 vi.mock("../src/wrapup.js", async (importOriginal) => {
 	const mod = await importOriginal<typeof import("../src/wrapup.js")>();
@@ -271,6 +271,43 @@ describe("executeWrapupCommand", () => {
 			expect(localEntry).toBeDefined();
 			expect(isArchived(localEntry!)).toBe(false);
 			expect(localEntry?.metadata[ARCHIVED_AT_KEY]).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("stamps the negative-valence counter on a keep verdict marked contradicted (P1)", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "keep_1");
+			assessMock.mockResolvedValue({
+				rationale: "user corrected this fact mid-session",
+				items: [{ key: "memory:keep_1", verdict: "keep", reason: "still used but contradicted", contradicted: true }],
+			});
+			const result = await executeWrapupCommand(ctxOf(), engine, invocationOf(agentOf("session-x")));
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("contradicted stamp memory:keep_1 → valenceNegative=1");
+			const localEntry = engine.load("local", "session-x").entries.memory["keep_1"];
+			expect(localEntry?.metadata[VALENCE_NEGATIVE_KEY]).toBe(1);
+			expect(isArchived(localEntry!)).toBe(false);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("does not stamp valence when the contradicted flag is absent", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "keep_1");
+			assessMock.mockResolvedValue({
+				rationale: "keep all",
+				items: [{ key: "memory:keep_1", verdict: "keep", reason: "still relevant" }],
+			});
+			await executeWrapupCommand(ctxOf(), engine, invocationOf(agentOf("session-x")));
+			const localEntry = engine.load("local", "session-x").entries.memory["keep_1"];
+			expect(localEntry?.metadata[VALENCE_NEGATIVE_KEY]).toBeUndefined();
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}

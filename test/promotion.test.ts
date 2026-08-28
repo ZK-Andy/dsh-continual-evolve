@@ -53,6 +53,7 @@ function candidateOf(overrides: Partial<WrapupCandidate> = {}): WrapupCandidate 
 		globalHints: [],
 		injectionCount: 0,
 		stale: false,
+		negativeCount: 0,
 		...overrides,
 	};
 }

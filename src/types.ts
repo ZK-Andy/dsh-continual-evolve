@@ -77,6 +77,14 @@ export const SOURCED_FROM_KEY = "sourcedFromLocal";
 export const CONFLICT_HINT_KEY = "conflictHint";
 
 /**
+ * Negative-valence counter (P1 效价反馈): how many times an assessment marked
+ * this entry contradicted by newer evidence (user correction, overridden
+ * fact). Injection ranking demotes entries with a positive counter and the
+ * wrapup/fate assessors see the count so they prefer archiving the entry.
+ */
+export const VALENCE_NEGATIVE_KEY = "valenceNegative";
+
+/**
  * True when the entry is archived (hidden from injection, restorable).
  * Absent or empty archivedAt means the entry is active.
  */

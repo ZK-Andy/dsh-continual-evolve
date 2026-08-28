@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { HarnessEntry, HarnessState, RefinementKind } from "../src/types.js";
-import { PROMOTED_TO_KEY, emptyHarnessState } from "../src/types.js";
+import { PROMOTED_TO_KEY, VALENCE_NEGATIVE_KEY, emptyHarnessState } from "../src/types.js";
 
 function tmpBase(): string {
 	const base = join(process.cwd(), "test/.tmp");
@@ -23,7 +23,9 @@ import {
 	parseWrapupAssessment,
 	splitArchiveGuards,
 	splitPromoteBlocked,
+	valenceStampProposal,
 	type WrapupCandidate,
+	type WrapupItem,
 } from "../src/wrapup.js";
 
 /** Portable fixture body clearing the promotion floor (>=100 chars). */
@@ -60,6 +62,9 @@ function candidateOf(entry: HarnessEntry, coveredGlobally = false): WrapupCandid
 		metadata: entry.metadata,
 		coveredGlobally,
 		globalHints: [],
+		injectionCount: 0,
+		stale: false,
+		negativeCount: 0,
 	};
 }
 
@@ -225,6 +230,56 @@ describe("parseWrapupAssessment", () => {
 
 	it("throws when the reply is not an object", () => {
 		expect(() => parseWrapupAssessment("[1,2,3]", candidates)).toThrow();
+	});
+});
+
+describe("valence feedback (P1 效价反馈)", () => {
+	it("listLocalCandidates surfaces the negative-valence counter from metadata", () => {
+		const local = emptyHarnessState();
+		local.entries.memory["m1"] = entry("m1", "memory", "Contradicted lesson", {
+			metadata: { [VALENCE_NEGATIVE_KEY]: 2 },
+		});
+		local.entries.memory["m2"] = entry("m2", "memory", "Clean lesson", {
+			metadata: { [VALENCE_NEGATIVE_KEY]: "bogus" },
+		});
+		local.entries.memory["m3"] = entry("m3", "memory", "Fresh lesson");
+		const candidates = listLocalCandidates(local, emptyHarnessState());
+		expect(candidates.find((c) => c.id === "m1")?.negativeCount).toBe(2);
+		expect(candidates.find((c) => c.id === "m2")?.negativeCount).toBe(0);
+		expect(candidates.find((c) => c.id === "m3")?.negativeCount).toBe(0);
+	});
+
+	it("parseWrapupAssessment accepts only an explicit boolean true contradicted flag", () => {
+		const candidates = [
+			candidateOf(entry("m1", "memory", "a")),
+			candidateOf(entry("m2", "memory", "b")),
+			candidateOf(entry("m3", "memory", "c")),
+		];
+		const text = JSON.stringify({
+			items: [
+				{ key: "memory:m1", verdict: "keep", reason: "still referenced", contradicted: true },
+				{ key: "memory:m2", verdict: "keep", reason: "string flag is not a signal", contradicted: "yes" },
+				{ key: "memory:m3", verdict: "keep", reason: "no flag at all" },
+			],
+		});
+		const assessment = parseWrapupAssessment(text, candidates);
+		expect(assessment.items.find((i) => i.key === "memory:m1")?.contradicted).toBe(true);
+		expect(assessment.items.find((i) => i.key === "memory:m2")?.contradicted).toBeUndefined();
+		expect(assessment.items.find((i) => i.key === "memory:m3")?.contradicted).toBeUndefined();
+	});
+
+	it("valenceStampProposal stamps only keep verdicts and bumps the counter", () => {
+		const contradicted: WrapupItem = { key: "memory:m1", verdict: "keep", reason: "user corrected", contradicted: true };
+		const candidate = candidateOf(entry("m1", "memory", "a", { metadata: { [VALENCE_NEGATIVE_KEY]: 1 } }));
+		candidate.negativeCount = 1;
+		const proposal = valenceStampProposal(contradicted, candidate);
+		expect(proposal?.edits[0]?.action).toBe("update");
+		expect(proposal?.edits[0]?.metadata?.[VALENCE_NEGATIVE_KEY]).toBe(2);
+
+		// Archive verdict: the archive already removes the entry from injection.
+		expect(valenceStampProposal({ ...contradicted, verdict: "archive" }, candidate)).toBeUndefined();
+		// Not contradicted: nothing to stamp.
+		expect(valenceStampProposal({ key: "memory:m1", verdict: "keep", reason: "fine" }, candidate)).toBeUndefined();
 	});
 });
 

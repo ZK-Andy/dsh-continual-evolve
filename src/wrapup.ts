@@ -21,7 +21,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessEntry, HarnessState, RefinementKind, RefinementProposal } from "./types.js";
-import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOURCE_SESSION_KEY, SOURCED_FROM_KEY, isArchived } from "./types.js";
+import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOURCE_SESSION_KEY, SOURCED_FROM_KEY, VALENCE_NEGATIVE_KEY, isArchived } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
 import { streamText } from "./llm-text.js";
@@ -48,6 +48,14 @@ export interface WrapupItem {
 		title: string;
 		content: string;
 	};
+	/**
+	 * Valence signal (P1 效价反馈): the assessor found trajectory or global
+	 * evidence contradicting this entry's content (user correction, overridden
+	 * fact). Strictly parsed — only an explicit JSON `true` sets it. Keep
+	 * verdicts with this flag get a negative-valence stamp; the assessor is
+	 * instructed to prefer "archive" for contradicted entries.
+	 */
+	contradicted?: boolean;
 }
 
 /** A real global entry worth showing the assessor for the same topic. */
@@ -98,6 +106,13 @@ export interface WrapupCandidate {
 	 * The assessor is instructed to prefer "archive" for stale entries.
 	 */
 	stale: boolean;
+	/**
+	 * Negative-valence counter (P1 效价反馈): how many prior assessments marked
+	 * this entry contradicted (metadata {@link VALENCE_NEGATIVE_KEY}). Shown to
+	 * the assessor so it can prefer "archive"; also demotes the entry in
+	 * injection ranking (inject.ts rankEntries).
+	 */
+	negativeCount: number;
 }
 
 export function candidateKey(kind: RefinementKind, id: string): string {
@@ -192,6 +207,8 @@ export function listLocalCandidates(state: HarnessState, globalState: HarnessSta
 			if (typeof entry.metadata[PROMOTED_TO_KEY] === "string") continue;
 			const injectionCount = usage ? getUsageCount(usage, kind, entry.id) : 0;
 			const stale = injectionCount === 0 && recencyScore(entry, now) < STALE_RECENCY_THRESHOLD;
+			const rawNegative = entry.metadata[VALENCE_NEGATIVE_KEY];
+			const negativeCount = typeof rawNegative === "number" && Number.isFinite(rawNegative) && rawNegative > 0 ? rawNegative : 0;
 			candidates.push({
 				kind,
 				id: entry.id,
@@ -204,6 +221,7 @@ export function listLocalCandidates(state: HarnessState, globalState: HarnessSta
 				globalHints: globalHintsFor(globalState, kind, entry),
 				injectionCount,
 				stale,
+				negativeCount,
 			});
 		}
 	}
@@ -237,6 +255,9 @@ export function parseWrapupAssessment(text: string, candidates: readonly WrapupC
 			if (!allowed.has(key)) continue;
 			const verdict = item["verdict"] === "promote" || item["verdict"] === "archive" ? item["verdict"] : "keep";
 			const built: WrapupItem = { key, verdict, reason: typeof item["reason"] === "string" ? item["reason"] : "" };
+			if (item["contradicted"] === true) {
+				built.contradicted = true;
+			}
 			if (verdict === "archive" && typeof item["promote"] === "object" && item["promote"] !== null) {
 				const sub = item["promote"] as Record<string, unknown>;
 				const subTitle = typeof sub["title"] === "string" ? sub["title"].trim() : "";
@@ -526,8 +547,35 @@ export function splitPromoteProposals(
 	};
 }
 
-export const WRAPUP_ASSESS_SYSTEM_PROMPT = `You are the /evolve session wrap-up assessor.
+/**
+ * Valence stamp (P1 效价反馈): a keep-verdict item the assessor marked
+ * contradicted gets its negative-valence counter bumped — the entry stays
+ * live but sinks in injection ranking and the next assessment prefers
+ * archiving it. Promotes pass untouched (the human-approved global copy is
+ * the live truth); archives don't need the stamp (they already leave
+ * injection). Undefined when nothing applies.
+ */
+export function valenceStampProposal(item: WrapupItem, candidate: WrapupCandidate): RefinementProposal | undefined {
+	if (item.verdict !== "keep" || !item.contradicted) return undefined;
+	return {
+		summary: `wrapup: stamp contradicted valence on ${item.key} (${candidate.negativeCount + 1})`,
+		rationale: item.reason,
+		expectedOutcome:
+			"The entry's negative-valence counter rises; injection downranks it and the next assessment prefers archiving it.",
+		edits: [
+			{
+				action: "update",
+				kind: candidate.kind,
+				id: candidate.id,
+				title: candidate.title,
+				content: candidate.content,
+				metadata: { ...candidate.metadata, [VALENCE_NEGATIVE_KEY]: candidate.negativeCount + 1 },
+			},
+		],
+	};
+}
 
+export const WRAPUP_ASSESS_SYSTEM_PROMPT = `You are the /evolve session wrap-up assessor.
 A session is ending and its local harness entries need a fate. Classify each
 listed entry exactly once:
 
@@ -537,10 +585,16 @@ listed entry exactly once:
 - "archive" — the content is session-specific task progress, one-off noise,
   superseded or obsolete, or already covered by the global store (note
   "covered globally" in the reason), or stale (old + never injected — note
-  "stale (injectionCount=0, recency low)" in the reason).
+  "stale (injectionCount=0, recency low)" in the reason), or CONTRADICTED —
+  newer evidence in the trajectory or the global store disproves or overrides
+  the entry's content (note what contradicts it in the reason).
 - "keep" — still actively useful to this session, or genuinely uncertain.
 
 Rules:
+- CONTRADICTED: when evidence contradicts an entry, set "contradicted": true
+  on that item (besides the verdict). Entries marked "(contradicted N×
+  before)" were contradicted in earlier assessments — prefer "archive" for
+  them unless you have concrete evidence the content is valid again.
 - When an entry is marked "covered globally" in the listing, prefer "archive"
   or "keep" over "promote" — promoting a duplicate gains nothing.
 - When an entry is marked "stale" (injectionCount=0 and low recency), prefer
@@ -565,7 +619,7 @@ Return JSON only:
   "rationale": "one or two sentences",
   "items": [
     {"key": "memory:foo", "verdict": "promote|archive|keep", "reason": "why"},
-    {"key": "memory:bar", "verdict": "archive", "reason": "why",
+    {"key": "memory:bar", "verdict": "archive", "reason": "why", "contradicted": true,
      "promote": {"title": "cleaned stable title", "content": "cleaned durable part only"}}
   ]
 }
@@ -595,18 +649,19 @@ export async function assessLocalEntries(
 	if (!agent.options.provider || !agent.options.model) {
 		throw new Error("evolve: no provider/model route for the wrap-up assessor");
 	}
-	const candidateText = candidates
-		.map((candidate) => {
-			const key = candidateKey(candidate.kind, candidate.id);
-			const covered = candidate.coveredGlobally ? " (covered globally)" : "";
-			const stale = candidate.stale ? ` (stale: injectionCount=${candidate.injectionCount}, recency low)` : "";
-			const hints =
-				candidate.globalHints.length > 0
-					? ` | global≈${candidate.globalHints.map((hint) => hint.id + ":" + hint.title).join(", ")}`
-					: "";
-			return `- ${key} [${candidate.path}, v${candidate.version}] "${candidate.title}"${covered}${stale}${hints}: ${compactText(candidate.content, 220)}`;
-		})
-		.join("\n");
+		const candidateText = candidates
+			.map((candidate) => {
+				const key = candidateKey(candidate.kind, candidate.id);
+				const covered = candidate.coveredGlobally ? " (covered globally)" : "";
+				const stale = candidate.stale ? ` (stale: injectionCount=${candidate.injectionCount}, recency low)` : "";
+				const negated = candidate.negativeCount > 0 ? ` (contradicted ${candidate.negativeCount}× before)` : "";
+				const hints =
+					candidate.globalHints.length > 0
+						? ` | global≈${candidate.globalHints.map((hint) => hint.id + ":" + hint.title).join(", ")}`
+						: "";
+				return `- ${key} [${candidate.path}, v${candidate.version}] "${candidate.title}"${covered}${stale}${negated}${hints}: ${compactText(candidate.content, 220)}`;
+			})
+			.join("\n");
 	const userPrompt = [
 		`A local session is wrapping up. Classify each entry below for its fate.`,
 		`<local_entries>\n${candidateText}\n</local_entries>`,
