@@ -31,6 +31,7 @@ import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
 import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
+import { captureAutoCase } from "./autocase.js";
 import type { PromotionPolicy } from "./promotion.js";
 
 export interface AutoReviewConfig {
@@ -73,6 +74,14 @@ export interface AutoReviewConfig {
 	 * local-fate dimension before anything reaches the global store.
 	 */
 	promotionPolicy: PromotionPolicy;
+	/**
+	 * P1 auto-case capture: a gate run whose planned edits all failed to get
+	 * consent captures the attempt as a draft regression scaffold in the
+	 * auto-regression container benchmark (never in a user benchmark).
+	 */
+	autoCase: boolean;
+	/** Resolved rubric key for the capture's encrypted scaffold rubric. */
+	rubricKey?: Buffer;
 }
 
 export interface GateState {
@@ -410,7 +419,24 @@ async function runReviewPhase(
 			};
 	if (finalProposal.edits.length === 0) {
 		const withheld = skillEdits.length > 0 ? " (skill proposal withheld — user not consulted or declined)" : "";
-		logger.info(`auto-review declined (${reason}) [${sessionId}] after ${turnsSinceLastReview} turns: no consented edits${withheld} — ${review.rationale}`);
+		logger.info(`auto-review declined (${reason}) [${sessionId}]: no consented edits${withheld} — ${review.rationale}`);
+		// P1 auto-case capture: an attempted evolution that never landed is a
+		// regression asset. Contained — capture failure must not disturb the gate.
+		if (config.autoCase) {
+			try {
+				const captured = captureAutoCase({
+					baseDir: engine.baseDir,
+					rubricKey: config.rubricKey,
+					source: "gate_no_consent",
+					sessionId,
+					summary: finalProposal.summary,
+					reasons: [review.rationale],
+				});
+				logger.info(`auto-review auto-case captured (${reason}) [${sessionId}]: ${captured.caseId}`);
+			} catch (cause) {
+				logger.warn(`auto-case capture failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`);
+			}
+		}
 		record({ sessionId, reason, turnsSinceLastReview, outcome: "declined", rationale: `${review.rationale}${withheld}` });
 		return;
 	}

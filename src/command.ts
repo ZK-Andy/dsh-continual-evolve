@@ -59,6 +59,8 @@ export interface CommandRuntimeOptions {
 	rubricKey: Buffer;
 	/** When a benchmark decision rejects a candidate, roll the refinement back automatically. */
 	autoRollbackOnReject: boolean;
+	/** P1: capture failed evolution attempts as draft cases in the auto-regression benchmark. */
+	autoCase: boolean;
 	/** Mechanical promotion guards for wrapup/fate (2026-08-22 policy). */
 	promotionPolicy: PromotionPolicy;
 }

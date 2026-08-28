@@ -59,6 +59,12 @@ export const Config = z.object({
 	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
 	autoRollbackOnReject: z.boolean().default(true),
 	/**
+	 * P1 auto-case capture: failed evolution attempts (benchmark-rejected
+	 * candidates, gate proposals without consent) land as draft cases in the
+	 * auto-regression container benchmark, seeding the regression loop.
+	 */
+	autoCase: z.boolean().default(true),
+	/**
 	 * Gap C1: optional model override for the review gate (cheaper model).
 	 * Format: "provider/model" or just "model" (same provider as the agent).
 	 * When absent, the review gate uses the agent's own provider/model.
@@ -147,9 +153,11 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		minPromoteChars: config.promotionMinChars,
 	});
 	registerEvolveTools(ctx, engine, gate);
+	const rubricKey = resolveRubricKey(baseDir, config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m));
 	registerEvolveCommand(ctx, engine, gate, {
-		rubricKey: resolveRubricKey(baseDir, config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m)),
+		rubricKey,
 		autoRollbackOnReject: config.autoRollbackOnReject ?? true,
+		autoCase: config.autoCase ?? true,
 		promotionPolicy,
 	});
 
@@ -178,6 +186,8 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
 			goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
 			promotionPolicy,
+			autoCase: config.autoCase ?? true,
+			rubricKey,
 			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
 		});
 		ctx.logger("continual-evolve").info(

@@ -8,6 +8,7 @@ import { formatHarnessStateForPrompt } from "./render.js";
 import { stripAngleBrackets } from "./command.js";
 import type { CommandRuntimeOptions } from "./command.js";
 import { addCase, caseCheckProblems, createBenchmark, listBenchmarks, listCases, loadBenchmark, loadCaseMeta, loadScoreboard, rollbackRejectedCandidate, saveCaseMeta, saveScoreboard, transitionCaseStatus } from "./benchmark.js";
+import { AUTO_CASE_BENCHMARK_ID, captureAutoCase } from "./autocase.js";
 import { decide, decisionReport, entryFromCells, flagMaterialDrift } from "./score.js";
 import { evaluateState } from "./evaluate.js";
 
@@ -196,6 +197,25 @@ export async function executeBenchmarkCommand(
 						if (runtime.autoRollbackOnReject) {
 							const outcome = rollbackRejectedCandidate(engine, sessionId, candidateId);
 							lines.push(outcome.message);
+						}
+						// P1 auto-case capture: the rejected candidate becomes a
+						// draft regression scaffold. Contained — a failed capture
+						// must never break the benchmark run's report.
+						if (runtime.autoCase) {
+							try {
+								const captured = captureAutoCase({
+									baseDir,
+									rubricKey: runtime.rubricKey,
+									source: "benchmark_rejection",
+									sessionId,
+									summary: `${bid} candidate ${candidateId}`,
+									reasons: decision.reasons,
+									refinementId: candidateId,
+								});
+								lines.push(`auto-case captured: ${AUTO_CASE_BENCHMARK_ID}/${captured.caseId} (draft — promote manually if it earns a place)`);
+							} catch (cause) {
+								ctx.logger("continual-evolve").warn(`auto-case capture failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+							}
 						}
 					}
 				}
