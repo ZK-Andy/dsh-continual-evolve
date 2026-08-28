@@ -51,6 +51,62 @@ export const CONFLICT_BLOCK_SCORE = 0.8;
 export const CONFLICT_WARN_SCORE = 0.5;
 
 /**
+ * Fixed secret-detection patterns — a security invariant, deliberately NOT
+ * part of the configurable {@link PromotionPolicy}: a user pattern typo must
+ * never be able to disable secret screening. Each entry pairs a human label
+ * with a regex tuned for low false positives (placeholders like
+ * "YOUR_API_KEY_HERE" don't match; realistic mixed literals do).
+ */
+const SECRET_PATTERNS: readonly { label: string; regex: RegExp }[] = [
+	{ label: "AnySearch API key", regex: /\bas_sk_[A-Za-z0-9]{8,}\b/ },
+	{ label: "Anthropic API key", regex: /\bsk-ant-[A-Za-z0-9_-]{16,}\b/ },
+	{ label: "OpenAI-style API key", regex: /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/ },
+	{ label: "GitHub token", regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/ },
+	{ label: "GitHub fine-grained PAT", regex: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
+	{ label: "AWS access key", regex: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+	{ label: "Google API key", regex: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+	{ label: "Slack token", regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+	{ label: "npm grant token", regex: /\bnpm_[A-Za-z0-9]{36}\b/ },
+	{ label: "private key block", regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/ },
+	{
+		label: "credential assignment",
+		// The credential-name group is manually case-insensitive ("apiKey" in
+		// JSON, "API_KEY" in env examples) so the placeholder lookahead stays
+		// case-sensitive: it excludes only ALL-CAPS placeholders
+		// ("YOUR_KEY_HERE"), not real mixed/lowercase literals.
+		regex: /\b(?:[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd])\b["']?\s*[:=]\s*["'](?!["']*[A-Z0-9_]+["'])[A-Za-z0-9+/_-]{16,}["']/,
+	},
+];
+
+/**
+ * Redact a matched secret for error/audit surfaces: enough to identify the
+ * credential family, never the full value (reasons land in reviews.jsonl,
+ * question texts, and logs).
+ */
+function redactSecret(matched: string): string {
+	if (matched.length <= 10) {
+		return `${matched.slice(0, 3)}…`;
+	}
+	return `${matched.slice(0, 6)}…${matched.slice(-3)}`;
+}
+
+/**
+ * First reason the content reads as carrying a live credential, or undefined
+ * when it screens clean. Unlike {@link projectScopedReason} this guard is
+ * NOT policy-configurable — it protects every sink at once (promotion path,
+ * global writes at the engine throat, mount materialization).
+ */
+export function secretLeakReason(content: string): string | undefined {
+	for (const { label, regex } of SECRET_PATTERNS) {
+		const match = regex.exec(content);
+		if (match?.[0]) {
+			return `possible ${label} ("${redactSecret(match[0])}") — secrets must never be sedimented into harness state; rotate the credential and keep it out of the store`;
+		}
+	}
+	return undefined;
+}
+
+/**
  * Build a policy from config values (schemastery strings compiled here so
  * the config layer never touches RegExp). Invalid patterns are skipped —
  * a broken user pattern must not disable the remaining guards.

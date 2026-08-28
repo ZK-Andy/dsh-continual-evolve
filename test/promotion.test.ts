@@ -12,6 +12,7 @@ import {
 	normalizedTokens,
 	projectScopedReason,
 	resolvePromotionPolicy,
+	secretLeakReason,
 } from "../src/promotion.js";
 import { filterPromotable, splitPromoteBlocked, type WrapupCandidate, type WrapupItem } from "../src/wrapup.js";
 import { emptyHarnessState } from "../src/types.js";
@@ -139,6 +140,70 @@ describe("splitPromoteBlocked guards", () => {
 
 	it("allows a portable, substantial cleaned payload", () => {
 		expect(splitPromoteBlocked(item(PORTABLE), emptyHarnessState(), "memory")).toBeUndefined();
+	});
+});
+
+describe("secretLeakReason", () => {
+	// Pattern-valid synthetic credentials, assembled at runtime so the pushed
+	// source never contains a complete detectable literal (GitHub push
+	// protection rejects pushes whose blobs match known token shapes).
+	const SK = (body: string): string => `sk-${body}`;
+	const SYNTHETIC_SECRETS: readonly string[] = [
+		`connect with as_sk_${"abcdef1234567890"} and search`,
+		`anthropic key ${SK(`ant-${"api03-abcdefghij0123456789"}`)}`,
+		`openai key ${SK(`proj-${"abcdefghij0123456789"}`)}`,
+		`github token ghp_${"abcdefghijklmnopqrstuvwxyz123456"}`,
+		`fine-grained github_pat_${"ABCDEFGHIJ1234_abcdefgh"}`,
+		`aws key AK${"IAIOSFODNN7EXAMPLE"}`,
+		`google key AI${"zaa1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R"}`,
+		`slack token xox${"b-123456789-abcdefghijklmnop"}`,
+		`npm grant npm_${"a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8"}`,
+		`-----BEGIN ${"RSA PRIVATE KEY"}-----`,
+		`config: apiKey: "${"a1b2c3d4e5f6g7h8i9j0k1"}"`,
+		`json {"password": "${"s3cr3tValue12345"}"}`,
+	];
+
+	it("flags credential-shaped literals across all families", () => {
+		for (const content of SYNTHETIC_SECRETS) {
+			expect(secretLeakReason(content), content).toMatch(/^possible .+ — secrets must never be sedimented/);
+		}
+	});
+
+	const GHP = `ghp_${"abcdefghijklmnopqrstuvwxyz123456"}`;
+
+	it("redacts the matched value in the reason", () => {
+		const reason = secretLeakReason(`token ${GHP} in use`)!;
+		expect(reason).toContain("ghp_ab…456");
+		expect(reason).not.toContain(GHP);
+	});
+
+	it("accepts clean prose, bare mentions, and ALL-CAPS placeholders", () => {
+		expect(secretLeakReason(PORTABLE)).toBeUndefined();
+		expect(secretLeakReason("rotate your ghp_ tokens regularly and prefer fine-grained PATs")).toBeUndefined();
+		expect(secretLeakReason('set apiKey: "YOUR_API_KEY_HERE" before first run')).toBeUndefined();
+		expect(secretLeakReason("read the key from process.env instead of inlining it")).toBeUndefined();
+	});
+});
+
+describe("secret guard in promotion paths", () => {
+	const SECRET = `push with token ${`ghp_${"abcdefghijklmnopqrstuvwxyz123456"}`}`;
+
+	it("filterPromotable skips a secret-bearing candidate with a rotate instruction", () => {
+		const { promotable, skipped } = filterPromotable([promoteItem()], emptyHarnessState(), [
+			candidateOf({ content: `${PORTABLE} ${SECRET}` }),
+		]);
+		expect(promotable).toHaveLength(0);
+		expect(skipped[0]?.reason).toContain("possible GitHub token");
+	});
+
+	it("splitPromoteBlocked blocks a cleaned payload carrying a credential", () => {
+		const item: WrapupItem = {
+			key: "memory:cand_1",
+			verdict: "archive",
+			reason: "mixed",
+			promote: { title: "清洗后的结论", content: `${PORTABLE} ${SECRET}` },
+		};
+		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory")).toContain("split promotion blocked");
 	});
 });
 

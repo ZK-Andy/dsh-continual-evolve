@@ -137,3 +137,58 @@ describe("write-time conflict guard (engine.apply)", () => {
 		}
 	});
 });
+
+describe("secret-leak guard (engine.apply)", () => {
+	const SECRET = `token ghp_${"abcdefghijklmnopqrstuvwxyz123456"}`;
+
+	it("blocks a global create carrying a credential before any side effect", () => {
+		const { engine, cleanup } = makeEngine();
+		try {
+			expect(() => engine.apply("global", undefined, createProposal("memory", "push setup", `always ${SECRET} for pushes`))).toThrow(
+				/create blocked.*possible GitHub token.*rotate the credential/s,
+			);
+			expect(engine.history("global", undefined)).toHaveLength(0);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("blocks a global update that injects a credential into an existing entry", () => {
+		const { dir, engine, cleanup } = makeEngine();
+		try {
+			seedGlobal(dir, [entry({ id: "e1", kind: "memory", title: "T1", content: "clean body" })]);
+			const proposal = {
+				summary: "test",
+				rationale: "test",
+				expectedOutcome: "test",
+				edits: [{ action: "update" as const, kind: "memory" as const, id: "e1", content: `updated: ${SECRET}` }],
+			};
+			expect(() => engine.apply("global", undefined, proposal)).toThrow(/update blocked.*possible GitHub token/s);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("never blocks local scope (scratch space)", () => {
+		const { engine, cleanup } = makeEngine();
+		try {
+			const result = engine.apply("local", "session-x", createProposal("memory", "local note", `draft mentioning ${SECRET}`));
+			expect(result.appliedEdits[0]!.applied).toBe(true);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("exempts rollbackOf re-creations (deterministic inverse beats screening)", () => {
+		const { engine, cleanup } = makeEngine();
+		try {
+			const result = engine.apply("global", undefined, createProposal("memory", "T1", `historical ${SECRET}`), {
+				scope: "global",
+				rollbackOf: `evolve_prior_${randomUUID().slice(0, 4)}`,
+			});
+			expect(result.appliedEdits[0]!.applied).toBe(true);
+		} finally {
+			cleanup();
+		}
+	});
+});

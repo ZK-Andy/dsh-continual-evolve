@@ -40,6 +40,18 @@ function makeBase(): string {
 }
 
 describe("renderMountPackage", () => {
+	it("blocks entries carrying credentials before writing any file", () => {
+		const base = makeBase();
+		try {
+			expect(() =>
+				renderMountPackage(base, skillEntry({ content: `Call the API with token ghp_${"abcdefghijklmnopqrstuvwxyz123456"}` })),
+			).toThrow(/mount blocked.*possible GitHub token/s);
+			expect(existsSync(join(base, "evolve", "mounted"))).toBe(false);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
 	it("writes package.json and index.js for a skill entry", () => {
 		const base = makeBase();
 		try {

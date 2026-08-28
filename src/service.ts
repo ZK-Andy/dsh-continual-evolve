@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { rollbackProposal } from "./rollback.js";
 import { loadHarnessState, saveHarnessState } from "./state.js";
 import { appendResult, loadResults, snapshotBefore, storePaths } from "./store.js";
-import { CONFLICT_BLOCK_SCORE, CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry, type SimilarEntryHit } from "./promotion.js";
+import { CONFLICT_BLOCK_SCORE, CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry, secretLeakReason, type SimilarEntryHit } from "./promotion.js";
 
 export interface ApplyContext {
 	scope: HarnessScope;
@@ -44,9 +44,21 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		// that resembles its successor is the point of rollback. Local scope
 		// is never blocked (scratch space); the wrapup/fate promotion path
 		// already enforces its own overlap policy there.
+		//
+		// Secret-leak guard (P0, same throat): global creates AND updates are
+		// screened for credential-shaped literals before any side effect — a
+		// secret reaching the cross-session store is a leak even when the
+		// entry itself is legitimate. Fixed patterns, not policy-configurable.
 		const warnHits = new Map<number, SimilarEntryHit>();
 		if (scope === "global" && !context?.rollbackOf) {
 			for (const [index, edit] of proposal.edits.entries()) {
+				if (edit.action === "create" || edit.action === "update") {
+					const screenable = [edit.title, edit.content].filter((part): part is string => typeof part === "string");
+					const secret = secretLeakReason(screenable.join("\n"));
+					if (secret) {
+						throw new Error(`${edit.action} blocked: ${secret}`);
+					}
+				}
 				if (edit.action !== "create") continue;
 				const hit = mostSimilarEntry(Object.values(state.entries[edit.kind]), edit.title ?? "", edit.content ?? "", CONFLICT_WARN_SCORE);
 				if (!hit) continue;

@@ -18,6 +18,7 @@ import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { HarnessEntry } from "./types.js";
 import { skillNameOf } from "./skill.js";
+import { secretLeakReason } from "./promotion.js";
 
 export interface MountRecord {
 	id: string;
@@ -62,6 +63,13 @@ export function saveLedger(baseDir: string, ledger: MountLedger): void {
 
 /** Generate the plugin package files for one skill entry; returns the package dir. */
 export function renderMountPackage(baseDir: string, entry: HarnessEntry): string {
+	// Secret-leak quarantine: the entry content is embedded verbatim into the
+	// generated index.js, so a credential in the skill would be written to
+	// disk (and executed in-process). Block before ANY file is created.
+	const secret = secretLeakReason(`${entry.title}\n${entry.content}`);
+	if (secret) {
+		throw new Error(`mount blocked: ${secret}`);
+	}
 	const dir = join(mountedDir(baseDir), skillNameOf(entry.id));
 	mkdirSync(dir, { recursive: true });
 	const toolName = `skill_${skillNameOf(entry.id)}`;

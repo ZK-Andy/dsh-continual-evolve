@@ -27,7 +27,7 @@ import { compactText } from "./render.js";
 import { streamText } from "./llm-text.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { recencyScore } from "./inject.js";
-import { DEFAULT_PROMOTION_POLICY, mostSimilarGlobalEntry, projectScopedReason, type PromotionPolicy } from "./promotion.js";
+import { DEFAULT_PROMOTION_POLICY, mostSimilarGlobalEntry, projectScopedReason, secretLeakReason, type PromotionPolicy } from "./promotion.js";
 
 /** What should happen to one local entry at session end. */
 export type WrapupVerdict = "promote" | "archive" | "keep";
@@ -302,6 +302,11 @@ export function filterPromotable(
 			skipped.push({ key: item.key, reason: scoped });
 			continue;
 		}
+		const secret = secretLeakReason(`${candidate.title}\n${candidate.content}`);
+		if (secret) {
+			skipped.push({ key: item.key, reason: secret });
+			continue;
+		}
 		if (candidate.content.length < policy.minPromoteChars) {
 			skipped.push({
 				key: item.key,
@@ -393,6 +398,8 @@ export function splitPromoteBlocked(
 	}
 	const scoped = projectScopedReason(`${item.promote.title}\n${item.promote.content}`, policy);
 	if (scoped) return `split promotion is ${scoped}`;
+	const secret = secretLeakReason(`${item.promote.title}\n${item.promote.content}`);
+	if (secret) return `split promotion blocked: ${secret}`;
 	if (item.promote.content.length < policy.minPromoteChars) {
 		return `split promotion too thin (${item.promote.content.length} < ${policy.minPromoteChars} chars)`;
 	}
