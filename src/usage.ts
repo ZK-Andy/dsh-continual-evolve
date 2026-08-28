@@ -10,7 +10,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessState, RefinementKind } from "./types.js";
+import type { RefinementKind } from "./types.js";
 
 const USAGE_FILE = "usage.json";
 
@@ -107,24 +107,4 @@ export function recordInjection(baseDir: string, injectedKeys: readonly string[]
  */
 export function getUsageCount(store: UsageStore, kind: RefinementKind, id: string): number {
 	return store.counts[usageKey(kind, id)] ?? 0;
-}
-
-/**
- * Find entries with zero injection usage. Returns `{kind, id, title}` for
- * each entry that has never been injected — prime candidates for archival.
- */
-export function zeroUsageEntries(
-	state: HarnessState,
-	store: UsageStore,
-): { kind: RefinementKind; id: string; title: string }[] {
-	const results: { kind: RefinementKind; id: string; title: string }[] = [];
-	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
-		for (const entry of Object.values(state.entries[kind])) {
-			if (entry.scope !== "local") continue;
-			if (getUsageCount(store, kind, entry.id) === 0) {
-				results.push({ kind, id: entry.id, title: entry.title });
-			}
-		}
-	}
-	return results;
 }

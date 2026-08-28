@@ -18,16 +18,6 @@ import { join } from "node:path";
 import type { HarnessScope, HarnessState } from "./types.js";
 import { emptyHarnessState } from "./types.js";
 
-/** Directory holding the cross-session (global) store. */
-export function globalStateDir(baseDir: string): string {
-	return join(baseDir, "evolve");
-}
-
-/** Directory holding a session-scoped (local) store, if the session has one. */
-export function localStateDir(sessionDir: string | undefined): string | undefined {
-	return sessionDir ? join(sessionDir, "evolve") : undefined;
-}
-
 export function stateFilePath(stateDir: string): string {
 	return join(stateDir, "harness_state.json");
 }
@@ -99,7 +89,13 @@ export function loadHarnessState(stateDir: string, scope: HarnessScope = "global
 		}
 	}
 	if (Array.isArray(root["refinements"])) {
-		state.refinements = root["refinements"] as HarnessState["refinements"];
+		// Shape-check members like entries do: a hand-edited file must never
+		// reach render/planner paths and crash them (review audit 2026-08-28
+		// S6 — loadHarnessState promises "never throws on a bad file").
+		state.refinements = root["refinements"].filter(
+			(item): item is HarnessState["refinements"][number] =>
+				typeof item === "object" && item !== null && typeof (item as Record<string, unknown>)["id"] === "string",
+		);
 	}
 	return state;
 }
@@ -146,15 +142,6 @@ export function saveHarnessState(stateDir: string, state: HarnessState): string 
 	return path;
 }
 
-/**
- * Capture the state snapshot a plan was based on. At apply time the caller
- * re-reads the file and compares; an entry that changed since planning is
- * rejected per-edit, never silently overwritten.
- */
-export function baselineOf(state: HarnessState): HarnessState {
-	return JSON.parse(JSON.stringify(state)) as HarnessState;
-}
-
 /** True when an entry in `current` differs from the same entry in `baseline`. */
 export function entryChangedSince(
 	baseline: HarnessState,
@@ -166,6 +153,3 @@ export function entryChangedSince(
 	const after = current.entries[kind][id];
 	return JSON.stringify(before ?? null) !== JSON.stringify(after ?? null);
 }
-
-/** The set of keys an entry must not expose beyond the persisted shape. */
-export const ENTRY_KEYS = ["id", "kind", "title", "content", "path", "scope", "reference", "arguments", "metadata", "source", "created_at", "updated_at", "version"] as const;

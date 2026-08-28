@@ -2,7 +2,7 @@
 
 Status: proposed
 
-English | [中文](<同名>.zh.md)
+中文单语（双语启用时补 `<同名>.zh.md` 镜像，见 notes/README.md）
 
 > 放置路径：`.agents/notes/proposed/<class>/yyyy-mm-dd-<topic-title>.md`
 > class ∈ {feature, bug-fix, simplification, architecture, process, testing}

@@ -45,7 +45,9 @@ export function snapshotBefore(paths: StorePaths, refinementId: string): void {
 		return;
 	}
 	mkdirSync(paths.snapshotsDir, { recursive: true });
-	writeFileSync(join(paths.snapshotsDir, `${refinementId}.json`), readFileSync(statePath, "utf8"), "utf8");
+	// 0600: the snapshot is a full copy of harness_state.json — same
+	// permission discipline as the store itself (review audit 2026-08-28 S5).
+	writeFileSync(join(paths.snapshotsDir, `${refinementId}.json`), readFileSync(statePath, "utf8"), { encoding: "utf8", mode: 0o600 });
 }
 
 /** Append an applied result to the store's JSONL history. */

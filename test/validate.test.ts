@@ -31,9 +31,16 @@ describe("validateEdit", () => {
 		expect(validateEdit(edit({ action: "delete", kind: "memory" }), undefined)).toMatch(/requires id/);
 	});
 
-	it("requires title and content for create/update", () => {
+	it("requires title and content for create; updates carry any non-empty subset (B3/B5)", () => {
 		expect(validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "", content: "c" }), undefined)).toMatch(/title and content/);
-		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", title: "t", content: "" }), undefined)).toMatch(/title and content/);
+		// update is a partial-update contract: apply merges with the persisted
+		// entry, so a content-only (or metadata-only) update is valid —
+		// evolve_update's own description, skill archive/demote, and
+		// consolidate all rely on it.
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", content: "c" }), undefined)).toBeUndefined();
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", metadata: { k: 1 } }), undefined)).toBeUndefined();
+		// an update carrying nothing is a no-op and is rejected
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x" }), undefined)).toMatch(/carries no changes/);
 	});
 
 	it("accepts archive with only kind + id, rejects it without id", () => {

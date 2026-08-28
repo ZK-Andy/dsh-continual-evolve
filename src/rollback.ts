@@ -26,6 +26,8 @@ export function rollbackProposal(target: RefinementResult): RefinementProposal {
 function inverseEdit(edit: AppliedRefinementEdit, refinementId: string): RefinementEdit | undefined {
 	if (edit.before && edit.after) {
 		// Forward action was an update: restore the before snapshot.
+		// skill_kind rides along (review audit 2026-08-28 B4): without it a
+		// rollback could flip the skill form or fail validation on re-apply.
 		return {
 			action: "update",
 			kind: edit.kind,
@@ -35,12 +37,16 @@ function inverseEdit(edit: AppliedRefinementEdit, refinementId: string): Refinem
 			path: edit.before.path,
 			reference: edit.before.reference,
 			arguments: edit.before.arguments,
+			...(edit.before.skill_kind !== undefined ? { skill_kind: edit.before.skill_kind } : {}),
 			metadata: edit.before.metadata,
 			reason: `Rollback ${refinementId}`,
 		};
 	}
 	if (edit.before) {
 		// Forward action was a delete: re-create the entry from the snapshot.
+		// skill_kind is required for the re-created skill to pass the same
+		// contract validation as the original create (B4: a deleted guidance
+		// skill was previously unrecoverable via rollback).
 		return {
 			action: "create",
 			kind: edit.kind,
@@ -50,6 +56,7 @@ function inverseEdit(edit: AppliedRefinementEdit, refinementId: string): Refinem
 			path: edit.before.path,
 			reference: edit.before.reference,
 			arguments: edit.before.arguments,
+			...(edit.before.skill_kind !== undefined ? { skill_kind: edit.before.skill_kind } : {}),
 			metadata: edit.before.metadata,
 			reason: `Rollback ${refinementId}`,
 		};

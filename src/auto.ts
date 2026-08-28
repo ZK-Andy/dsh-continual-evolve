@@ -24,7 +24,7 @@ import { slug } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
-import { goalServiceOf } from "./goal.js";
+import { goalDrivesRounds, goalServiceOf } from "./goal.js";
 import { notifyAutoReview } from "./notify.js";
 import { runLocalFatePhase } from "./fate.js";
 import { entrySourceOf } from "./source.js";
@@ -123,24 +123,6 @@ export interface ReviewRecord {
 	refinementId?: string;
 }
 
-/**
- * Count completed turns from agent/status transitions (running → idle).
- * Exported for unit testing; production counting uses agent/turn-stopping
- * (see registerAutoReview) which empirically carries the agent subject.
- */
-export function advanceGateState(state: GateState, status: string): boolean {
-	if (status === "running") {
-		state.running = true;
-		return false;
-	}
-	if (status === "idle" && state.running) {
-		state.running = false;
-		state.turns += 1;
-		return true;
-	}
-	return false;
-}
-
 export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config: AutoReviewConfig): void {
 	const perSession = new Map<string, GateState>();
 	const logger = ctx.logger("continual-evolve");
@@ -175,7 +157,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		// v3 optional: an active evolution goal drives the gate EVERY round
 		// (the goal's round machine keeps the session continuing); without a
 		// goal the plain turn interval applies.
-		const goalDriven = goalServiceOf(ctx)?.get(agent)?.phase === "active";
+		const goalDriven = goalDrivesRounds(goalServiceOf(ctx)?.get(agent));
 		if (!goalDriven && state.turns - state.lastReviewAt < config.intervalTurns) return;
 		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
 		// Every failure is durably recorded — nothing fails silently.
@@ -300,12 +282,25 @@ async function runGate(
 	reason: AutoRefineReason,
 	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
 ): Promise<void> {
-	await runReviewPhase(ctx, engine, agent, config, state, reason, record);
-	// D3: a goal stuck in "blocked" for consecutive gate runs gets one
-	// local-fate assessment (the pipeline below), so whatever led the goal
-	// astray is distilled before the session moves on.
-	await runGoalBlockedFate(ctx, engine, agent, config, state, reason, record);
-	await runLocalFatePhase(ctx, engine, agent, config, state, reason, record);
+	// Reentry guard (review audit 2026-08-28 S3): a gate run holds LLM calls
+	// and possibly a user question for a long time; an idle/compaction
+	// trigger overlapping the run would start a second concurrent pipeline
+	// whose stale whole-file saves clobber the first run's writes.
+	if (state.running) {
+		ctx.logger("continual-evolve").info(`auto-review skipped [${agent.id}]: previous gate run still in flight`);
+		return;
+	}
+	state.running = true;
+	try {
+		await runReviewPhase(ctx, engine, agent, config, state, reason, record);
+		// D3: a goal stuck in "blocked" for consecutive gate runs gets one
+		// local-fate assessment (the pipeline below), so whatever led the
+		// goal astray is distilled before the session moves on.
+		await runGoalBlockedFate(ctx, engine, agent, config, state, reason, record);
+		await runLocalFatePhase(ctx, engine, agent, config, state, reason, record);
+	} finally {
+		state.running = false;
+	}
 }
 
 /**

@@ -141,7 +141,7 @@ describe("integration", () => {
 			writeFileSync(join(base, "evolve", "reviews.jsonl"), JSON.stringify({ outcome: "failed", rationale: "gate error: x", timestamp: "t" }) + "\n", "utf8");
 			mkdirSync(join(base, "evolve", "benchmarks", "b2"), { recursive: true });
 			writeFileSync(join(base, "evolve", "benchmarks", "b2", "scoreboard.json"), JSON.stringify({ candidates: [{ cells: [{ status: "failed", notes: "reviewer failed: crash" }] }] }), "utf8");
-			const summary = collectFailureSummary(base);
+			const { summary } = collectFailureSummary(base);
 			expect(summary.total).toBe(2);
 			const report = formatFailureSummary(summary);
 			expect(report).toContain("failure summary: 2 total");

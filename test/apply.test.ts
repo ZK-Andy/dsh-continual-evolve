@@ -13,7 +13,7 @@ const PREFIX_BODY =
 	"Portable durable content used by prefix-hygiene regression tests; long enough for any minimum length guard.";
 import { applyRefinementProposal } from "../src/apply.js";
 import { rollbackProposal } from "../src/rollback.js";
-import { baselineOf, loadHarnessState, saveHarnessState } from "../src/state.js";
+import { loadHarnessState, saveHarnessState } from "../src/state.js";
 import { emptyHarnessState, type HarnessState } from "../src/types.js";
 
 function stateWith(entry: { id: string; title: string; version?: number }): HarnessState {
@@ -116,7 +116,7 @@ describe("applyRefinementProposal", () => {
 
 	it("rejects an edit whose entry changed during planning", () => {
 		const baseline = stateWith({ id: "x", title: "old" });
-		const current = baselineOf(baseline);
+		const current = structuredClone(baseline);
 		// someone else edited the same entry between plan and apply
 		current.entries.memory["x"] = { ...current.entries.memory["x"]!, title: "changed by another session" };
 		const result = applyRefinementProposal(
@@ -461,6 +461,119 @@ describe("create id store-prefix hygiene (2026-08-22)", () => {
 			}, { scope: "global" });
 			expect(result.appliedEdits[0]?.applied).toBe(true);
 			expect(engine.load("global").entries.memory["weird:id"]?.title).toBe("t2");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("strips merged-view prefixes from UPDATE ids too (review S7)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-prefix-update-merged-"));
+		try {
+			const engine = engineOn(dir);
+			engine.apply("global", undefined, {
+				summary: "seed",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", id: "note1", title: "t", content: PREFIX_BODY }],
+			}, { scope: "global" });
+			// The merged view prefixes colliding local ids; a planner update
+			// against that view used to address a nonexistent "local:note1".
+			const result = engine.apply("global", undefined, {
+				summary: "planner-style merged-view update",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "update", kind: "memory", id: "local:note1", title: "updated", content: PREFIX_BODY }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+			expect(engine.load("global").entries.memory["note1"]?.title).toBe("updated");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("skill update/rollback policy (review B3/B4)", () => {
+	const EXECUTABLE = {
+		kind: "skill" as const,
+		title: "Code reviewer",
+		content: "Review the diff strictly.",
+		reference: { type: "python" as const, import: "reviewer", callable: "run" },
+		arguments: { strictness: { type: "string" as const, required: true, description: "how strict" } },
+	};
+
+	function makeEngine(dir: string) {
+		return createEvolutionEngine(dir);
+	}
+
+	it("archives a skill entry through the command's metadata-only update (B3)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-skill-archive-"));
+		try {
+			const engine = makeEngine(dir);
+			engine.apply("global", undefined, {
+				summary: "seed skill",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "skill", id: "s1", ...EXECUTABLE }],
+			}, { scope: "global" });
+			// /evolve archive constructs exactly this shape (metadata-only
+			// update); it used to fail the full executable contract check.
+			const result = engine.apply("global", undefined, {
+				summary: "archive skill",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "update", kind: "skill", id: "s1", metadata: { archivedAt: "2026-08-28T00:00:00.000Z" } }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a real skill_kind switch but accepts the persisted value (B4/B3)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-skill-kind-"));
+		try {
+			const engine = makeEngine(dir);
+			engine.apply("global", undefined, {
+				summary: "seed skill",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "skill", id: "s1", ...EXECUTABLE }],
+			}, { scope: "global" });
+			const flip = engine.apply("global", undefined, {
+				summary: "flip kind",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "update", kind: "skill", id: "s1", skill_kind: "guidance", content: "Now a document." }],
+			}, { scope: "global" });
+			expect(flip.appliedEdits[0]?.applied).toBe(false);
+			expect(flip.appliedEdits[0]?.error).toContain("cannot change skill_kind");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("rolls back a deleted guidance skill with its skill_kind intact (B4)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-skill-rollback-"));
+		try {
+			const engine = makeEngine(dir);
+			engine.apply("global", undefined, {
+				summary: "seed guidance skill",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "skill", id: "g1", title: "Guide", content: "Read this first.", reference: {}, arguments: {}, skill_kind: "guidance" }],
+			}, { scope: "global" });
+			const deletion = engine.apply("global", undefined, {
+				summary: "delete guidance skill",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "delete", kind: "skill", id: "g1" }],
+			}, { scope: "global" });
+			// The inverse is a skill re-create carrying the snapshot; it used
+			// to fail the executable contract check, making guidance skills
+			// unrecoverable after deletion.
+			const restored = engine.rollback("global", undefined, deletion.id);
+			expect(restored.appliedEdits[0]?.applied).toBe(true);
+			expect(engine.load("global").entries.skill["g1"]?.skill_kind).toBe("guidance");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

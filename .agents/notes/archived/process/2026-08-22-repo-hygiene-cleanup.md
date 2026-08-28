@@ -1,6 +1,7 @@
 # Agent Note: 仓库卫生整理（测试临时目录自动清理 + 完结文档归档）
 
 Status: implemented
+Archived: 2026-08-28
 
 ## Problem
 

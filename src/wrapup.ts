@@ -323,7 +323,13 @@ export function filterPromotable(
 			skipped.push({ key: item.key, reason: scoped });
 			continue;
 		}
-		const secret = secretLeakReason(`${candidate.title}\n${candidate.content}`);
+		// Metadata screens too: wholePromoteProposals copies candidate.metadata
+		// verbatim into the global entry, so a credential planted in local
+		// metadata must not ride the promotion path into the shared store
+		// (review audit 2026-08-28 B2).
+		const secret = secretLeakReason(
+			[candidate.title, candidate.content, JSON.stringify(candidate.metadata ?? {})].join("\n"),
+		);
 		if (secret) {
 			skipped.push({ key: item.key, reason: secret });
 			continue;
@@ -419,7 +425,7 @@ export function splitPromoteBlocked(
 	}
 	const scoped = projectScopedReason(`${item.promote.title}\n${item.promote.content}`, policy);
 	if (scoped) return `split promotion is ${scoped}`;
-	const secret = secretLeakReason(`${item.promote.title}\n${item.promote.content}`);
+	const secret = secretLeakReason([item.promote.title, item.promote.content].join("\n"));
 	if (secret) return `split promotion blocked: ${secret}`;
 	if (item.promote.content.length < policy.minPromoteChars) {
 		return `split promotion too thin (${item.promote.content.length} < ${policy.minPromoteChars} chars)`;

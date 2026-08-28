@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import {
-	advanceGateState,
 	consultSkillEdits,
 	loadGateHarnessView,
 	parseReviewModel,
@@ -61,37 +60,6 @@ function fullEntry(id: string, kind: HarnessEntry["kind"], title: string): Harne
 	};
 }
 
-describe("advanceGateState", () => {
-	it("counts one turn per running → idle transition", () => {
-		const state = fresh();
-		expect(advanceGateState(state, "running")).toBe(false);
-		expect(advanceGateState(state, "idle")).toBe(true);
-		expect(state.turns).toBe(1);
-		expect(advanceGateState(state, "running")).toBe(false);
-		expect(advanceGateState(state, "idle")).toBe(true);
-		expect(state.turns).toBe(2);
-	});
-
-	it("ignores duplicate idle emissions without an intervening running", () => {
-		const state = fresh();
-		advanceGateState(state, "running");
-		expect(advanceGateState(state, "idle")).toBe(true);
-		expect(advanceGateState(state, "idle")).toBe(false);
-		expect(state.turns).toBe(1);
-	});
-
-	it("ignores initial idle before any running", () => {
-		const state = fresh();
-		expect(advanceGateState(state, "idle")).toBe(false);
-		expect(state.turns).toBe(0);
-	});
-
-	it("ignores unknown statuses", () => {
-		const state = fresh();
-		expect(advanceGateState(state, "bogus")).toBe(false);
-		expect(state.turns).toBe(0);
-	});
-});
 
 describe("loadGateHarnessView", () => {
 	it("merges global entries into the gate's view with their real scope", () => {

@@ -2,11 +2,11 @@
 
 Status: implemented
 
-English | [中文](<同名>.zh.md)
+中文单语（双语启用时补 `<同名>.zh.md` 镜像，见 notes/README.md）
 
 > 放置路径：`.agents/notes/implemented/<class>/yyyy-mm-dd-<topic-title>.md`
 > class ∈ {feature, bug-fix, simplification, architecture, process, testing}
-> 日期 = 首次提出日（提案期定，迁移不改）。中英双语成对。
+> 日期 = 首次提出日（提案期定，迁移不改）。双语暂不启用，正文中文单语。
 > 纪律：本文件用**现在时**描述已上线现实；代码移动/改名/改默认值时，同一变更中同步改写本文件（只改事实，不改决定）。
 
 ## Problem

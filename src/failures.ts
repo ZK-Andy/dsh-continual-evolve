@@ -143,8 +143,9 @@ export function readBenchmarkFailures(baseDir: string): FailureRecord[] {
 }
 
 /** Combine both sources into one summary. */
-export function collectFailureSummary(baseDir: string): FailureSummary {
-	return summarizeFailures([...readReviewFailures(baseDir), ...readBenchmarkFailures(baseDir)]);
+export function collectFailureSummary(baseDir: string): { summary: FailureSummary; records: FailureRecord[] } {
+	const records = [...readReviewFailures(baseDir), ...readBenchmarkFailures(baseDir)];
+	return { summary: summarizeFailures(records), records };
 }
 
 /** Human-readable report for the command line. */

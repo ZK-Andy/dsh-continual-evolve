@@ -172,7 +172,16 @@ export function planConsolidation(
 	}
 	const candidates = [...byKey.values()];
 	const dateIso = new Date(now).toISOString();
-	const edits: RefinementEdit[] = candidates.map((candidate): RefinementEdit => {
+	// A merge survivor must not itself be an archive candidate in the same
+	// batch: its archive edit is built from the ORIGINAL state snapshot, so it
+	// would overwrite the merge edit's content/mergedFrom wholesale and then
+	// archive the survivor (review audit 2026-08-28 S2). Survivors stay live;
+	// their merge lands, the source archives.
+	const mergeTargets = new Set(
+		candidates.filter((candidate) => candidate.mergeInto).map((candidate) => `${candidate.mergeInto!.kind}:${candidate.mergeInto!.id}`),
+	);
+	const archiveCandidates = candidates.filter((candidate) => !mergeTargets.has(`${candidate.kind}:${candidate.id}`));
+	const edits: RefinementEdit[] = archiveCandidates.map((candidate): RefinementEdit => {
 		const entry: HarnessEntry | undefined = state.entries[candidate.kind][candidate.id];
 		const metadata = { ...entry?.metadata, [ARCHIVED_AT_KEY]: dateIso };
 		return {

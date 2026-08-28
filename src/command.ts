@@ -16,7 +16,7 @@ import { saveHarnessState } from "./state.js";
 import { appendResult, storePaths } from "./store.js";
 import { entrySourceOf } from "./source.js";
 import { filterLogBySession, formatLogLine, pluginLogFilePath } from "./logfile.js";
-import { readBenchmarkFailures, readReviewFailures, summarizeFailures, formatFailureSummary } from "./failures.js";
+import { collectFailureSummary, formatFailureSummary } from "./failures.js";
 import { executeGoalCommand } from "./goal-command.js";
 import { executeMountCommand, executeUnmountCommand } from "./mount-command.js";
 import { executeBenchmarkCommand } from "./benchmark-command.js";
@@ -257,10 +257,9 @@ async function executeEvolveCommand(
 			case "failures": {
 				// /evolve failures — failure-signature aggregation (D1 observation):
 				// failed review-gate records + failed benchmark cells, counted by class.
-				const failed = [...readReviewFailures(engine.baseDir), ...readBenchmarkFailures(engine.baseDir)];
-				const summary = summarizeFailures(failed);
+				const { summary, records } = collectFailureSummary(engine.baseDir);
 				const parts = formatFailureSummary(summary).split("\n");
-				const recent = failed
+				const recent = records
 					.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""))
 					.slice(0, 10)
 					.map((f) => `  [${f.timestamp ?? "(benchmark)"}] ${f.kind} · ${f.source}: ${f.message.slice(0, 140)}`);
@@ -317,7 +316,7 @@ async function executeEvolveCommand(
 					refinements: state.refinements,
 					history,
 				};
-				writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+				writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 				return success(`exported ${scope} store (${Object.values(state.entries).reduce((n, e) => n + Object.keys(e).length, 0)} entries, ${history.length} refinements) to ${path}`);
 			}
 			case "import": {

@@ -4,7 +4,7 @@
  * the base system prompt, required fields per action, and the executable
  * contract skill entries must carry.
  */
-import type { HarnessScope, PythonReference, RefinementEdit, RefinementKind } from "./types.js";
+import type { HarnessEntry, HarnessScope, PythonReference, RefinementEdit, RefinementKind } from "./types.js";
 import { validateSkillEntryContent } from "./skillquality.js";
 
 const ACTIONS = new Set(["create", "update", "delete", "archive"]);
@@ -33,8 +33,15 @@ export function validateBlastRadiusScope(
 	return undefined;
 }
 
-/** Returns a human-readable failure reason, or undefined when the edit passes. */
-export function validateEdit(edit: RefinementEdit, computedId: string | undefined, scope?: HarnessScope): string | undefined {
+/**
+ * Returns a human-readable failure reason, or undefined when the edit passes.
+ *
+ * `before` (the entry the edit targets, absent for creates/unknown ids) lets
+ * update rules distinguish "carrying the persisted value" from "changing it"
+ * — e.g. a rollback inverse re-carries the stored skill_kind, which must
+ * pass, while a genuine executable↔guidance switch must not.
+ */
+export function validateEdit(edit: RefinementEdit, computedId: string | undefined, scope?: HarnessScope, before?: HarnessEntry): string | undefined {
 	if (!ACTIONS.has(edit.action)) {
 		return `unsupported action ${String(edit.action)}`;
 	}
@@ -58,10 +65,27 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 	if (edit.action === "archive") {
 		return undefined;
 	}
-	if (edit.action !== "delete" && (!edit.title || !edit.content)) {
-		return `${edit.action} requires title and content`;
+	// Create needs the full payload (nothing to fall back to). Update may
+	// carry any subset — apply merges with `?? before` — but must carry at
+	// least one change (review audit 2026-08-28 B3/B5: the old blanket
+	// "update requires title and content" broke every partial-update path:
+	// skill archive/demote, consolidate, and the evolve_update tool contract
+	// all construct payload-subset updates).
+	if (edit.action === "create" && (!edit.title || !edit.content)) {
+		return "create requires title and content";
 	}
-	if (edit.action !== "delete" && edit.kind === "skill") {
+	if (
+		edit.action === "update" &&
+		edit.title === undefined &&
+		edit.content === undefined &&
+		edit.path === undefined &&
+		edit.metadata === undefined &&
+		edit.reference === undefined &&
+		edit.arguments === undefined
+	) {
+		return "update carries no changes";
+	}
+	if (edit.action === "create" && edit.kind === "skill") {
 		// Guidance skills are SKILL.md documents: no python reference (a
 		// reference on a guidance skill would be an invented contract) and
 		// no arguments contract. Executable skills keep the full contract.
@@ -83,6 +107,30 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 		const contentProblems = validateSkillEntryContent(edit.content ?? "");
 		if (contentProblems.length > 0) {
 			return contentProblems.join("; ");
+		}
+	}
+	if (edit.action === "update" && edit.kind === "skill") {
+		// skill_kind is immutable on update: a switch without the matching
+		// contract pair would leave an invalid entry (guidance carrying a
+		// python reference, or an executable with none). Re-carrying the
+		// persisted value (rollback inverses do) passes. Recreate the entry
+		// to change the kind.
+		if (edit.skill_kind !== undefined && before !== undefined && before.skill_kind !== edit.skill_kind) {
+			return "update cannot change skill_kind — delete and recreate the entry instead";
+		}
+		// A carried non-empty reference replaces the contract wholesale, so it
+		// must be a complete executable contract on its own. Empty references
+		// (guidance skills) and absent payloads pass through — apply keeps
+		// the persisted values.
+		if (edit.reference !== undefined && Object.keys(edit.reference).length > 0) {
+			const contractError = validateSkillContract(edit);
+			if (contractError) return contractError;
+		}
+		if (edit.content !== undefined) {
+			const contentProblems = validateSkillEntryContent(edit.content);
+			if (contentProblems.length > 0) {
+				return contentProblems.join("; ");
+			}
 		}
 	}
 	return undefined;

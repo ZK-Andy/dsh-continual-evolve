@@ -16,6 +16,7 @@
  */
 import type { HarnessEntry, HarnessState, RefinementKind } from "./types.js";
 import { isArchived } from "./types.js";
+import { tokenize } from "./search.js";
 
 /** Regex sources that mark content as project-scoped (never global). */
 const DEFAULT_BLOCK_PATTERNS: readonly string[] = [
@@ -147,26 +148,16 @@ export function projectScopedReason(content: string, policy: PromotionPolicy): s
 }
 
 /**
- * Tokenize for cheap similarity: ASCII words plus CJK character bigrams
- * (single CJK chars are too ambiguous; bigrams survive segmentation-free
- * Chinese text). Lowercased; single-char ASCII tokens dropped as noise.
+ * Token set for cheap similarity, built on the search module's tokenizer —
+ * one home for "how this project splits words" (ASCII words lowercased plus
+ * CJK character bigrams; bigrams survive segmentation-free Chinese text).
+ * The set form feeds Jaccard overlap (review audit 2026-08-28 C: the
+ * previous private tokenizer duplicated the definition; the calibrated
+ * 0.6/0.8 thresholds are judgment values, not data-fitted, so the merge
+ * costs at most a test re-pin).
  */
 export function normalizedTokens(text: string): Set<string> {
-	const lowered = text.toLowerCase();
-	const tokens = new Set<string>();
-	for (const match of lowered.matchAll(/[a-z0-9_]{2,}/g)) {
-		tokens.add(match[0] ?? "");
-	}
-	let previous: string | undefined;
-	for (const match of lowered.matchAll(/[\u3400-\u9fff]/g)) {
-		const char = match[0] ?? "";
-		if (previous !== undefined) {
-			tokens.add(`${previous}${char}`);
-		}
-		previous = char;
-	}
-	tokens.delete("");
-	return tokens;
+	return new Set(tokenize(text));
 }
 
 /** Jaccard similarity of two texts' normalized token sets (0..1). */

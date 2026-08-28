@@ -29,7 +29,7 @@ Status: implemented
 - 全局 store 的近重复从「事后靠 wrapup 兜底」变为「写入时代码拒绝」；矛盾共存只剩 warn 档且全部带可审计 hint。
 - `RefinementResult.appliedEdits[i].after.metadata` 可能含 conflictHint——消费方按可选字段处理。
 - 未来 R3 巩固循环可直接消费 conflictHint 与 usage v2 做批量合并提案。
-- 分词器现状双轨（search.ts tokenize 与 promotion.ts normalizedTokens 细节略异），本轮不合并以免扰动已校准的 0.6 晋升阈值；合并留待简化审查时机。
+- 分词器已于 2026-08-28 审计轮合并（`normalizedTokens` 内部改用 search.ts `tokenize` 的集合形态）——「本项目如何切词」单一真相源；0.6/0.8 阈值为判断值而非拟合值，重钉未产生漂移。
 
 ## Related
 

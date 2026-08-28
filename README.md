@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-571%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-573%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -63,6 +63,8 @@ Commands (in-session):
 
 Model tools: `evolve_list / add / update / delete / rollback`.
 
+For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
+
 Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a directory index (`[kind:id] title`, capped at 15 lines with a fold counter) — full text via `evolve_list`. Empty store = zero injected tokens.
 
 ## Configuration
@@ -103,7 +105,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (571 tests)
+pnpm test                    # vitest (573 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```

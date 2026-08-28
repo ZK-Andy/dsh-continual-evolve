@@ -192,3 +192,113 @@ describe("secret-leak guard (engine.apply)", () => {
 		}
 	});
 });
+
+describe("secret screen covers structured fields (review B2)", () => {
+	const GHP = `ghp_${"abcdefghijklmnopqrstuvwxyz123456"}`;
+
+	it("blocks a global create planting a credential in metadata", () => {
+		const { engine, cleanup } = makeEngine();
+		try {
+			expect(() =>
+				engine.apply(
+					"global",
+					undefined,
+					{
+						summary: "t",
+						rationale: "t",
+						expectedOutcome: "t",
+						edits: [{ action: "create", kind: "memory", title: "T", content: "clean body text", metadata: { env: `token ${GHP}` } }],
+					},
+					{ scope: "global" },
+				),
+			).toThrow(/create blocked.*GitHub token/s);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("blocks a global update planting a credential in reference", () => {
+		const { dir, engine, cleanup } = makeEngine();
+		try {
+			seedGlobal(dir, [entry({ id: "e1", kind: "memory", title: "T1", content: "clean" })]);
+			expect(() =>
+				engine.apply(
+					"global",
+					undefined,
+					{
+						summary: "t",
+						rationale: "t",
+						expectedOutcome: "t",
+						edits: [{ action: "update", kind: "memory", id: "e1", reference: { note: `use ${GHP}` } }],
+					},
+					{ scope: "global" },
+				),
+			).toThrow(/update blocked.*GitHub token/s);
+		} finally {
+			cleanup();
+		}
+	});
+});
+
+describe("optimistic concurrency (engine.apply, review B1)", () => {
+	it("rejects an edit whose target changed on disk since the caller's baseline", () => {
+		const { dir, engine, cleanup } = makeEngine();
+		try {
+			seedGlobal(dir, [entry({ id: "e1", kind: "memory", title: "T1", content: "baseline body" })]);
+			const baseline = engine.load("global", undefined);
+			// A concurrent writer lands after the baseline was captured.
+			engine.apply(
+				"global",
+				undefined,
+				{
+					summary: "concurrent writer",
+					rationale: "r",
+					expectedOutcome: "o",
+					edits: [{ action: "update", kind: "memory", id: "e1", title: "T1", content: "changed by another writer" }],
+				},
+				{ scope: "global" },
+			);
+			// The stale plan edits the same entry against the old baseline.
+			const result = engine.apply(
+				"global",
+				undefined,
+				{
+					summary: "stale plan",
+					rationale: "r",
+					expectedOutcome: "o",
+					edits: [{ action: "update", kind: "memory", id: "e1", title: "T1", content: "stale plan body" }],
+				},
+				{ scope: "global", baselineState: baseline },
+			);
+			expect(result.appliedEdits[0]!.applied).toBe(false);
+			expect(result.appliedEdits[0]!.error).toContain("entry changed during planning");
+			// The concurrent write is not clobbered by the stale whole-file save.
+			const reloaded = loadHarnessState(storePaths(dir, "global", undefined).stateDir, "global");
+			expect(reloaded.entries.memory.e1?.content).toBe("changed by another writer");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("accepts edits against an unchanged baseline (sequential batch path)", () => {
+		const { dir, engine, cleanup } = makeEngine();
+		try {
+			seedGlobal(dir, [entry({ id: "e1", kind: "memory", title: "T1", content: "body" })]);
+			const baseline = engine.load("global", undefined);
+			const result = engine.apply(
+				"global",
+				undefined,
+				{
+					summary: "t",
+					rationale: "r",
+					expectedOutcome: "o",
+					edits: [{ action: "update", kind: "memory", id: "e1", title: "T1", content: "new body" }],
+				},
+				{ scope: "global", baselineState: baseline },
+			);
+			expect(result.appliedEdits[0]!.applied).toBe(true);
+		} finally {
+			cleanup();
+		}
+	});
+});

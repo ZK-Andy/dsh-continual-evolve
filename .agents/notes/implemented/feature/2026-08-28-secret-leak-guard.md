@@ -40,3 +40,4 @@ harness 状态层的三个写入汇入口（晋升进全局 store、`evolve_add`
 
 - [pi/dsh 生态竞品差距分析](../../../../docs/research/pi-dsh-competitor-gap-analysis.md)：§5.2 P0 项，证据源。
 - [write-time-conflict-guard](2026-08-24-write-time-conflict-guard.md)：同一引擎咽喉的姊妹守卫；豁免语义（rollbackOf/local）刻意保持同构。
+- [sediment-quality-token-economy](2026-08-22-sediment-quality-token-economy.md)：promotion 咽喉的原始守卫决定（三重拦截），本守卫在其上扩展第四类拦截并接线 mount。

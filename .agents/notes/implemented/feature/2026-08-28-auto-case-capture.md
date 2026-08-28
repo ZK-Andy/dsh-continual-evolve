@@ -32,7 +32,7 @@ Status: implemented
 ## Consequences
 
 - 失败进化从「审计记录」升级为「回归脚手架」：下次有人动 benchmark 循环时，`auto_regression` 容器就是待校准的失败清单，同时天然是 D2 继承度量的数据源。
-- 容器 benchmark 会随时间积累——人工迁移/清理是设计内动作；`/evolve benchmark remove` 可整体移除。
+- 容器 benchmark 会随时间积累——人工迁移/清理是设计内动作；清理目前走手工删除 `evolve/benchmarks/auto_regression/` 目录（`removeBenchmark` 死函数已于 2026-08-28 审计轮删除，命令面按真实需求再议）。
 - draft case 不参与真实评估的边界靠容器隔离而非 status 过滤，run 语义未动（A5 的 status 过滤留待后续定案）。
 
 ## Testing

@@ -63,10 +63,13 @@ export function saveLedger(baseDir: string, ledger: MountLedger): void {
 
 /** Generate the plugin package files for one skill entry; returns the package dir. */
 export function renderMountPackage(baseDir: string, entry: HarnessEntry): string {
-	// Secret-leak quarantine: the entry content is embedded verbatim into the
-	// generated index.js, so a credential in the skill would be written to
-	// disk (and executed in-process). Block before ANY file is created.
-	const secret = secretLeakReason(`${entry.title}\n${entry.content}`);
+	// Secret-leak quarantine: the entry content AND its reference contract are
+	// embedded verbatim into the generated index.js, so a credential in either
+	// would be written to disk (and executed in-process). Block before ANY
+	// file is created (review audit 2026-08-28 B2: reference was unscreened).
+	const secret = secretLeakReason(
+		[entry.title, entry.content, JSON.stringify(entry.reference ?? {}), JSON.stringify(entry.arguments ?? {})].join("\n"),
+	);
 	if (secret) {
 		throw new Error(`mount blocked: ${secret}`);
 	}

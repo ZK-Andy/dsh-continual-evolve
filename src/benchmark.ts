@@ -13,7 +13,7 @@
  * optimizer can read the file and sees ciphertext only. Legacy files that
  * predate encryption carry plaintext and are still readable.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { encryptRubric, DEV_RUBRIC_KEY, deriveKey } from "./rubric.js";
 import type { EvolutionEngine } from "./service.js";
@@ -294,25 +294,6 @@ export function saveCaseMeta(baseDir: string, bid: string, cid: string, meta: Ca
 	writeFileSync(join(metaDir, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`, "utf8");
 }
 
-/** List case metas for all cases in a benchmark (missing meta → defaults). */
-export function listCaseMetas(baseDir: string, bid: string): Map<string, CaseMeta> {
-	const result = new Map<string, CaseMeta>();
-	const cases = listCases(baseDir, bid);
-	for (const c of cases) {
-		const meta = loadCaseMeta(baseDir, bid, c.id);
-		if (meta) {
-			result.set(c.id, meta);
-		}
-	}
-	return result;
-}
-
-/** Check whether a case is frozen (immutable). */
-export function isCaseFrozen(baseDir: string, bid: string, cid: string): boolean {
-	const meta = loadCaseMeta(baseDir, bid, cid);
-	return meta?.status === "frozen";
-}
-
 /**
  * Transition a case's lifecycle state. Throws on illegal transitions.
  *   draft → calibrating (start pilot)
@@ -388,13 +369,6 @@ export function caseCheckProblems(
 		if (!meta.shortcuts) problems.push("shortcuts annotation is empty");
 	}
 	return problems;
-}
-
-export function removeBenchmark(baseDir: string, bid: string): void {
-	const dir = benchmarkDir(baseDir, bid);
-	if (existsSync(dir)) {
-		rmSync(dir, { recursive: true, force: true });
-	}
 }
 
 import { readdirSync } from "node:fs";

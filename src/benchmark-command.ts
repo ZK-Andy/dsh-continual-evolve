@@ -165,7 +165,10 @@ export async function executeBenchmarkCommand(
 			const lines = [
 				`evaluation "${label}": ${outcome.cells.length} cells${failedCells > 0 ? `, ${failedCells} failed` : ""}, overall=${entry.overall ?? "?"}`,
 				...Object.entries(entry.aggregate)
-					.filter(([key]) => key !== "overall" && key !== "failed" && key !== "total")
+					// totalDurationMs is metadata, not a case (FAQ #11: the same
+					// leak class decide/decisionReport already fixed — this
+					// display path was the remaining one; review audit S4).
+					.filter(([key]) => key !== "overall" && key !== "failed" && key !== "total" && key !== "totalDurationMs")
 					.map(([key, value]) => `  ${key}: ${value ?? "?"}`),
 			];
 			if (failedCells > 0) {

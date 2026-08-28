@@ -64,7 +64,7 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 
 **原因**（两个层面）：
 1. **每 6 回合一次且重启清零**——门禁的内存计数器随进程重启归零，两次重启之间没攒够 6 回合就不会触发。这是"看起来没工作"最常见的原因。
-2. `agent/turn-stopping` 事件的 **payload 是否带 `agent` 在不同版本间变过**：最初类型声明写有 `agent` 但发射处（agent-loop）没带上；`agent/status` 的 `running → idle` 转换路径被 host 消费者（dsh-host-apiproxy）验证可用。**最终接线（`src/auto.ts`，2026-08-14 验证）**：计数用 `agent/turn-stopping`（带 agent，20:56 真实触发过一次 approved），`agent/status` idle 只作间隔检查触发点；`advanceGateState`（status 转换计数）保留为测试过的纯函数（`test/auto.test.ts`），未直接接线。
+2. `agent/turn-stopping` 事件的 **payload 是否带 `agent` 在不同版本间变过**：最初类型声明写有 `agent` 但发射处（agent-loop）没带上；`agent/status` 的 `running → idle` 转换路径被 host 消费者（dsh-host-apiproxy）验证可用。**最终接线（`src/auto.ts`，2026-08-14 验证）**：计数用 `agent/turn-stopping`（带 agent，20:56 真实触发过一次 approved），`agent/status` idle 只作间隔检查触发点；`advanceGateState`（status 转换计数，曾被保留为测试过的纯函数、未直接接线）已于 2026-08-28 审计轮删除——它与生产接线直接矛盾（docs/archive/refactor-audit.md P3-2 的删除建议至此执行）。
 
 **修复**：见 `src/auto.ts`。每次门禁判断（approved / declined / failed）都会追加到 `<dshHome>/evolve/reviews.jsonl`，是唯一的可靠观察点；armed 标记在插件注册时写入，可区分"没触发"与"没加载"。
 

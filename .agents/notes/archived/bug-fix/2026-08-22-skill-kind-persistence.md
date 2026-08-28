@@ -1,6 +1,7 @@
 # Agent Note: 修复 skill_kind 在状态重载时被静默丢弃
 
 Status: implemented
+Archived: 2026-08-28
 
 ## Problem
 

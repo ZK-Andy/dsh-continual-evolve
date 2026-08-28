@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-	baselineOf,
 	entryChangedSince,
 	loadHarnessState,
 	mergeHarnessStates,
@@ -158,7 +157,7 @@ describe("optimistic concurrency", () => {
 			updated_at: "2026-01-01T00:00:00.000Z",
 			version: 1,
 		};
-		const current = baselineOf(baseline);
+		const current = structuredClone(baseline);
 		current.entries.memory["x"] = { ...current.entries.memory["x"]!, title: "new" };
 		expect(entryChangedSince(baseline, current, "memory", "x")).toBe(true);
 		expect(entryChangedSince(baseline, current, "memory", "missing")).toBe(false);

@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { loadUsage, saveUsage, usageKey, recordInjection, getUsageCount, zeroUsageEntries } from "../src/usage.js";
+import { loadUsage, saveUsage, usageKey, recordInjection, getUsageCount } from "../src/usage.js";
 import { emptyHarnessState } from "../src/types.js";
 import type { HarnessState } from "../src/types.js";
 
@@ -155,40 +155,5 @@ describe("getUsageCount", () => {
 		expect(getUsageCount(store, "memory", "known")).toBe(3);
 		expect(getUsageCount(store, "memory", "unknown")).toBe(0);
 		expect(getUsageCount(store, "prompt", "known")).toBe(0);
-	});
-});
-
-describe("zeroUsageEntries", () => {
-	it("finds local entries with zero usage", () => {
-		const state: HarnessState = emptyHarnessState();
-		state.entries.memory["m1"] = {
-			id: "m1", kind: "memory", title: "Memory 1", content: "c", path: "",
-			scope: "local", metadata: {}, source: "evolve",
-			created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", version: 1,
-		};
-		state.entries.memory["m2"] = {
-			id: "m2", kind: "memory", title: "Memory 2", content: "c", path: "",
-			scope: "local", metadata: {}, source: "evolve",
-			created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", version: 1,
-		};
-		state.entries.prompt["p1"] = {
-			id: "p1", kind: "prompt", title: "Prompt 1", content: "c", path: "",
-			scope: "global", metadata: {}, source: "evolve",
-			created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", version: 1,
-		};
-		const store = { counts: { "memory:m2": 5 } };
-		const zeros = zeroUsageEntries(state, store);
-		expect(zeros).toHaveLength(1);
-		expect(zeros[0]).toEqual({ kind: "memory", id: "m1", title: "Memory 1" });
-	});
-
-	it("excludes global entries", () => {
-		const state: HarnessState = emptyHarnessState();
-		state.entries.memory["g1"] = {
-			id: "g1", kind: "memory", title: "Global", content: "c", path: "",
-			scope: "global", metadata: {}, source: "evolve",
-			created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", version: 1,
-		};
-		expect(zeroUsageEntries(state, { counts: {} })).toHaveLength(0);
 	});
 });

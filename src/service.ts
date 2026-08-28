@@ -35,7 +35,15 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 
 	function apply(scope: HarnessScope, sessionId: string | undefined, proposal: RefinementProposal, context?: ApplyContext): RefinementResult {
 		const paths = storePaths(baseDir, scope, sessionId);
-		const state = context?.baselineState ?? load(scope, sessionId);
+		// Working state is ALWAYS the freshest on-disk snapshot: apply mutates
+		// and persists the state whole-file, so building on the caller's
+		// planning-time copy would silently overwrite concurrent writers
+		// (another gate run, another session writing global). The caller's
+		// baselineState is ONLY the optimistic-concurrency comparison baseline
+		// — "reject edits whose target changed since planning" (review audit
+		// 2026-08-28 B1: the two roles were previously folded into one object,
+		// which made the advertised guard unreachable).
+		const state = load(scope, sessionId);
 		// Write-time conflict guard (R2): global creates are checked against
 		// the existing same-kind entries BEFORE any side effect — a
 		// near-duplicate is rejected with an actionable error (evolve_update
@@ -48,19 +56,32 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		// Secret-leak guard (P0, same throat): global creates AND updates are
 		// screened for credential-shaped literals before any side effect — a
 		// secret reaching the cross-session store is a leak even when the
-		// entry itself is legitimate. Fixed patterns, not policy-configurable.
+		// entry itself is legitimate. The screen covers every field the edit
+		// can plant: title, content, and the JSON forms of reference,
+		// arguments, and metadata (mount embeds reference verbatim into the
+		// generated plugin file). Fixed patterns, not policy-configurable.
 		const warnHits = new Map<number, SimilarEntryHit>();
 		if (scope === "global" && !context?.rollbackOf) {
 			for (const [index, edit] of proposal.edits.entries()) {
 				if (edit.action === "create" || edit.action === "update") {
-					const screenable = [edit.title, edit.content].filter((part): part is string => typeof part === "string");
+					const screenable = [
+						typeof edit.title === "string" ? edit.title : "",
+						typeof edit.content === "string" ? edit.content : "",
+						edit.reference !== undefined ? JSON.stringify(edit.reference) : "",
+						edit.arguments !== undefined ? JSON.stringify(edit.arguments) : "",
+						edit.metadata !== undefined ? JSON.stringify(edit.metadata) : "",
+					];
 					const secret = secretLeakReason(screenable.join("\n"));
 					if (secret) {
 						throw new Error(`${edit.action} blocked: ${secret}`);
 					}
 				}
 				if (edit.action !== "create") continue;
-				const hit = mostSimilarEntry(Object.values(state.entries[edit.kind]), edit.title ?? "", edit.content ?? "", CONFLICT_WARN_SCORE);
+				// An unknown kind must fail per-edit in validateEdit, never
+				// crash the whole proposal here (review audit 2026-08-28 S1).
+				const corpus = state.entries[edit.kind];
+				if (!corpus) continue;
+				const hit = mostSimilarEntry(Object.values(corpus), edit.title ?? "", edit.content ?? "", CONFLICT_WARN_SCORE);
 				if (!hit) continue;
 				if (hit.score >= CONFLICT_BLOCK_SCORE) {
 					throw new Error(`create blocked: ${buildConflictNotice(hit)} already lives in the global ${edit.kind} store — use evolve_update on it instead of adding a duplicate`);

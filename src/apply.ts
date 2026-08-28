@@ -46,20 +46,23 @@ export function applyRefinementProposal(
 		// A CREATE must never bake that view prefix into a permanent id
 		// (observed: global entries literally named "local:handoff_todo_…").
 		// Updates/deletes keep the raw id — they address existing entries.
-		const requestedId = edit.action === "create" ? edit.id?.replace(/^(?:local|global):/, "") : edit.id;
+		// (Review audit 2026-08-28 S7: planner update/delete edits against
+		// the merged view carry the same prefix — strip it there too, they
+		// address the same underlying entry.)
+		const prefixlessId = edit.id?.replace(/^(?:local|global):/, "");
+		const requestedId = edit.action === "create" ? prefixlessId : edit.id && prefixlessId;
 		const computedId = requestedId ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
 		const id = computedId ?? "";
-		const validationError = validateEdit(edit, computedId, options.scope);
-		if (validationError) {
-			appliedEdits.push({ ...edit, id, applied: false, error: validationError });
+		// Unknown kinds fail per-edit — a malformed proposal must never crash
+		// the whole pass (review audit 2026-08-28 S1).
+		const records = state.entries[edit.kind];
+		if (!records) {
+			appliedEdits.push({ ...edit, id, applied: false, error: `unsupported kind ${String(edit.kind)}` });
 			continue;
 		}
-
-		const records = state.entries[edit.kind];
 		const before = cloneEntry(records[id]);
 		const entryKey = `${edit.kind}:${id}`;
-		const baseline = cloneEntry(options.baselineState?.entries[edit.kind][id]);
-		if (options.baselineState && !touched.has(entryKey) && JSON.stringify(before ?? null) !== JSON.stringify(baseline ?? null)) {
+			if (options.baselineState && !touched.has(entryKey) && entryChangedSince(options.baselineState, state, edit.kind, id)) {
 			appliedEdits.push({
 				...edit,
 				id,
@@ -67,6 +70,13 @@ export function applyRefinementProposal(
 				applied: false,
 				error: "entry changed during planning",
 			});
+			continue;
+		}
+		// Validation sees the current entry so update rules can distinguish
+		// "carrying the persisted value" from "changing it" (skill_kind).
+		const validationError = validateEdit(edit, computedId, options.scope, before);
+		if (validationError) {
+			appliedEdits.push({ ...edit, id, applied: false, error: validationError });
 			continue;
 		}
 
@@ -178,5 +188,3 @@ export function applyRefinementProposal(
 		...(options.scope ? { scope: options.scope } : {}),
 	};
 }
-
-export { entryChangedSince };
