@@ -6,8 +6,6 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadUsage, saveUsage, usageKey, recordInjection, getUsageCount } from "../src/usage.js";
-import { emptyHarnessState } from "../src/types.js";
-import type { HarnessState } from "../src/types.js";
 
 function tmpBase(): string {
 	const base = join(process.cwd(), "test/.tmp");
