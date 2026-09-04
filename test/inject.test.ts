@@ -30,6 +30,15 @@ import {
 } from "../src/inject.js";
 import { buildRelevanceIndex, relevanceScore } from "../src/search.js";
 
+/**
+ * Relative fixture timestamp: anchored to the run time instead of a hardcoded
+ * past date, so the 30-day recency cliff in recencyScore can never reorder
+ * the fixtures as the calendar advances (the 2026-09 CI rot).
+ */
+function isoDaysAgo(days: number): string {
+	return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function entry(overrides: Partial<HarnessEntry> & { id: string; kind: HarnessEntry["kind"]; title: string }): HarnessEntry {
 	return {
 		content: "body",
@@ -39,8 +48,8 @@ function entry(overrides: Partial<HarnessEntry> & { id: string; kind: HarnessEnt
 		arguments: {},
 		metadata: {},
 		source: "evolve",
-		created_at: "2026-08-14T00:00:00.000Z",
-		updated_at: "2026-08-14T00:00:00.000Z",
+		created_at: isoDaysAgo(1),
+		updated_at: isoDaysAgo(1),
 		version: 1,
 		...overrides,
 	};
@@ -288,8 +297,8 @@ describe("entriesSectionText", () => {
 					kind: "prompt",
 					title: `Note ${i}`,
 					content: "x",
-					updated_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
-					created_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+					updated_at: isoDaysAgo(20 - i),
+					created_at: isoDaysAgo(20 - i),
 				}),
 			);
 			saveState(engine, "local", "session-main", stateWith(many));
@@ -315,8 +324,8 @@ describe("entriesSectionText", () => {
 					kind: "prompt",
 					title: `Note ${i}`,
 					content: i === 0 ? "always run the linter before writing code" : "x",
-					updated_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
-					created_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+					updated_at: isoDaysAgo(20 - i),
+					created_at: isoDaysAgo(20 - i),
 				}),
 			);
 			saveState(engine, "local", "session-main", stateWith(many));
