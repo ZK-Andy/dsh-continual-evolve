@@ -357,7 +357,7 @@ DSH 的官方设计哲学（[Everything is a plugin](https://www.deepseek.com/ha
 
 **未决问题（需拍板）**
 0. **实施载体**：新开独立项目（新仓，bootstrap 现有协作体系，旧仓冻结在 v0.6.0）还是在现有 `dsh-continual-evolve` 里重来？——倾向新仓（保实施稳定性 + 推倒重建纯洁性），待用户拍板。
-1. 框架/基因库/项目命名与域名（taxonomy）划分。
+1. **命名：已拍板（2026-09-05）——项目名 `Noogenesis`**（心智发生/智源发生：noogenesis＝心智的发生与持续生长，德日进谱系下集体知识演化过程；AGI 北极星词根，与 Gene 原语同源：gene→genesis→Noogenesis）。npm 包名与 `@noogenesis` org 当前空闲，注册前需再验一次。仍开放：中文正式名、基因库 repo 名、域名等 taxonomy 细分。
 2. `validate.yml` 具体复刻哪些 `verify-*`（最小集先跑，还是全覆盖）。
 3. 集体层首批"只读消费公开基因库"起步，还是直接开放贡献 PR（后者需维护者 + 免费 CI 额度管理）。
 4. 是否保留"单人队列 → 共享"迁移开关（默认离线，显式接共享层）。
