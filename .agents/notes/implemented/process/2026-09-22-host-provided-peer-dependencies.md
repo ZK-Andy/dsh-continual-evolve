@@ -6,35 +6,41 @@ Status: implemented
 
 ## Problem
 
-插件以 `dsh.bundle` 形态挂到 profile 下，运行期从宿主进程借包，但"哪些包算宿主提供"此前没有可审计的判据：`@deepseek-ai/schemastery` 是 `lib/index.js` 的运行期值导入，却只存在于 devDependencies，peerDependencies 里缺它。
+插件以 `dsh.bundle` 形态挂到 profile 下，运行期从宿主进程借包，但"哪些包算宿主提供、以哪个版本为准"此前没有可审计的判据：`@deepseek-ai/schemastery` 是 `lib/index.js` 的运行期值导入，却只存在于 devDependencies；已声明的 peer 范围 `^0.1.0-rc.6` 在 node-semver 下连实际运行过的 0.1.1-rc.2 与 0.1.7-alpha.1 都不满足（预发布版只被同 `major.minor.patch` 的比较符接受）；devDependencies 又停在 2026-08 的 0.1.1-rc.2。
 
-两个后果。其一，profile 里可能同时存在两份 schemastery（宿主 3.18.3 / 本地锁 3.18.1），配置 schema 的类型与实例身份不一致。其二，dsh 0.1.7-alpha.1 起 profile 解析改为运行时拦截：位于 linked root（`link:` 到仓库目录的插件）的模块，只有被该目录的 `peerDependencies` 列名才路由到宿主副本，未列名者退化为沿插件目录向上原生查找；消费方只装发行包时，这条路径以 `ERR_MODULE_NOT_FOUND` 告终。
+三个后果。其一，profile 里可能出现两份 schemastery，配置 schema 的类型与实例身份不一致。其二，dsh 0.1.7-alpha.1 起 profile 解析改为运行时拦截：位于 linked root（`link:` 到仓库目录的插件）的模块，只有被该目录的 `peerDependencies` 列名才路由到宿主副本，未列名者退化为沿插件目录向上原生查找，消费方只装发行包时以 `ERR_MODULE_NOT_FOUND` 告终。其三，peer 声明的版本与 devDependencies 的类型面各说各话时，编译期看到的 API 不是运行期用的 API，漂移只能等真实会话暴露。
 
 ## Decision
 
 判据是**构建产物里的值导入集合**，不是源码声明：
 
-- `lib/**/*.js` 中作为值导入的宿主包，必须同时出现在 `peerDependencies`（声明对宿主的依赖）与 `devDependencies`（本地构建与测试用），二者的版本都必须是宿主实际能提供的范围。
-- 仅以 `import type` 出现的宿主包不在此列：编译后擦除，不参与运行期解析。
+- `lib/**/*.js` 中作为值导入的宿主包，必须同时出现在 `peerDependencies`（声明对宿主的依赖）与 `devDependencies`（本地构建与测试用）。
+- peer 范围逐一枚举**实际验证过的预发布线**（预发布版不落在通配范围内）：当前三个 dsh 包为 `^0.1.0-rc.6 || ^0.1.7-alpha.1`，cordis 为 `^4.0.1`，schemastery 为 `^3.18.1`。
+- devDependencies 钉宿主正在运行的**精确版本**（cordis 4.0.3、dsh-* 0.1.7-alpha.1、schemastery 3.18.3），使编译期 API 面即运行期 API 面。
+- 开发图中由自动 peer 安装留下的旧世代副本（dsh-invariants / dsh-scope / dsh-session / dsh-system-prompt / dsh-attachment / dsh-user-approval）由 `pnpm-workspace.yaml` 的 `overrides` 收敛到同一世代；该设置属根项目，不随包发布，消费方仍从自己的宿主解析。
 - 宿主已提供的包**不进 `dependencies`**：那会在 profile 内再装一份，正是本规则要消除的双实例。
+- `minimumReleaseAgeExclude` 对同一个包只能保留**一条**规则：多个版本条目会让该包的匹配失效（已实证），因此每包只列当前世代那一个版本。
 
-当前清单——运行期值导入：`@deepseek-ai/cordis`、`@deepseek-ai/dsh-home-paths`、`@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-tools`、`@deepseek-ai/schemastery`；类型专用（不声明）：`@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-commands`。
+当前清单——运行期值导入：`@deepseek-ai/cordis`、`@deepseek-ai/dsh-home-paths`、`@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-tools`、`@deepseek-ai/schemastery`；类型专用（不进 peer）：`@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-commands`。源码未引用的 `@deepseek-ai/dsh-system-prompt` 已从 devDependencies 移除。
 
-本变更据此把 `"@deepseek-ai/schemastery": "^3.18.1"` 补进 peerDependencies（该范围同时覆盖宿主 3.18.3 与本地 3.18.1）；lockfile 无变化，因为 pnpm v9 的 importers 段不记录 peerDependencies。
+lockfile 的 importers 段不记录 peerDependencies，peer 范围的增补不改 lockfile。
 
 ## Alternatives considered
 
-- **放进 `dependencies`**：profile 内会再装一份 schemastery，双实例与身份不一致照旧。落败于同一理由，`faf981e` 对另外三个包已作同样否决。
-- **不声明，靠 profile 本地候选或 installation scope 兜底**：对 pnpm 装进 profile 的插件确实可行（profile 层会回落到 installation scope 条目），但开发接线是 `link:`（linked root），只按 peer 路由；消费方拿不到本地副本时即解析失败。落败于解析路径不唯一。
-- **把 schemastery 内联进 `lib/`**：需要引入打包链，且仍会得到与宿主不同源的 schema 实例。落败于成本与目标不符。
+- **devDependencies 停在 0.1.1-rc.2**：编译期看到的是两个月前的 API 面，0.1.7 的签名与词汇变更只能等运行期暴露。落败于本次实测：升级后 `tsc` 一次找出三处漂移。
+- **peer 范围写成 `*` 或 `>=0.1.0-rc.6`**：`*` 不匹配任何预发布版，`>=0.1.0-rc.6` 同样因比较符元组规则挡掉 0.1.7-alpha.1，两者都表达不出真实契约。落败。
+- **把世代收敛写进 `package.json` 的 `pnpm.overrides`**：那是发布物的一部分，语义上会被消费方误读为对宿主的要求。落败于根项目设置即可达意。
+- **把内部 peer（dsh-invariants 等）加成显式 devDependencies**：等于把宿主内部实现写进本包清单，且每升一代都要改一遍。落败。
+- **把 schemastery 放进 `dependencies` 或内联进 `lib/`**：前者在 profile 内再装一份、双实例照旧，后者需要打包链且仍与宿主不同源。落败。
 
 ## Consequences
 
-收益：发行包在 profile 内安装与 `link:` 开发两种解析路径下都取宿主那一份 schemastery；依赖契约与已有四个 peer 同源，可用"值导入集合 ⊆ peerDependencies"一条规则审计。
+收益：包在 profile 内安装与 `link:` 开发两种解析路径下都取宿主那一份依赖；编译期类型面与运行期 API 面同源，宿主漂移在 `tsc` 阶段暴露。
 
-代价：peer 声明让 0.1.7-alpha.1 的拦截强制把本地 devDependencies 版本排除在运行期之外——插件的运行期 API 面等于宿主版本（当前 0.1.7-alpha.1，devDeps 仍是 0.1.1-rc.2）。因此宿主 API 漂移不能只靠编译期发现，跨版本升级时需额外跑一次真实会话回归。已核对本插件直接导入的符号（`defineTool`、`createUserMessage`、`BlockAssembler`、`ReasoningEffortId`、`Logger`、`expandHomePath`、`resolveDshHome`、schemastery 默认导出）与所用服务名（`tools`/`llm`/`systemPrompt`/`commands`/`goals`/`userQuestions`）在 0.1.7-alpha.1 中仍然存在。
+代价：devDependencies 与 lockfile 随宿主世代整体更新，升级粒度变粗；`minimumReleaseAgeExclude` 会随同日发布的世代增长（pnpm 在安装时自动追加）。版本范围表达的是"验证过的线"而非"能加载的线"，新增宿主世代需要显式加一段并跑一次编译期对账。
 
 ## Related
 
 - 上游机制：`@deepseek-ai/dsh-app-boot` 的 `routeLinked`（linked root 按 `peerDependencies` 路由）与 `createRuntimeResolution`。
 - 同类决定：`faf981e`（cordis / dsh-home-paths / dsh-llm / dsh-tools 升为 peer）。
+- 本次对账定位到的代码级漂移：[2026-09-22-host-0-1-7-api-drift.md](../bug-fix/2026-09-22-host-0-1-7-api-drift.md)。
