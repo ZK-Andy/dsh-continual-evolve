@@ -32,6 +32,15 @@ import {
 const PROMOTABLE_BODY =
 	"Prefer small evidence-backed edits and verify assumptions against the actual repository state before writing any code change.";
 
+/**
+ * Relative fixture timestamp: anchored to the run time instead of a hardcoded
+ * past date, so the 30-day recency cliff in recencyScore can never flip the
+ * stale classification of the default fixtures as the calendar advances.
+ */
+function isoDaysAgo(days: number): string {
+	return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function entry(id: string, kind: RefinementKind, title: string, overrides: Partial<HarnessEntry> = {}): HarnessEntry {
 	return {
 		id,
@@ -44,8 +53,8 @@ function entry(id: string, kind: RefinementKind, title: string, overrides: Parti
 		arguments: {},
 		metadata: {},
 		source: "evolve",
-		created_at: "2026-08-17T00:00:00.000Z",
-		updated_at: "2026-08-17T00:00:00.000Z",
+		created_at: isoDaysAgo(1),
+		updated_at: isoDaysAgo(1),
 		version: 1,
 		...overrides,
 	};
