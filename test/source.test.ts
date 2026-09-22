@@ -10,6 +10,11 @@ function agentWith(events: unknown[]): AgentLike {
 	return { id: "session-main", session: { events } };
 }
 
+/** A session exposing only the reader later harness generations provide. */
+function agentWithSnapshot(events: unknown[]): AgentLike {
+	return { id: "session-main", session: { snapshotEvents: () => events } };
+}
+
 const userRow = (seq: number, content = "hi") => ({
 	type: "user/message",
 	seq,
@@ -41,6 +46,16 @@ describe("recentUserSeqs", () => {
 		expect(recentUserSeqs(undefined)).toEqual([]);
 		expect(recentUserSeqs({ id: "s" })).toEqual([]);
 		expect(recentUserSeqs(agentWith([{ type: "assistant/message", seq: 1, data: {} }]))).toEqual([]);
+	});
+
+	it("reads the log through the snapshot reader when the events getter is absent", () => {
+		const agent = agentWithSnapshot([
+			userRow(10),
+			{ type: "assistant/message", seq: 11, data: {} },
+			userRow(12),
+		]);
+		expect(recentUserSeqs(agent)).toEqual([10, 12]);
+		expect(entrySourceOf(agent, "session-main")).toEqual({ sessionId: "session-main", seqs: [10, 12] });
 	});
 });
 

@@ -4,7 +4,7 @@
  * the engine. `global: true` is required explicitly for cross-session edits.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { defineTool } from "@deepseek-ai/dsh-tools";
+import { defineTool, type ToolRunContext } from "@deepseek-ai/dsh-tools";
 import type { HarnessScope, RefinementEdit, RefinementKind } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt } from "./render.js";
@@ -16,18 +16,13 @@ import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js"
 
 const SCOPES: HarnessScope[] = ["local", "global"];
 
-/** Minimal structural view of the tool execution context (agent is optional). */
-interface ToolExec {
-	agent?: { id: string; session?: { events?: readonly unknown[] } };
-}
-
 /** Accept both the boolean tool parameter (`global: true`) and the string form. */
 export function scopeOf(value: unknown, fallback: HarnessScope): HarnessScope {
 	return value === "global" || value === true ? "global" : fallback;
 }
 
 /** The calling agent's session id; tools always run inside an agent scope. */
-function sessionIdOf(exec: ToolExec): string | undefined {
+function sessionIdOf(exec: ToolRunContext): string | undefined {
 	return exec.agent?.id;
 }
 
@@ -204,7 +199,7 @@ function applyEditsText(
 	scope: HarnessScope,
 	sessionId: string | undefined,
 	edits: RefinementEdit[],
-	agent?: ToolExec["agent"],
+	agent?: ToolRunContext["agent"],
 ): string {
 	const result = engine.apply(
 		scope,

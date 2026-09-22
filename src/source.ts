@@ -4,12 +4,13 @@
  * citation of (sessionId, seqs) expands back to the exact original
  * conversation rows (the durable log under `<dshHome>/sessions/...`).
  *
- * The extraction reads the live `agent.session.events` log (duck-typed, no
- * dsh-session dependency) and only ever selects direct human messages —
- * injected plugin context and tool results never become citations.
+ * The extraction reads the live session log through the reader the running
+ * harness generation exposes (duck-typed, no dsh-session dependency) and only
+ * ever selects direct human messages — injected plugin context and tool
+ * results never become citations.
  */
 import type { EntrySource } from "./types.js";
-import type { AgentLike } from "./inject.js";
+import { type AgentLike, sessionEventsOf } from "./inject.js";
 
 /** At most this many source user messages are cited per entry. */
 export const MAX_SOURCE_MESSAGES = 3;
@@ -31,8 +32,8 @@ interface EventRowLike {
  * callers then simply omit the citation.
  */
 export function recentUserSeqs(agent: AgentLike | undefined, opts?: { maxMessages?: number }): number[] {
-	const events = agent?.session?.events;
-	if (!events || events.length === 0) {
+	const events = sessionEventsOf(agent);
+	if (events.length === 0) {
 		return [];
 	}
 	const maxMessages = opts?.maxMessages ?? MAX_SOURCE_MESSAGES;

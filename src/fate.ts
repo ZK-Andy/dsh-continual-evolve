@@ -32,6 +32,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementProposal, RefinementResult } from "./types.js";
+import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 import type { EvolutionEngine } from "./service.js";
 import type { AutoRefineReason } from "./review.js";
 import type { AutoReviewConfig, GateState, ReviewRecord } from "./auto.js";
@@ -446,7 +447,7 @@ function notifyFateApplied(ctx: Context, agent: Agent, applied: string[]): void 
 		agent.followup(
 			createUserMessage({
 				content: [{ type: "text", text: buildFateNotice(applied) }],
-				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
+				source: EVOLVE_MESSAGE_SOURCE,
 			}),
 		);
 	} catch (cause) {

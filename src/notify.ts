@@ -4,11 +4,12 @@
  * module queues a short follow-up turn after an approved gate run so the
  * user SEES what was persisted, how to inspect it, and how to roll it back.
  *
- * The notice is a plugin-sourced user message (`agent.followup`), so it is
- * rendered in the session transcript like any other input and the agent
- * answers with a one-line confirmation. It never fakes tool or assistant
+ * The notice is a `continual-evolve`-sourced user message (`agent.followup`),
+ * so it is rendered in the session transcript like any other input and the
+ * agent answers with a one-line confirmation. It never fakes tool or assistant
  * events, so session replay, the ordered surface, and derived history stay
- * untouched: the notice is a plain `user/message` with a plugin source.
+ * untouched: the notice is a plain `user/message` carrying this plugin's own
+ * source kind.
  *
  * Every mechanical property stays in code: the notice text is built from the
  * applied refinement result, never from model text.
@@ -16,6 +17,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 import type { RefinementResult } from "./types.js";
 
 /**
@@ -51,7 +53,7 @@ export function notifyAutoReview(ctx: Context, agent: Agent, result: RefinementR
 		agent.followup(
 			createUserMessage({
 				content: [{ type: "text", text: buildGateNotice(result, turnsSinceLastReview) }],
-				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
+				source: EVOLVE_MESSAGE_SOURCE,
 			}),
 		);
 	} catch (cause) {

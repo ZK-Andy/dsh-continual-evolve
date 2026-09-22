@@ -10,6 +10,7 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
+import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 
 export interface StreamTextOptions {
 	provider: string;
@@ -38,7 +39,7 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 		messages: [
 			createUserMessage({
 				content: [{ type: "text", text: opts.prompt }],
-				source: { kind: "plugin", plugin: "dsh-continual-evolve" },
+				source: EVOLVE_MESSAGE_SOURCE,
 			}),
 		],
 		reasoningEffort: ReasoningEffortId("off"),

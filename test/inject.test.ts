@@ -563,6 +563,15 @@ describe("recentUserText", () => {
 		expect(recentUserText(agent, { maxMessages: 2 })).toBe("two three");
 		expect(recentUserText(agent, { maxChars: 5 })).toBe("one t");
 	});
+
+	it("reads the log through the snapshot reader when the events getter is absent", () => {
+		const rows = [userEvent([{ type: "text", text: "first" }]), userEvent("second direct")];
+		expect(recentUserText({ id: "s", session: { snapshotEvents: () => rows } })).toBe("first second direct");
+	});
+
+	it("returns '' when the session exposes neither reader", () => {
+		expect(recentUserText({ id: "s", session: {} })).toBe("");
+	});
 });
 
 describe("nearestLocalStateWithEntries", () => {

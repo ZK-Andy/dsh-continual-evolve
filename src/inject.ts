@@ -60,12 +60,36 @@ export interface AgentLike {
 			parentSession?: string;
 		};
 		/**
-		 * Live append-only session log. Typed loosely (`unknown[]`) so the real
-		 * `SessionEvent[]` union from dsh-session is assignable; rows are
-		 * narrowed to {@link UserMessageEventLike} at read time.
+		 * Live append-only session log as the public `session.events` getter.
+		 * Typed loosely (`unknown[]`) so the real `SessionEvent[]` union from
+		 * dsh-session is assignable; rows are narrowed to
+		 * {@link UserMessageEventLike} at read time.
 		 */
 		events?: readonly unknown[];
+		/**
+		 * Full-log snapshot reader that answers the same rows in the same order
+		 * where the `events` getter is absent. Called with no arguments for the
+		 * whole log, which is the read {@link sessionEventsOf} needs.
+		 */
+		snapshotEvents?: () => readonly unknown[];
 	};
+}
+
+/**
+ * The session's event log through whichever reader the running harness
+ * generation exposes. Returns [] when neither is present, so every caller
+ * degrades to its empty-log path rather than throwing.
+ */
+export function sessionEventsOf(agent: AgentLike | undefined): readonly unknown[] {
+	const session = agent?.session;
+	if (session === undefined) {
+		return [];
+	}
+	if (Array.isArray(session.events)) {
+		return session.events;
+	}
+	const snapshot = session.snapshotEvents?.();
+	return Array.isArray(snapshot) ? snapshot : [];
 }
 
 /** The section-provider context shape we consume (subset of AssembleContext). */
@@ -193,8 +217,8 @@ function extractBlockText(content: unknown): string {
  * falls back to pure recency.
  */
 export function recentUserText(agent: AgentLike | undefined, opts?: { maxMessages?: number; maxChars?: number }): string {
-	const events = agent?.session?.events;
-	if (!events || events.length === 0) {
+	const events = sessionEventsOf(agent);
+	if (events.length === 0) {
 		return "";
 	}
 	const maxMessages = opts?.maxMessages ?? MAX_QUERY_MESSAGES;

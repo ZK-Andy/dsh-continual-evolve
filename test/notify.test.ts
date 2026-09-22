@@ -110,11 +110,10 @@ describe("notifyAutoReview", () => {
 		notifyAutoReview(ctx, agent, res, 6);
 
 		expect(followup).toHaveBeenCalledTimes(1);
-		const message = followup.mock.calls[0][0] as { content: Array<{ type: string; text: string }>; source: { kind: string; plugin: string } };
+		const message = followup.mock.calls[0][0] as { content: Array<{ type: string; text: string }>; source: { kind: string } };
 		expect(message.content[0].type).toBe("text");
 		expect(message.content[0].text).toContain("记忆「T」（mem_a）");
-		expect(message.source.kind).toBe("plugin");
-		expect(message.source.plugin).toBe("dsh-continual-evolve");
+		expect(message.source.kind).toBe("continual-evolve");
 	});
 
 	it("contains a follow-up failure instead of throwing", () => {
