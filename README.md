@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-576%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-600%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -50,7 +50,7 @@ Commands (in-session):
 | Command | Effect |
 |---|---|
 | `/evolve` | help + current local store |
-| `/evolve list · history · rollback <id>` | inspect and revert (add `global` for the cross-session store) |
+| `/evolve list · history · rollback <id>` | inspect and revert (add `project` for this project's store, `global` for the cross-project store) |
 | `/evolve plan [msg]` | run the LLM planner against the store |
 | `/evolve wrapup` | assess this session's local entries: promote / archive / keep |
 | `/evolve archive · unarchive · demote <id>` | hide from injection (data kept, restorable) — `demote` targets global noise |
@@ -66,7 +66,7 @@ Model tools: `evolve_list / add / update / delete / rollback`.
 
 For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
 
-Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a directory index (`[kind:id] title`, capped at 15 lines with a fold counter) — full text via `evolve_list`. Empty store = zero injected tokens.
+Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a relevance-ordered directory index (`[memory:type:id] title` hooks, capped at 15 lines with a fold counter) — full text via `evolve_list`. Empty store = zero injected tokens.
 
 ## Configuration
 
@@ -78,7 +78,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `maxReviewInputChars` | `40000` | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
 | `notifyOnAutoReview` | `true` | visible follow-up notice after an applied gate run |
-| `requireGlobalApproval` | `true` | global edits ask for explicit approval |
+| `requireGlobalApproval` | `true` | global and project edits ask for explicit approval |
 | `localFate` | `true` | gate audits local entries and proposes promote/archive (consulted, never silent) |
 | `fateIntervalTurns` | follows `reviewIntervalTurns` | minimum turns between fate assessments |
 | `goalBlockedWrapupTurns` | `3` | consecutive blocked-goal gate runs trigger one fate assessment (`0` disables) |
@@ -106,7 +106,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (576 tests)
+pnpm test                    # vitest (600 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -115,7 +115,7 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, gate, fate, benchmark, usage…
-├── test/                  # vitest suites (36 files)
+├── test/                  # vitest suites (37 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)
