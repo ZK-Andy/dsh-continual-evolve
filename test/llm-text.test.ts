@@ -90,13 +90,17 @@ describe("selectLowestReasoningEffort", () => {
 		expect(selectLowestReasoningEffort(info)).toBe(ReasoningEffortId("low"));
 	});
 
-	it("prefers a closing level wherever it appears", () => {
-		expect(selectLowestReasoningEffort(resolvedModelInfo(["high", "none", "low"]))).toBe(ReasoningEffortId("none"));
+	it("prefers the first enabled level and ignores a closing level", () => {
+		expect(selectLowestReasoningEffort(resolvedModelInfo(["low", "none", "high"]))).toBe(ReasoningEffortId("low"));
+	});
+
+	it("falls back to a closing level only when no enabled level exists", () => {
+		expect(selectLowestReasoningEffort(resolvedModelInfo(["off", "none"]))).toBe(ReasoningEffortId("off"));
 	});
 });
 
 describe("streamText reasoning effort", () => {
-	it("prefers a declared closing effort for the exact model", async () => {
+	it("prefers a declared enabled effort over a closing effort for the exact model", async () => {
 		const requests: GenerateOptions[] = [];
 		const observations: StreamTextObservation[] = [];
 		const ctx = ctxWith(
@@ -105,8 +109,8 @@ describe("streamText reasoning effort", () => {
 			requests,
 		);
 		await streamText(ctx, { ...BASE_OPTS, onUsage: (value) => observations.push(value) });
-		expect(requests[0]).toMatchObject({ provider: BASE_OPTS.provider, model: BASE_OPTS.model, reasoningEffort: ReasoningEffortId("off") });
-		expect(observations[0]?.reasoningEffort).toBe(ReasoningEffortId("off"));
+		expect(requests[0]).toMatchObject({ provider: BASE_OPTS.provider, model: BASE_OPTS.model, reasoningEffort: ReasoningEffortId("low") });
+		expect(observations[0]?.reasoningEffort).toBe(ReasoningEffortId("low"));
 	});
 
 	it("uses the first enabled level when the model declares no closing level", async () => {

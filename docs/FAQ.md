@@ -81,12 +81,13 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 
 **原因**：共享的直属 LLM 调用过去把 `reasoningEffort` 固定为 `off`。这对支持关闭档的模型能避免可见思考耗尽 JSON 输出预算，但不能代表所有 provider/model 的合法 effort 集合；不同模型的 effort id 也不统一，不能固定改成 `low` 或继承主会话的 `xhigh`。
 
-**修复**：[`src/llm-text.ts`](../src/llm-text.ts) 在请求前用精确 provider/model 调用 `ctx.llm.resolveModelInfo()`：若模型公布 `disabled`/`off`/`none` 就选择关闭档，否则选择其公布的第一个 effort；没有 reasoning 元数据时省略字段，让 provider 使用自身默认。`reviewModel` 覆盖时按覆盖后的路由重新解析。能力解析失败会保留为 `error`，不会盲目重试；max-tokens、abort、usage 与审计语义不变。
+**修复**：[`src/llm-text.ts`](../src/llm-text.ts) 在请求前用精确 provider/model 调用 `ctx.llm.resolveModelInfo()`：优先选择模型公布的第一个开启档（跳过 `disabled`/`off`/`none`），只有完全没有开启档时才回退到第一个关闭档；没有 reasoning 元数据时省略字段，让 provider 使用自身默认。`reviewModel` 覆盖时按覆盖后的路由重新解析。能力解析失败会保留为 `error`，不会盲目重试；max-tokens、abort、usage 与审计语义不变。
 
 ```ts
 const modelInfo = await ctx.llm.resolveModelInfo(provider, model);
 const efforts = modelInfo.reasoning?.efforts ?? [];
-const reasoningEffort = efforts.find(({ id }) => id === "disabled" || id === "off" || id === "none")?.id ?? efforts[0]?.id;
+const closing = new Set(["disabled", "off", "none"]);
+const reasoningEffort = efforts.find(({ id }) => !closing.has(id))?.id ?? efforts[0]?.id;
 await ctx.llm.stream({
   provider, model, system, messages,
   ...(reasoningEffort ? { reasoningEffort } : {}),

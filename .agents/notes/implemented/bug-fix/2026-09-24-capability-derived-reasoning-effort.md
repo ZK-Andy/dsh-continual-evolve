@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-- `streamText()` 在共享入口按精确 provider/model feature-detect `ctx.llm.resolveModelInfo()`，从 `modelInfo.reasoning.efforts` 选择模型声明的最低档：优先关闭档 `disabled`/`off`/`none`，否则使用适配器公布的第一个 effort。
+- `streamText()` 在共享入口按精确 provider/model feature-detect `ctx.llm.resolveModelInfo()`，从 `modelInfo.reasoning.efforts` 选择模型声明的最低开启档：跳过关闭档 `disabled`/`off`/`none`，使用适配器公布的第一个开启 effort；只有完全没有开启档时才回退到第一个关闭档。
 - 没有 reasoning 元数据或旧宿主没有能力查询方法时省略 `reasoningEffort`，让 provider 使用自身默认；不捕获能力错误后重试，也不改变主 Agent 的推理设置。
 - 保持 maxTokens、prefix-cache、abort、usage observer、失败审计和 reviewModel 覆盖路径不变；`StreamTextObservation` 额外携带最终采用的 effort 供诊断。
 - 回归测试覆盖能力解析、最低档/关闭档、无元数据省略、resolver 失败不重试、调用参数和 reviewModel 覆盖；设计、FAQ 与双语 README 同步。
@@ -24,7 +24,7 @@ Status: implemented
 
 - review、planner、wrapup、fate 共享同一能力选择语义；reviewModel 覆盖按覆盖后的路由解析，不会复用主会话模型能力。
 - 旧宿主或测试 fake 没有 `resolveModelInfo` 时保持原请求形状，只省略新增 effort 字段；能力解析错误在 provider 流开始前暴露，observer 仍收到 `outcome: "error"`。
-- 现有 finish、abort、max-tokens、usage、prefix-cache 与审计语义保持不变；全量测试为 684 tests / 43 files，typecheck 与 oxlint 通过。
+- 现有 finish、abort、max-tokens、usage、prefix-cache 与审计语义保持不变；全量测试为 685 tests / 43 files，typecheck 与 oxlint 通过。
 - 每次直属调用增加一次精确模型能力解析；若后续需要消除 HMR 期间能力与 dispatch 的代际竞态，再单独评估 DSH `prepareCall` 绑定方案。
 
 ---

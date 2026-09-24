@@ -60,9 +60,10 @@ const CLOSED_REASONING_EFFORTS = new Set(["disabled", "off", "none"]);
 /**
  * Select the lowest reasoning effort an exact model advertises.
  *
- * A declared closing effort wins even when the adapter lists it after enabled
- * levels. Otherwise the adapter-preferred first effort is the lowest level it
- * exposes; no capability list means no caller-supplied effort.
+ * An enabled effort wins over a declared closing effort. The adapter-preferred
+ * first enabled effort is the lowest enabled level it exposes; a closing effort
+ * is only a fallback when the model publishes no enabled level. No capability
+ * list means no caller-supplied effort.
  *
  * @param modelInfo - exact resolved-model metadata, when the provider exposes it.
  * @returns The selected provider-owned effort id, or `undefined` when unknown.
@@ -77,9 +78,8 @@ export function selectLowestReasoningEffort(modelInfo: Pick<LlmResolvedModelInfo
 		if (typeof effort?.id !== "string") {
 			throw new Error("evolve: invalid model reasoning metadata");
 		}
-		if (CLOSED_REASONING_EFFORTS.has(effort.id)) return effort.id;
 	}
-	return efforts[0]?.id;
+	return efforts.find((effort) => !CLOSED_REASONING_EFFORTS.has(effort.id))?.id ?? efforts[0]?.id;
 }
 
 async function resolveReasoningEffort(ctx: Context, opts: StreamTextOptions): Promise<ReasoningEffortId | undefined> {

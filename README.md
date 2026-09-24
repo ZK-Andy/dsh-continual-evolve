@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-684%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-685%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -26,7 +26,7 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 ## How it works
 
 1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from incremental snapshots captured after successful turns (plus compaction checkpoints).
-2. **Capability-aware auxiliary calls** — review, planner, wrapup, and fate resolve the exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts) and use the lowest advertised reasoning effort; models without reasoning metadata use their provider default.
+2. **Capability-aware auxiliary calls** — review, planner, wrapup, and fate resolve the exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts) and use the lowest advertised enabled reasoning effort (falling back to a closing effort only when no enabled level exists); models without reasoning metadata use their provider default.
 3. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
 4. **Approve** — global and project writes require explicit human approval; local-fate proposals are consulted before they land.
 5. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a relevance-ordered capped directory index (`- [memory:type:id] title` hooks, full text one `evolve_list` away).
@@ -121,7 +121,7 @@ paused.
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (684 tests)
+pnpm test                    # vitest (685 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
