@@ -9,7 +9,7 @@
  * and JSON parsing.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
+import { BlockAssembler, createUserMessage, ReasoningEffortId, type Message } from "@deepseek-ai/dsh-llm";
 import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 
 export interface StreamTextOptions {
@@ -19,6 +19,13 @@ export interface StreamTextOptions {
 	prompt: string;
 	maxTokens?: number;
 	signal?: AbortSignal | undefined;
+	/**
+	 * Route A session prefix: session-derived messages sent before the
+	 * trailing caller message so providers with prompt caching can serve
+	 * the shared context at cache-read price. Empty/omitted keeps the
+	 * legacy single-message request.
+	 */
+	prefixMessages?: readonly Message[];
 }
 
 /**
@@ -37,6 +44,7 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 		model: opts.model,
 		system: opts.system,
 		messages: [
+			...(opts.prefixMessages ?? []),
 			createUserMessage({
 				content: [{ type: "text", text: opts.prompt }],
 				source: EVOLVE_MESSAGE_SOURCE,

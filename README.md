@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-600%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-618%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -92,6 +92,8 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `autoRollbackOnReject` | `true` | deterministic rollback after a benchmark rejection |
 | `autoCase` | `true` | failed evolution attempts are captured as draft regression cases (`auto_regression` benchmark) |
 | `reviewModel` | agent's own | optional cheaper model for the gate (`"provider/model"`) |
+| `plannerPrefixCache` | `auto` | Route A session-prefix input when cache evidence exists (`session` always, `off` legacy flat text) |
+| `plannerPrefixMaxChars` | `12000` | session-prefix budget for Route A planning inputs (chars) |
 
 Example profile patch:
 

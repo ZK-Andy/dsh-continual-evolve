@@ -7,9 +7,12 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { AssistantMessage, UserMessage } from "@deepseek-ai/dsh-llm";
 import type { HarnessState, RefinementResult } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
+import { sessionEventsOf } from "./inject.js";
+import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
 import { streamText } from "./llm-text.js";
 
 export interface AutoRefineReview {
@@ -37,6 +40,13 @@ export interface ReviewOptions {
 	/** Gap C1: optional provider/model override for the review gate (cheaper model). */
 	overrideProvider?: string;
 	overrideModel?: string;
+	/**
+	 * Prefix-cache routing for the gate input. Route A prepends a
+	 * session-derived message prefix and drops the flat `<conversation>`
+	 * block (same source, structured form); Route B keeps it. Absent →
+	 * auto-detect with the default budget.
+	 */
+	prefixCache?: PrefixCacheOptions;
 }
 
 export const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
@@ -134,13 +144,29 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 	if (!options.trajectory || options.trajectory.length === 0) {
 		throw new Error("evolve: review gate has no trajectory to judge");
 	}
+	// Route A carries the judged conversation as a session-derived message
+	// prefix and drops the flat block; an empty prefix falls back to B.
+	const events = sessionEventsOf(agent);
+	const routing = resolvePrefixCache(options.prefixCache);
+	const route = detectPlannerRoute(events, routing.mode);
+	let prefixMessages: (UserMessage | AssistantMessage)[] = [];
+	if (route === "A") {
+		prefixMessages = buildPrefixMessages(events, {
+			...(provider ? { provider } : {}),
+			...(model ? { model } : {}),
+			maxChars: routing.maxChars,
+		});
+	}
+	const conversationBlock = prefixMessages.length > 0 ? "" : `<conversation>\n${options.trajectory}\n</conversation>`;
 	const userPrompt = [
 		`<trigger>\n${options.context.reason}; ${options.context.turnsSinceLastReview} turns since the last review\n</trigger>`,
 		`<current_harness_state>\n${formatHarnessStateForPrompt(state)}\n</current_harness_state>`,
 		`<refinement_history>\n${historyForPrompt(history)}\n</refinement_history>`,
-		`<conversation>\n${options.trajectory}\n</conversation>`,
+		conversationBlock,
 		"Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local edits; do not ask for global refinement here.",
-	].join("\n\n");
+	]
+		.filter(Boolean)
+		.join("\n\n");
 
 	const text = await streamText(ctx, {
 		provider,
@@ -149,6 +175,7 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 		prompt: userPrompt,
 		maxTokens: options.budgetTokens ?? 8000,
 		signal: options.signal,
+		...(prefixMessages.length > 0 ? { prefixMessages } : {}),
 	});
 	return parseAutoRefineReview(text);
 }

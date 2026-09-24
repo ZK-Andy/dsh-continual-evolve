@@ -8,10 +8,12 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { AssistantMessage, UserMessage } from "@deepseek-ai/dsh-llm";
 import type { HarnessState, RefinementProposal, RefinementResult } from "./types.js";
 import { parseProposal } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
-import { recentUserText } from "./inject.js";
+import { recentUserText, sessionEventsOf } from "./inject.js";
+import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
 import { skillQualityGuide } from "./skillquality.js";
 import { streamText } from "./llm-text.js";
 
@@ -111,6 +113,14 @@ export interface PlanOptions {
 	global?: boolean;
 	signal?: AbortSignal;
 	maxOutputTokens?: number;
+	/**
+	 * Prefix-cache routing for the planning input. Route A prepends a
+	 * session-derived message prefix and drops the auto-extracted
+	 * trajectory block (an explicitly passed `trajectory` is always kept);
+	 * Route B keeps the legacy flat-text input. Absent → auto-detect with
+	 * the default budget.
+	 */
+	prefixCache?: PrefixCacheOptions;
 }
 
 export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<RefinementProposal> {
@@ -122,10 +132,22 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		? "Requested scope: global. Only propose stable cross-session lessons, durable preferences, reusable skills/subagents, or explicitly project-qualified facts."
 		: "Requested scope: local. Prefer session-scoped edits for current task progress; global entries are read-only context — do not propose update/delete for them.";
 
-	// Ground the plan in the caller's session: the trajectory block is the
-	// most recent direct user messages ("" when none qualify — the block is
-	// then omitted entirely, keeping an empty trajectory zero-cost).
-	const trajectory = options.trajectory ?? recentUserText(agent);
+	// Ground the plan in the caller's session: Route A carries the context
+	// as a session-derived message prefix (cache-eligible on providers with
+	// prompt caching) and drops the auto-extracted trajectory block; Route B
+	// keeps the legacy flat-text block. An empty prefix falls back to B.
+	const events = sessionEventsOf(agent);
+	const routing = resolvePrefixCache(options.prefixCache);
+	const route = detectPlannerRoute(events, routing.mode);
+	let prefixMessages: (UserMessage | AssistantMessage)[] = [];
+	if (route === "A") {
+		prefixMessages = buildPrefixMessages(events, {
+			...(agent.options.provider ? { provider: agent.options.provider } : {}),
+			...(agent.options.model ? { model: agent.options.model } : {}),
+			maxChars: routing.maxChars,
+		});
+	}
+	const trajectory = prefixMessages.length > 0 ? (options.trajectory ?? "") : (options.trajectory ?? recentUserText(agent));
 
 	// The skill quality standard is always present: the skill-creator
 	// template facts when installed, the builtin distilled guide otherwise
@@ -152,6 +174,7 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 8000,
 		signal: options.signal,
+		...(prefixMessages.length > 0 ? { prefixMessages } : {}),
 	});
 	return parseProposal(text);
 }

@@ -34,6 +34,7 @@ import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 import { captureAutoCase } from "./autocase.js";
 import type { PromotionPolicy } from "./promotion.js";
+import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
 
 export interface AutoReviewConfig {
 	intervalTurns: number;
@@ -60,6 +61,12 @@ export interface AutoReviewConfig {
 	 * When absent, the review gate uses the agent's own provider/model.
 	 */
 	reviewModel?: string;
+	/**
+	 * Prefix-cache routing for the gate input (see reviewAutoRefine).
+	 * Absent mode → auto-detect; absent budget → the default prefix budget.
+	 */
+	prefixCacheMode?: PlannerPrefixCacheMode;
+	prefixMaxChars?: number;
 	/**
 	 * Goal-blocked trigger (D3): after this many CONSECUTIVE gate runs that
 	 * observe the session goal in phase "blocked", run one local-fate
@@ -382,6 +389,14 @@ async function runReviewPhase(
 		context: { reason, turnsSinceLastReview },
 		budgetTokens: config.budgetTokens,
 		...(reviewRoute ? { overrideProvider: reviewRoute.provider, overrideModel: reviewRoute.model } : {}),
+		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
+			? {
+					prefixCache: {
+						...(config.prefixCacheMode !== undefined ? { mode: config.prefixCacheMode } : {}),
+						...(config.prefixMaxChars !== undefined ? { maxChars: config.prefixMaxChars } : {}),
+					},
+				}
+			: {})),
 	});
 	state.lastReviewAt = state.turns;
 
@@ -400,6 +415,14 @@ async function runReviewPhase(
 		// Read the skill-creator template facts (fallback: builtin distilled
 		// guide) so skill proposals follow the standard.
 		skillsRoot: join(engine.baseDir, "skills"),
+		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
+			? {
+					prefixCache: {
+						...(config.prefixCacheMode !== undefined ? { mode: config.prefixCacheMode } : {}),
+						...(config.prefixMaxChars !== undefined ? { maxChars: config.prefixMaxChars } : {}),
+					},
+				}
+			: {})),
 	});
 	// Skills are governed resources: an auto-created skill is OFFERED to the
 	// user for a decision (固化/不固化) before it lands — the gate never

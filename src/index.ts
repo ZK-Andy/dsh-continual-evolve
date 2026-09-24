@@ -42,6 +42,15 @@ export const Config = z.object({
 	maxReviewInputChars: z.natural().default(40000),
 	/** Output budget for the cheap gate call. */
 	reviewBudgetTokens: z.natural().default(4096),
+	/**
+	 * Planner prefix-cache routing for the gate and planner inputs: `auto`
+	 * prepends a session-derived message prefix when the session shows
+	 * cache-read evidence (dropping the redundant flat trajectory text),
+	 * `session` always prefixes, `off` keeps the legacy flat-text input.
+	 */
+	plannerPrefixCache: z.union([z.const("auto"), z.const("session"), z.const("off")]).default("auto"),
+	/** Session-prefix budget for Route A planning inputs, in characters. */
+	plannerPrefixMaxChars: z.natural().default(12000),
 	/** After an approved gate run with applied edits, queue a visible follow-up notice. */
 	notifyOnAutoReview: z.boolean().default(true),
 	/** Cross-session (global) edits require an explicit human approval. */
@@ -189,6 +198,8 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			autoCase: config.autoCase ?? true,
 			rubricKey,
 			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
+			...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
+			...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
 		});
 		ctx.logger("continual-evolve").info(
 			`continual-evolve auto-review enabled (every ${config.reviewIntervalTurns ?? 6} turns; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
