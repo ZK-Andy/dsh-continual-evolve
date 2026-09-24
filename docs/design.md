@@ -99,8 +99,8 @@ interface HarnessRefinementEvent {
 |---|---|---|
 | **手动命令** | `/evolve [instructions] [--global]` | 用户显式要求，最优先 |
 | **模型自觉** | `evolve` 工具（`refine.run` 同款 API） | 发现重复失败/可复用战术时主动调度 |
-| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 每个成功回合产生候选增量 snapshot；先做 eligibility，再由每会话串行 latest-pending scheduler 先运行专用 memory agent、再运行通用 review/planner；每次 skip/判断写 `reviews.jsonl` |
-| **压缩时** | `session/event`（`compaction/start`） | 压缩前强制捕获 snapshot，把会被丢掉的经验先沉淀；scheduler 仍保持串行 |
+| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 仅在 `autoReview: true` 时注册；每个成功回合产生候选增量 snapshot；先做 eligibility，再由每会话串行 latest-pending scheduler 先运行专用 memory agent、再运行通用 review/planner；每次 skip/判断写 `reviews.jsonl` |
+| **压缩时** | `session/event`（`compaction/start`） | 仅在 `autoReview: true` 时注册；压缩前强制捕获 snapshot，把会被丢掉的经验先沉淀；scheduler 仍保持串行 |
 
 ### 关键纪律（照抄 prime-agent）
 - **绝不在 step 中途打断 agent**：手动路径（`/evolve plan`、evolve 工具）在显式调用点同步 apply（带 baseline 比对，天然串行）；自动路径在 `agent/status` idle 后捕获 snapshot，再由后台串行 scheduler 执行——两种路径都不会打断进行中的 step

@@ -19,14 +19,14 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 
 - **Three scopes** with merge semantics (global < project < local): **local** per-session staging, **project** per-workspace cross-session store, **global** cross-project — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
 - **Typed one-fact memories**: every memory entry carries a recall type (`user | feedback | project | reference`); pitfalls (`feedback`) must include Why + How to apply
-- **Dedicated background memory agent**: after eligible successful turns, a bounded ZCode-style loop searches the frozen memory manifest and proposes memory-only edits through a closed tool set; it cannot call agents, MCP, the network, or write source files
+- **Dedicated background memory agent**: when automatic wiring is explicitly enabled, eligible successful turns feed a bounded ZCode-style loop that searches the frozen memory manifest and proposes memory-only edits through a closed tool set; it cannot call agents, MCP, the network, or write source files
 - **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
 - **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
 - **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives — with `merge`, near-duplicate content folds into the surviving original
 
 ## How it works
 
-1. **Sediment** — the model creates entries via `evolve_add`, or the automatic pipeline consumes incremental snapshots captured after successful turns (plus compaction checkpoints): a dedicated memory agent runs first, then the general review/planner proposes non-memory refinements.
+1. **Sediment** — the model creates entries via `evolve_add`, or (only when `autoReview: true`) the automatic pipeline consumes incremental snapshots captured after successful turns (plus compaction checkpoints): a dedicated memory agent runs first, then the general review/planner proposes non-memory refinements.
 2. **Capability-aware auxiliary calls** — the memory loop, review, planner, wrapup, and fate resolve exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts), use the lowest advertised enabled reasoning effort (falling back to a closing effort only when no enabled level exists), and forward the host session id for provider routing; models without reasoning metadata use their provider default.
 3. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
 4. **Approve** — global and project writes require explicit human approval; the dialog shows the bounded structured edit diff and conflict warnings, while malformed/lost responses remain retryable rather than counting as rejection.
@@ -79,13 +79,13 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | Key | Default | Meaning |
 |---|---|---|
 | `baseDir` | resolved DSH home | root for the `evolve/` stores |
-| `autoReview` | `false` | initial memory+review pipeline default when no runtime switch exists; the listener is always registered |
+| `autoReview` | `false` | explicit opt-in for automatic memory/review/planner/fate listeners; when false, no automatic turn/compaction wiring is registered |
 | `reviewIntervalTurns` | `6` | legacy local-fate cadence fallback; successful-turn review no longer waits for this interval |
 | `maxReviewInputChars` | `40000` | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
 | `notifyOnAutoReview` | `true` | visible follow-up notice after an applied gate run |
 | `requireGlobalApproval` | `true` | global and project edits ask for explicit approval |
-| `localFate` | `true` | gate audits local entries and proposes promote/archive (consulted, never silent) |
+| `localFate` | `false` | optional local-entry promote/archive fate assessment; requires `autoReview: true` and an explicit `localFate: true` |
 | `fateIntervalTurns` | follows `reviewIntervalTurns` | minimum turns between fate assessments |
 | `goalBlockedWrapupTurns` | `3` | consecutive blocked-goal gate runs trigger one fate assessment (`0` disables) |
 | `promotionBlockPatterns` | POSIX paths, session ids, `~/.dsh` | content matching these is project-scoped and never promoted to global |
@@ -111,18 +111,19 @@ Example profile patch:
     reviewIntervalTurns: 6
 ```
 
-The listener is registered even when `autoReview` is `false`. Use `/evolve resume`
-to enable successful-turn snapshots immediately, `/evolve pause` to suppress new
-snapshots and fate/model work, and `/evolve status` to inspect the configured
-default plus the current runtime state. The runtime switch is stored in
-`evolve/runtime.json`; manual `evolve_*` tools and `/evolve` commands are not
-paused.
+Automatic evolution is an explicit source-level opt-in. With the default
+`autoReview: false`, the plugin does not register turn/compaction listeners:
+there are no automatic snapshots, memory/review/planner/fate calls, or local
+prompt/skill writes. Manual `evolve_*` tools and `/evolve` commands remain
+available. Set `autoReview: true` in the project configuration to wire the
+pipeline; `/evolve pause`, `/evolve resume`, and `/evolve status` are only
+meaningful for an explicitly wired build.
 
 ## Development
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (737 tests)
+pnpm test                    # vitest (740 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -131,7 +132,7 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, memory agent, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (44 files)
+├── test/                  # vitest suites (45 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)

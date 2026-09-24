@@ -3,10 +3,10 @@
  *
  * Mounts the evolution engine, registers the model-facing evolve_* tools,
  * the human-facing /evolve command, the system-prompt guidance section, and
- * the automatic memory+review pipeline. The listener is always registered,
- * while its effective state is controlled by the runtime switch. Successful
- * turns feed a dedicated memory agent and general review through one
- * per-session serial scheduler.
+ * (only under an explicit `autoReview: true` opt-in) the automatic
+ * memory+review pipeline. With the default `autoReview: false`, the automatic
+ * turn/compaction listeners are not registered; manual tools and commands
+ * remain available.
  */
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
@@ -35,7 +35,7 @@ export const Config = z.object({
 	baseDir: z.string(),
 	/** System-prompt section order for the evolution guidance. */
 	sectionOrder: z.natural().default(118),
-	/** Initial automatic-review default when no runtime switch exists (off by default: it costs model calls). */
+	/** Explicit opt-in for automatic memory/review/planner/fate listeners (off by default). */
 	autoReview: z.boolean().default(false),
 	/** Legacy/local-fate cadence fallback; successful-turn review is snapshot-driven. */
 	reviewIntervalTurns: z.natural().default(6),
@@ -83,9 +83,10 @@ export const Config = z.object({
 	/**
 	 * Gate local-fate dimension (#11 P2): the gate audits the session's local
 	 * entries on its own cadence and proposes promote/archive — consulted
-	 * first, never written silently. Only meaningful with autoReview on.
+	 * first, never written silently. Only meaningful with autoReview on;
+	 * disabled by default even when the automatic pipeline is explicitly enabled.
 	 */
-	localFate: z.boolean().default(true),
+	localFate: z.boolean().default(false),
 	/**
 	 * Minimum turns between local-fate assessments on the turn-interval path
 	 * (compaction is unconditional). Absent → follows reviewIntervalTurns.
@@ -133,6 +134,11 @@ export type EvolveConfig = Partial<Schemastery.TypeT<typeof Config>>;
 export interface EvolutionService {
 	readonly engine: EvolutionEngine;
 	readonly baseDir: string;
+}
+
+/** True only when the project explicitly opts into automatic evolution wiring. */
+export function automaticEvolutionWired(config: Pick<EvolveConfig, "autoReview">): boolean {
+	return config.autoReview === true;
 }
 
 export function apply(ctx: Context, config: EvolveConfig): void {
@@ -185,7 +191,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		autoRollbackOnReject: config.autoRollbackOnReject ?? true,
 		autoCase: config.autoCase ?? true,
 		promotionPolicy,
-		...(config.autoReview !== undefined ? { autoReview: config.autoReview } : {}),
+		autoReview: config.autoReview ?? false,
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in
@@ -203,31 +209,38 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 	});
 
-	// The listener is always registered. `autoReview` is only the initial
-	// runtime default; `/evolve resume` can enable it without a profile edit
-	// or process restart, while manual tools and commands stay independent.
-	registerAutoReview(ctx, engine, {
-		intervalTurns: config.reviewIntervalTurns ?? 6,
-		enabledByDefault: config.autoReview ?? false,
-		maxInputChars: config.maxReviewInputChars ?? 40000,
-		budgetTokens: config.reviewBudgetTokens ?? 4096,
-		notifyOnAutoReview: config.notifyOnAutoReview ?? true,
-		localFate: config.localFate ?? true,
-		fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
-		goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
-		promotionPolicy,
-		autoCase: config.autoCase ?? true,
-		rubricKey,
-		...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
-		...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
-		requireGlobalApproval: config.requireGlobalApproval ?? true,
-		...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
-		...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
-	});
-	const runtimeDefault = config.autoReview ?? false;
-	ctx.logger("continual-evolve").info(
-		`continual-evolve auto-review registered (default ${runtimeDefault ? "on" : "off"}; successful-turn memory agent + general review; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
-	);
+	// Automatic evolution is an explicit project opt-in. With the default
+	// `autoReview: false`, do not register the turn/compaction listeners at
+	// all: this keeps the generic review/planner, dedicated memory agent,
+	// local-fate assessments, and their LLM calls disconnected from the host.
+	// Manual tools and commands remain available below.
+	if (automaticEvolutionWired(config)) {
+		registerAutoReview(ctx, engine, {
+			intervalTurns: config.reviewIntervalTurns ?? 6,
+			enabledByDefault: true,
+			maxInputChars: config.maxReviewInputChars ?? 40000,
+			budgetTokens: config.reviewBudgetTokens ?? 4096,
+			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
+			localFate: config.localFate ?? false,
+			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
+			goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
+			promotionPolicy,
+			autoCase: config.autoCase ?? true,
+			rubricKey,
+			...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
+			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
+			requireGlobalApproval: config.requireGlobalApproval ?? true,
+			...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
+			...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
+		});
+		ctx.logger("continual-evolve").info(
+			`continual-evolve auto-review registered (explicit opt-in; local-fate ${config.localFate ?? false ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
+		);
+	} else {
+		ctx.logger("continual-evolve").info(
+			"continual-evolve automatic evolution wiring disabled (autoReview is not explicitly true; manual tools and commands remain available)",
+		);
+	}
 
 	ctx.logger("continual-evolve").info(`continual-evolve mounted (baseDir=${baseDir})`);
 }

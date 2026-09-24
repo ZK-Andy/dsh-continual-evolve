@@ -71,8 +71,8 @@ export interface CommandRuntimeOptions {
 	/** Mechanical promotion guards for wrapup/fate (2026-08-22 policy). */
 	promotionPolicy: PromotionPolicy;
 	/**
-	 * Initial auto-review default from plugin config. The listener is always
-	 * registered; this is not a registration gate.
+	 * Explicit source-level opt-in for the automatic listener. `false` means
+	 * no automatic turn/compaction wiring was registered.
 	 */
 	autoReview?: boolean;
 }
@@ -433,6 +433,9 @@ async function executeEvolveCommand(
 			}
 			case "pause":
 			case "resume": {
+				if (runtime.autoReview === false) {
+					return success("automatic evolution wiring is disabled by project policy; no automatic snapshots, memory/review/planner/fate calls are registered. Manual evolve_* tools and /evolve commands keep working.");
+				}
 				// The switch is independent of the static registration flag. A
 				// resume explicitly enables automatic snapshots; a pause leaves
 				// the enable bit intact so status explains the paused state.
@@ -528,8 +531,14 @@ function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, pro
 function renderGateStatus(engine: EvolutionEngine, sessionId: string, projectKey: string | undefined, runtime: CommandRuntimeOptions): string {
 	const configuredDefault = runtime.autoReview === undefined ? "unknown" : runtime.autoReview ? "on" : "off";
 	const current = loadGateRuntime(engine.baseDir, runtime.autoReview ?? false);
-	const effective = current.paused ? "PAUSED (resume with /evolve resume)" : current.enabled ? "running" : "off (enable with /evolve resume)";
-	const gateLine = `gate: listener registered · config default ${configuredDefault} · runtime ${effective}`;
+	const effective = runtime.autoReview === false
+		? "disabled by project policy"
+		: current.paused
+			? "PAUSED (resume with /evolve resume)"
+			: current.enabled
+				? "running"
+				: "off (enable with /evolve resume)";
+	const gateLine = `gate: ${runtime.autoReview === false ? "not wired" : "listener registered"} · config default ${configuredDefault} · runtime ${effective}`;
 	const countEntries = (state: HarnessState): number => Object.values(state.entries).reduce((n, byKind) => n + Object.keys(byKind).length, 0);
 	const lines = [gateLine];
 	lines.push(`stores: global ${countEntries(engine.load("global", undefined))} entries · local(${sessionId}) ${countEntries(engine.load("local", sessionId))} entries`);
