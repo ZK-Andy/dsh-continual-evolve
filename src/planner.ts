@@ -24,8 +24,14 @@ to reusable state: prompt notes, memories, skills, and subagent specs.
 Rules:
 - The base system prompt is immutable and MUST NOT be rewritten (never edit id "base_system_prompt").
 - Prefer small evidence-backed edits. If no useful edit is justified, return an empty edits array.
-- prompt = narrow behavioral policy addendums; memory = durable facts/preferences/failures;
-  skill = repeatable procedures (must carry a python reference {type:"python", import, callable}
+- prompt = narrow behavioral policy addendums; memory = ONE FACT per entry, typed via metadata.memoryType
+-   (user = who the user is; feedback = a pitfall/correction or confirmed approach, MUST carry Why + How to apply;
+-   project = work goal/constraint not derivable from the repo; reference = URL/dashboard/ticket pointer).
+-   Memory rules: one fact per entry (title = one-line retrieval hook, content = the fact alone);
+-   never save what the repo already records (code structure, past fixes, git history, AGENTS.md) or what only
+-   matters to this conversation — save the non-obvious point instead; before creating, update the existing
+-   entry when one already covers the fact (creates carry metadata {memoryType} or they are rejected);
+-   skill = repeatable procedures (must carry a python reference {type:"python", import, callable}
   and an arguments object); subagent = reusable delegation roles.
 - Skill entries are authored to the DSH skill quality standard
   (skill-creator, distilled from the official deepseek-harness 11 skills;

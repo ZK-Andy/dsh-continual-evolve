@@ -22,6 +22,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessEntry, HarnessState, RefinementKind, RefinementProposal } from "./types.js";
 import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOURCE_SESSION_KEY, SOURCED_FROM_KEY, VALENCE_NEGATIVE_KEY, isArchived } from "./types.js";
+import { MEMORY_TYPE_KEY, isMemoryType } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
 import { streamText } from "./llm-text.js";
@@ -318,6 +319,13 @@ export function filterPromotable(
 			skipped.push({ key: item.key, reason: "already covered globally" });
 			continue;
 		}
+		if (candidate.kind === "memory" && !isMemoryType(candidate.metadata[MEMORY_TYPE_KEY])) {
+			skipped.push({
+				key: item.key,
+				reason: `memory has no recall type (metadata.${MEMORY_TYPE_KEY} one of user|feedback|project|reference) — update the local entry to classify it first, then promote`,
+			});
+			continue;
+		}
 		const scoped = projectScopedReason(`${candidate.title}\n${candidate.content}`, policy);
 		if (scoped) {
 			skipped.push({ key: item.key, reason: scoped });
@@ -418,8 +426,12 @@ export function splitPromoteBlocked(
 	globalState: HarnessState,
 	kind: RefinementKind,
 	policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
+	candidateMetadata?: Record<string, unknown>,
 ): string | undefined {
 	if (!item.promote) return "no split payload";
+	if (kind === "memory" && !isMemoryType(candidateMetadata?.[MEMORY_TYPE_KEY])) {
+		return `split promotion needs the source entry classified (metadata.${MEMORY_TYPE_KEY} one of user|feedback|project|reference) — update it first`;
+	}
 	if (globalCoverageDetected(globalState, kind, { id: "", title: item.promote.title })) {
 		return "split promotion duplicates a globally covered topic";
 	}
@@ -609,6 +621,9 @@ Rules:
   usage (e.g. a safety policy that rarely triggers but is critical).
 - Do not promote local task state, work-in-progress notes, or content tied to
   one session's ephemeral details.
+- Memory entries carry a recall type (user/feedback/project/reference): a
+  memory WITHOUT one cannot be promoted (the guard skips it) — verdict such
+  entries "keep" (or "archive" when they qualify) rather than "promote".
 - Skills: only "promote" a skill entry that is a genuinely reusable procedure
   meeting the DSH skill quality standard; one-off workflows are "archive" or
   "keep".

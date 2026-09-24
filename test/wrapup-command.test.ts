@@ -49,7 +49,7 @@ function seedLocal(engine: ReturnType<typeof createEvolutionEngine>, sessionId: 
 		summary: `create ${id}`,
 		rationale: "test",
 		expectedOutcome: "entry exists",
-		edits: [{ action: "create", kind: "memory", id, title: `Entry ${id}`, content: PROMOTABLE_COMMAND_BODY, metadata }],
+		edits: [{ action: "create", kind: "memory", id, title: `Entry ${id}`, content: PROMOTABLE_COMMAND_BODY, metadata: { memoryType: "reference", ...metadata } }],
 	});
 }
 

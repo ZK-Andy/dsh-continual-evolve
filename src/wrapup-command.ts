@@ -51,7 +51,7 @@ export async function executeWrapupCommand(
 			splitSkipped.push({ key: item.key, reason: "not in the audited candidate list" });
 			continue;
 		}
-		const blocked = splitPromoteBlocked(item, globalState, candidate.kind, policy);
+		const blocked = splitPromoteBlocked(item, globalState, candidate.kind, policy, candidate.metadata);
 		if (blocked) {
 			splitSkipped.push({ key: item.key, reason: blocked });
 			continue;

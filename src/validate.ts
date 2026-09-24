@@ -5,6 +5,7 @@
  * contract skill entries must carry.
  */
 import type { HarnessEntry, HarnessScope, PythonReference, RefinementEdit, RefinementKind } from "./types.js";
+import { MEMORY_TYPE_KEY, isMemoryType } from "./types.js";
 import { validateSkillEntryContent } from "./skillquality.js";
 
 const ACTIONS = new Set(["create", "update", "delete", "archive"]);
@@ -29,6 +30,9 @@ export function validateBlastRadiusScope(
 	}
 	if (scope === "global" && blastRadius === "session") {
 		return "global-scope edit must declare blastRadius \"general\" or \"project\" (\"session\" contradicts cross-session persistence)";
+	}
+	if (scope === "project" && blastRadius === "session") {
+		return "project-scope edit must declare blastRadius \"project\" or \"general\" (\"session\" contradicts cross-session persistence)";
 	}
 	return undefined;
 }
@@ -84,6 +88,34 @@ export function validateEdit(edit: RefinementEdit, computedId: string | undefine
 		edit.arguments === undefined
 	) {
 		return "update carries no changes";
+	}
+	if (edit.kind === "memory" && (edit.action === "create" || edit.action === "update")) {
+		// One-fact typed memories: every memory create declares its recall
+		// type; feedback/project (pitfalls, conventions) additionally carry
+		// the Why + How-to-apply structure so the fact is reusable, not just
+		// recorded. Updates are partial — only carried fields are checked,
+		// resolved against the persisted entry.
+		const carriedType = edit.metadata?.[MEMORY_TYPE_KEY];
+		if (edit.action === "create" && !isMemoryType(carriedType)) {
+			return `create memory requires metadata.${MEMORY_TYPE_KEY} one of user|feedback|project|reference (one fact per entry; update the existing entry instead of adding a duplicate)`;
+		}
+		if (carriedType !== undefined && !isMemoryType(carriedType)) {
+			return `invalid metadata.${MEMORY_TYPE_KEY} ${JSON.stringify(carriedType)} (one of user|feedback|project|reference)`;
+		}
+		const effectiveType = isMemoryType(carriedType)
+			? carriedType
+			: edit.action === "update"
+				? before?.metadata?.[MEMORY_TYPE_KEY]
+				: undefined;
+		if (
+			(effectiveType === "feedback" || effectiveType === "project") &&
+			(edit.action === "create" || edit.content !== undefined)
+		) {
+			const content = edit.content ?? "";
+			if (!/why/i.test(content) || !/how/i.test(content)) {
+				return `${effectiveType} memory content must carry a Why and a How to apply section (the fact plus why it matters and how to apply it next time)`;
+			}
+		}
 	}
 	if (edit.action === "create" && edit.kind === "skill") {
 		// Guidance skills are SKILL.md documents: no python reference (a

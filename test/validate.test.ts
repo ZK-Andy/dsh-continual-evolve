@@ -54,7 +54,7 @@ describe("validateEdit", () => {
 	});
 
 	it("accepts a valid memory create", () => {
-		expect(validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c" }), undefined)).toBeUndefined();
+		expect(validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" } }), undefined)).toBeUndefined();
 	});
 
 	it("requires arguments + python reference with import and callable for skills", () => {
@@ -211,40 +211,99 @@ describe("validateEdit", () => {
 describe("validateEdit blastRadius/scope coherence (C2)", () => {
 	it("rejects a local-scope edit that claims general blast radius", () => {
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "general" }), undefined, "local"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "general" }), undefined, "local"),
 		).toMatch(/local-scope edit must declare blastRadius/);
 	});
 
 	it("rejects a global-scope edit that claims session blast radius", () => {
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "session" }), undefined, "global"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "session" }), undefined, "global"),
 		).toMatch(/global-scope edit must declare blastRadius/);
 	});
 
 	it("accepts coherent combinations", () => {
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "session" }), undefined, "local"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "session" }), undefined, "local"),
 		).toBeUndefined();
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "project" }), undefined, "local"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "project" }), undefined, "local"),
 		).toBeUndefined();
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "general" }), undefined, "global"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "general" }), undefined, "global"),
 		).toBeUndefined();
 	});
 
 	it("does not enforce when blastRadius is absent (pre-C2 compatibility)", () => {
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c" }), undefined, "local"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" } }), undefined, "local"),
 		).toBeUndefined();
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c" }), undefined, "global"),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" } }), undefined, "global"),
 		).toBeUndefined();
 	});
 
 	it("does not enforce when scope is unknown to the validator", () => {
 		expect(
-			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", blastRadius: "general" }), undefined),
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "general" }), undefined),
+		).toBeUndefined();
+	});
+
+	it("rejects a project-scope edit that claims session blast radius", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "session" }), undefined, "project"),
+		).toMatch(/project-scope edit must declare blastRadius/);
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", id: "x", title: "t", content: "c", metadata: { memoryType: "reference" }, blastRadius: "project" }), undefined, "project"),
+		).toBeUndefined();
+	});
+});
+
+describe("validateEdit memory shape (one-fact typed memories)", () => {
+	it("rejects memory creates without a recall type", () => {
+		expect(validateEdit(edit({ action: "create", kind: "memory", title: "t", content: "c" }), undefined)).toMatch(/metadata\.memoryType/);
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", title: "t", content: "c", metadata: { memoryType: "vibe" } }), undefined),
+		).toMatch(/metadata\.memoryType/);
+	});
+
+	it("accepts every closed recall type", () => {
+		for (const memoryType of ["user", "reference"] as const) {
+			expect(
+				validateEdit(edit({ action: "create", kind: "memory", title: "t", content: "fact", metadata: { memoryType } }), undefined),
+			).toBeUndefined();
+		}
+	});
+
+	it("requires Why + How on feedback/project creates", () => {
+		expect(
+			validateEdit(edit({ action: "create", kind: "memory", title: "t", content: "bare fact", metadata: { memoryType: "feedback" } }), undefined),
+		).toMatch(/Why/);
+		expect(
+			validateEdit(
+				edit({ action: "create", kind: "memory", title: "oxlint beats eslint here", content: "Use oxlint. Why: 50x faster on this repo. How to apply: run pnpm lint.", metadata: { memoryType: "feedback" } }),
+				undefined,
+			),
+		).toBeUndefined();
+		expect(
+			validateEdit(
+				edit({ action: "create", kind: "memory", title: "t", content: "goal. Why: x. How to apply: y.", metadata: { memoryType: "project" } }),
+				undefined,
+			),
+		).toBeUndefined();
+	});
+
+	it("checks carried fields on update against the persisted entry", () => {
+		// invalid type on update is rejected even though other fields pass
+		expect(
+			validateEdit(edit({ action: "update", kind: "memory", id: "x", metadata: { memoryType: "vibe" } }), undefined),
+		).toMatch(/memoryType/);
+		// content rewritten on a feedback entry must keep the structure
+		const before = { metadata: { memoryType: "feedback" } } as unknown as Parameters<typeof validateEdit>[3];
+		expect(
+			validateEdit(edit({ action: "update", kind: "memory", id: "x", content: "bare fact" }), undefined, undefined, before),
+		).toMatch(/Why/);
+		expect(
+			validateEdit(edit({ action: "update", kind: "memory", id: "x", content: "Why: x. How to apply: y." }), undefined, undefined, before),
 		).toBeUndefined();
 	});
 });

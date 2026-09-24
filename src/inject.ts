@@ -18,9 +18,10 @@
  *   summary index, not a duplicate of the store.
  */
 import type { HarnessEntry, HarnessState } from "./types.js";
-import { isArchived, VALENCE_NEGATIVE_KEY } from "./types.js";
+import { MEMORY_TYPE_KEY, isArchived, isMemoryType, VALENCE_NEGATIVE_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { mergeHarnessStates } from "./state.js";
+import { projectKeyOf } from "./project.js";
 import { entryLine } from "./render.js";
 import { recordInjection } from "./usage.js";
 import { buildRelevanceIndex, relevanceScore, tokenize } from "./search.js";
@@ -288,19 +289,38 @@ export function formatSubagentSpecsSection(entries: readonly HarnessEntry[], que
 
 /**
  * Gap B3: a lightweight directory of ALL non-archived entries across all
- * kinds — one line per entry (`- [kind:id] title`), no content. This gives
- * the model a zero-cost overview of what exists so it can ask for full text
- * via `evolve_list` or `/evolve list`. The directory is appended after the
- * curated top-N injection sections and adds minimal tokens.
+ * kinds — one line per entry, no content. Memory lines carry their recall
+ * type (`- [memory:feedback:id] title`) so the model can judge relevance
+ * from the index alone. This gives the model a zero-cost overview of what
+ * exists so it can ask for full text via `evolve_list` or `/evolve list`.
+ * The directory is appended after the curated top-N injection sections and
+ * adds minimal tokens.
  *
  * 2026-08-22 throttle: the directory is CAPPED at {@link DEFAULT_DIRECTORY_LINES}
- * lines (oldest-sorted stable order) with the remainder folded into a single
- * counter line — an uncapped directory across a polluted global store was
- * measured at ~2K chars of every build in every project.
+ * lines with the remainder folded into a single counter line — an uncapped
+ * directory across a polluted global store was measured at ~2K chars of
+ * every build in every project.
+ *
+ * 2026-09-23 relevance order: the directory is sorted by
+ * {@link rankEntries} against the assembly's relevance query, so the lines
+ * folded below the cap are the least relevant — not the dictionary tail.
  */
 export const DEFAULT_DIRECTORY_LINES = 15;
 
-/** How many of the variadic arrays are content-section kinds (prompt, subagent). */
+/** One directory index line: memory lines carry their recall-type hook. */
+export function directoryLine(entry: HarnessEntry): string {
+	if (entry.kind === "memory") {
+		const type = entry.metadata[MEMORY_TYPE_KEY];
+		const hook = isMemoryType(type) ? `:${type}` : "";
+		return `- [memory${hook}:${entry.id}] ${entry.title}`;
+	}
+	return `- [${entry.kind}:${entry.id}] ${entry.title}`;
+}
+
+/** Positional contract for the directory variadics: the first two arrays
+ * must be the content-section kinds (prompt, subagent) — the redundancy
+ * check counts exactly those as already visible. Callers pass
+ * (prompt, subagent, memory, skill); any other order miscounts. */
 const CONTENT_SECTION_KINDS = 2;
 
 export function formatEntriesDirectory(
@@ -314,9 +334,55 @@ export function formatEntriesDirectoryCapped(
 	maxLines: number,
 	...kindEntries: readonly HarnessEntry[][]
 ): string {
+	return formatEntriesDirectoryRanked(maxLines, undefined, ...kindEntries);
+}
+
+/**
+ * {@link formatEntriesDirectoryCapped} with a relevance query: entries are
+ * ordered by {@link rankEntries} (relevance first, then recency) so the cap
+ * folds the least relevant entries — never the dictionary tail. An empty
+ * query degrades to the valence/recency/stable order, still deterministic.
+ */
+export function formatEntriesDirectoryRanked(
+	maxLines: number,
+	query: string | undefined,
+	...kindEntries: readonly HarnessEntry[][]
+): string {
+	const total = kindEntries.flat().filter((e) => !isArchived(e)).length;
+	if (total === 0) {
+		return "";
+	}
+	// Suppressed (every entry already content-visible) renders as "" — the
+	// prompt renderer then drops the section entirely.
+	const shown = rankedDirectoryEntries(maxLines, query, ...kindEntries);
+	if (shown.length === 0) {
+		return "";
+	}
+	const lines = ["# Continual Harness — Entry Directory", "All entries (use evolve_list for full text of any entry):"];
+	for (const entry of shown) {
+		lines.push(directoryLine(entry));
+	}
+	const hidden = total - shown.length;
+	if (hidden > 0) {
+		lines.push(`- …and ${hidden} more entries (evolve_list for the full index)`);
+	}
+	return lines.join("\n");
+}
+
+/**
+ * The directory entries actually shown under the cap, in display order —
+ * the single source for both the rendered text and usage accounting (so a
+ * memory's injection IS its directory line even with the `:type` hook).
+ * Returns [] when the directory is suppressed or empty.
+ */
+export function rankedDirectoryEntries(
+	maxLines: number,
+	query: string | undefined,
+	...kindEntries: readonly HarnessEntry[][]
+): HarnessEntry[] {
 	const allEntries = kindEntries.flat().filter((e) => !isArchived(e));
 	if (allEntries.length === 0) {
-		return "";
+		return [];
 	}
 	// Skip the directory only when EVERY entry is already content-visible.
 	// Only the first two arrays (prompt, subagent) have curated sections —
@@ -327,19 +393,9 @@ export function formatEntriesDirectoryCapped(
 		.slice(0, CONTENT_SECTION_KINDS)
 		.reduce((sum, entries) => sum + Math.min(entries.filter((e) => !isArchived(e)).length, MAX_INJECTED_ENTRIES_PER_KIND), 0);
 	if (allEntries.length <= contentVisible) {
-		return "";
+		return [];
 	}
-	const sorted = [...allEntries].sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`));
-	const lines = ["# Continual Harness — Entry Directory", "All entries (use evolve_list for full text of any entry):"];
-	const shown = sorted.slice(0, Math.max(maxLines, 1));
-	for (const entry of shown) {
-		lines.push(`- [${entry.kind}:${entry.id}] ${entry.title}`);
-	}
-	const hidden = sorted.length - shown.length;
-	if (hidden > 0) {
-		lines.push(`- …and ${hidden} more entries (evolve_list for the full index)`);
-	}
-	return lines.join("\n");
+	return rankEntries(allEntries, query).slice(0, Math.max(maxLines, 1));
 }
 
 /**
@@ -365,14 +421,17 @@ export function nearestLocalStateWithEntries(engine: EvolutionEngine, agent: Age
 
 /**
  * Compose the full injected block for one assembling agent: global entries
- * merged with the nearest carrying local store (local wins on id collision).
+ * merged with this project's store (when the session cwd resolves one) and
+ * the nearest carrying local store (precedence global < project < local).
  * The optional `query` — when absent, derived from the agent's most recent
  * direct user messages — ranks which entries fill the per-kind cap
  * (relevance first, then recency; see {@link rankEntries}). Returns "" when
  * nothing is injectable — the prompt renderer then drops the section, so an
  * empty store adds zero tokens to every assembly.
  *
- * `opts.directoryLines` caps the entry-directory index (2026-08-22 throttle).
+ * `opts.directoryLines` caps the entry-directory index (2026-08-22 throttle);
+ * `opts.projectKey` pins the project layer explicitly (tests, tools) —
+ * otherwise it is derived from the agent's session cwd, best-effort.
  * Usage recording covers ALL kinds — memories and skills appear as directory
  * lines, prompts/subagents as content — and is deduped per session so the
  * counts read "how many sessions saw this", not "how many prompt builds".
@@ -381,14 +440,16 @@ export function entriesSectionText(
 	engine: EvolutionEngine,
 	agent: AgentLike | undefined,
 	query?: string,
-	opts?: { directoryLines?: number },
+	opts?: { directoryLines?: number; projectKey?: string },
 ): string {
 	if (!agent) {
 		return "";
 	}
 	const globalState = engine.load("global", undefined);
+	const projectKey = opts?.projectKey ?? projectKeyOf(agent);
+	const projectState = projectKey ? engine.load("project", projectKey) : undefined;
 	const localState = nearestLocalStateWithEntries(engine, agent);
-	const merged = localState ? mergeHarnessStates(globalState, localState) : globalState;
+	const merged = mergeHarnessStates(globalState, localState, projectState ? { projectState } : undefined);
 	const promptEntries = Object.values(merged.entries.prompt);
 	const subagentEntries = Object.values(merged.entries.subagent);
 	const relevanceQuery = (query ?? recentUserText(agent)).trim();
@@ -410,24 +471,19 @@ export function entriesSectionText(
 
 	// Gap B3: lightweight directory of ALL entries (id+title, one line each).
 	// Zero-cost index so the model knows what exists and can ask for full text.
-	const directoryText = formatEntriesDirectoryCapped(
-		opts?.directoryLines ?? DEFAULT_DIRECTORY_LINES,
-		Object.values(merged.entries.prompt),
-		Object.values(merged.entries.memory),
-		Object.values(merged.entries.skill),
-		Object.values(merged.entries.subagent),
-	);
+	const directoryLines = opts?.directoryLines ?? DEFAULT_DIRECTORY_LINES;
+	const promptKind = Object.values(merged.entries.prompt);
+	const subagentKind = Object.values(merged.entries.subagent);
+	const memoryKind = Object.values(merged.entries.memory);
+	const skillKind = Object.values(merged.entries.skill);
+	const directoryText = formatEntriesDirectoryRanked(directoryLines, relevanceQuery, promptKind, subagentKind, memoryKind, skillKind);
 
 	// Directory-visible keys count too: a memory's injection IS its directory
-	// line. Set semantics keep content-injected entries single-counted.
-	for (const kind of ["prompt", "memory", "skill", "subagent"] as const) {
-		for (const entry of Object.values(merged.entries[kind])) {
-			if (isArchived(entry)) continue;
-			const key = `${kind}:${entry.id}`;
-			if (injectedKeys.has(key) || directoryText.includes(`[${key}]`)) {
-				injectedKeys.add(key);
-			}
-		}
+	// line. Set semantics keep content-injected entries single-counted. Keys
+	// come from the single display-ordered source (type hooks included), not
+	// substring matching on the rendered text.
+	for (const entry of rankedDirectoryEntries(directoryLines, relevanceQuery, promptKind, subagentKind, memoryKind, skillKind)) {
+		injectedKeys.add(`${entry.kind}:${entry.id}`);
 	}
 
 	// Record usage durably (best-effort: failure never blocks injection).

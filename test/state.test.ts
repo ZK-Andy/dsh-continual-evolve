@@ -100,7 +100,7 @@ describe("save/load roundtrip", () => {
 });
 
 describe("merge", () => {
-	function entry(id: string, title: string, scope: "local" | "global") {
+	function entry(id: string, title: string, scope: "local" | "project" | "global") {
 		return {
 			id,
 			kind: "memory" as const,
@@ -136,6 +136,31 @@ describe("merge", () => {
 		const merged = mergeHarnessStates(globalState, localState);
 		expect(merged.entries.memory["a"]?.title).toBe("A");
 		expect(merged.entries.memory["b"]?.title).toBe("B");
+	});
+
+	it("merges global < project < local with prefixed collisions", () => {
+		const globalState = emptyHarnessState();
+		globalState.entries.memory["dup"] = entry("dup", "global version", "global");
+		globalState.entries.memory["g"] = entry("g", "G", "global");
+		const projectState = emptyHarnessState();
+		projectState.entries.memory["dup"] = entry("dup", "project version", "project");
+		projectState.entries.memory["p"] = entry("p", "P", "project");
+		const localState = emptyHarnessState();
+		localState.entries.memory["dup"] = entry("dup", "local version", "local");
+		const merged = mergeHarnessStates(globalState, localState, { projectState });
+		expect(merged.entries.memory["dup"]?.title).toBe("global version");
+		expect(merged.entries.memory["project:dup"]?.title).toBe("project version");
+		expect(merged.entries.memory["project:dup"]?.scope).toBe("project");
+		expect(merged.entries.memory["local:dup"]?.title).toBe("local version");
+		expect(merged.entries.memory["g"]?.scope).toBe("global");
+		expect(merged.entries.memory["p"]?.scope).toBe("project");
+	});
+
+	it("stays two-arg compatible when the project layer is absent", () => {
+		const globalState = emptyHarnessState();
+		globalState.entries.memory["a"] = entry("a", "A", "global");
+		const merged = mergeHarnessStates(globalState, undefined);
+		expect(merged.entries.memory["a"]?.title).toBe("A");
 	});
 });
 

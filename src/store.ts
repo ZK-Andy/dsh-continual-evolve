@@ -4,9 +4,10 @@
  * Layout (self-contained under the DSH home; no dependency on session
  * persistence internals):
  *
- *   <dshHome>/evolve/global/harness_state.json    cross-session store
+ *   <dshHome>/evolve/global/harness_state.json    cross-project store
  *   <dshHome>/evolve/global/refinements.jsonl     applied results (rollback source)
- *   <dshHome>/evolve/local/<sessionId>/...        per-session store
+ *   <dshHome>/evolve/projects/<slug-hash>/...     per-project store
+ *   <dshHome>/evolve/local/<sessionId>/...        per-session staging store
  *
  * Snapshot discipline is code-enforced: before any mutating apply, the
  * pre-apply state is copied to `snapshots/<refinementId>.json`. The model has
@@ -15,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HarnessScope, RefinementResult } from "./types.js";
+import { sanitizeProjectKey } from "./project.js";
 import { stateFilePath } from "./state.js";
 
 export const EVOLVE_DIR = "evolve";
@@ -28,8 +30,15 @@ export interface StorePaths {
 	resultsPath: string;
 }
 
+/**
+ * Resolve store paths for a scope. For `project` the `sessionId` parameter
+ * carries the project key (see {@link resolveProjectKey} in project.ts) —
+ * it is sanitized to a single path segment so an externally supplied key
+ * can never traverse out of `evolve/projects/`.
+ */
 export function storePaths(baseDir: string, scope: HarnessScope, sessionId?: string): StorePaths {
-	const scopeDir = scope === "global" ? "global" : join("local", sessionId ?? "anonymous");
+	const scopeDir =
+		scope === "global" ? "global" : scope === "project" ? join("projects", sanitizeProjectKey(sessionId ?? "project")) : join("local", sessionId ?? "anonymous");
 	const stateDir = join(baseDir, EVOLVE_DIR, scopeDir);
 	return {
 		stateDir,

@@ -29,6 +29,11 @@ export interface EvolutionHooks {
 }
 
 export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {}) {
+	/**
+	 * Load a scope's state. For `project` the `sessionId` parameter carries
+	 * the project key (see `resolveProjectKey` in project.ts); callers
+	 * derive it with `projectKeyOf(agent)` and pass it through unchanged.
+	 */
 	function load(scope: HarnessScope, sessionId: string | undefined) {
 		return loadHarnessState(storePaths(baseDir, scope, sessionId).stateDir, scope);
 	}

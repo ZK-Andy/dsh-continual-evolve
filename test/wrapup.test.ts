@@ -51,7 +51,7 @@ function entry(id: string, kind: RefinementKind, title: string, overrides: Parti
 		scope: "local",
 		reference: {},
 		arguments: {},
-		metadata: {},
+		metadata: kind === "memory" ? { memoryType: "reference" } : {},
 		source: "evolve",
 		created_at: isoDaysAgo(1),
 		updated_at: isoDaysAgo(1),
@@ -385,12 +385,12 @@ describe("split promotion (A-form)", () => {
 		const global = emptyHarnessState();
 		global.entries.memory["g1"] = entry("g1", "memory", "用户产品愿景与成功标准");
 		const item = { key: "memory:mem_1", verdict: "archive" as const, reason: "x", promote: { title: "用户产品愿景与成功标准 2", content: "body" } };
-		expect(splitPromoteBlocked(item, global, "memory")).toBeTruthy();
+		expect(splitPromoteBlocked(item, global, "memory", undefined, { memoryType: "reference" })).toBeTruthy();
 	});
 
 	it("splitPromoteBlocked allows a fresh cleaned title", () => {
 		const item = { key: "memory:mem_1", verdict: "archive" as const, reason: "x", promote: { title: "全新主题", content: PROMOTABLE_BODY + " 全新主题的持久结论，与既有全局条目无重叠。" } };
-		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory")).toBeUndefined();
+		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory", undefined, { memoryType: "reference" })).toBeUndefined();
 	});
 });
 

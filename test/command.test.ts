@@ -141,7 +141,7 @@ function seedGlobal(harness: ReturnType<typeof commandHarness>): string {
 		summary: "seed global",
 		rationale: "test",
 		expectedOutcome: "one global memory",
-		edits: [{ action: "create", kind: "memory", title: "global noise", content: "cross-project noise entry" }],
+		edits: [{ action: "create", kind: "memory", title: "global noise", content: "cross-project noise entry", metadata: { memoryType: "reference" } }],
 	}, { scope: "global" });
 	const applied = result.appliedEdits.find((e) => e.applied);
 	if (!applied?.id) throw new Error("global seed failed");
@@ -153,7 +153,7 @@ async function seedMemory(harness: ReturnType<typeof commandHarness>): Promise<{
 		summary: "seed",
 		rationale: "test seed",
 		expectedOutcome: "one memory exists",
-		edits: [{ action: "create", kind: "memory", title: "seed entry", content: "body" }],
+		edits: [{ action: "create", kind: "memory", title: "seed entry", content: "body", metadata: { memoryType: "reference" } }],
 	}, { scope: "local" });
 	const applied = result.appliedEdits.find((e) => e.applied);
 	if (!applied?.id) throw new Error("seed edit failed");
@@ -381,6 +381,6 @@ describe("executeEvolveCommand — demote (2026-08-22)", () => {
 	it("errors when the id exists nowhere", withDir(async (h) => {
 		const missing = await h.run("demote nope");
 		expect(missing.kind).toBe("error");
-		expect(missing.text).toContain("not found in the global or local store");
+		expect(missing.text).toContain("not found in the global, project, or local store");
 	}));
 });

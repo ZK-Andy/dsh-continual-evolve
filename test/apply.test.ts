@@ -27,7 +27,7 @@ function stateWith(entry: { id: string; title: string; version?: number }): Harn
 		scope: "local",
 		reference: {},
 		arguments: {},
-		metadata: {},
+		metadata: { memoryType: "reference" },
 		source: "evolve",
 		created_at: "2026-01-01T00:00:00.000Z",
 		updated_at: "2026-01-01T00:00:00.000Z",
@@ -64,7 +64,7 @@ describe("applyRefinementProposal", () => {
 				summary: "s",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Remember the API key location", content: "~/.dsh/.credentials.yaml" }],
+				edits: [{ action: "create", kind: "memory", title: "Remember the API key location", content: "~/.dsh/.credentials.yaml", metadata: { memoryType: "reference" } }],
 			},
 			{ id: "refine_1", scope: "local" },
 		);
@@ -102,8 +102,8 @@ describe("applyRefinementProposal", () => {
 				rationale: "r",
 				expectedOutcome: "o",
 				edits: [
-					{ action: "create", kind: "memory", id: "x", title: "dup", content: "exists" }, // conflict
-					{ action: "create", kind: "memory", title: "Fresh", content: "ok" }, // fine
+					{ action: "create", kind: "memory", id: "x", title: "dup", content: "exists", metadata: { memoryType: "reference" } }, // conflict
+					{ action: "create", kind: "memory", title: "Fresh", content: "ok", metadata: { memoryType: "reference" } }, // fine
 				],
 			},
 			{ id: "refine_3" },
@@ -158,7 +158,7 @@ describe("applyRefinementProposal", () => {
 				summary: "s",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value", metadata: { memoryType: "reference" } }],
 			},
 			{ id: "refine_src", scope: "local", source: { sessionId: "session-abc", seqs: [12, 15] } },
 		);
@@ -176,7 +176,7 @@ describe("applyRefinementProposal", () => {
 				summary: "s",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value", metadata: { memoryType: "reference" } }],
 			},
 			{ id: "refine_src2", source: { sessionId: "session-abc" } },
 		);
@@ -193,11 +193,11 @@ describe("applyRefinementProposal", () => {
 				summary: "s",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Uncited", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Uncited", content: "value", metadata: { memoryType: "reference" } }],
 			},
 			{ id: "refine_src3" },
 		);
-		expect(state.entries.memory["uncited"]?.metadata).toEqual({});
+		expect(state.entries.memory["uncited"]?.metadata).toEqual({ memoryType: "reference" });
 		// An update does not re-stamp and does not wipe the original citation.
 		applyRefinementProposal(
 			state,
@@ -205,7 +205,7 @@ describe("applyRefinementProposal", () => {
 				summary: "s",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Cited", content: "value", metadata: { memoryType: "reference" } }],
 			},
 			{ id: "refine_src4", source: { sessionId: "session-abc", seqs: [12] } },
 		);
@@ -238,7 +238,7 @@ describe("applyRefinementProposal", () => {
 						kind: "memory",
 						title: "Meta",
 						content: "value",
-						metadata: { note: "model provided" },
+						metadata: { memoryType: "reference", note: "model provided" },
 					},
 				],
 			},
@@ -357,7 +357,7 @@ describe("rollbackProposal", () => {
 				summary: "s",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Temp", content: "temp" }],
+				edits: [{ action: "create", kind: "memory", title: "Temp", content: "temp", metadata: { memoryType: "reference" } }],
 			},
 			{ id: "refine_7" },
 		);
@@ -398,7 +398,7 @@ describe("persistence integration", () => {
 					summary: "s",
 					rationale: "r",
 					expectedOutcome: "o",
-					edits: [{ action: "create", kind: "memory", title: "Persist me", content: "value" }],
+					edits: [{ action: "create", kind: "memory", title: "Persist me", content: "value", metadata: { memoryType: "reference" } }],
 				},
 				{ id: "refine_10", scope: "global" },
 			);
@@ -432,7 +432,7 @@ describe("create id store-prefix hygiene (2026-08-22)", () => {
 				summary: "planner-style create with merged-view id",
 				rationale: "regression: global entries named local:foo",
 				expectedOutcome: "entry id has no store prefix",
-				edits: [{ action: "create", kind: "memory", id: "local:handoff_todo", title: "clean id", content: PREFIX_BODY }],
+				edits: [{ action: "create", kind: "memory", id: "local:handoff_todo", title: "clean id", content: PREFIX_BODY, metadata: { memoryType: "reference" } }],
 			}, { scope: "global" });
 			expect(result.appliedEdits[0]?.applied).toBe(true);
 			expect(result.appliedEdits[0]?.id).toBe("handoff_todo");
@@ -451,7 +451,7 @@ describe("create id store-prefix hygiene (2026-08-22)", () => {
 				summary: "seed",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", id: "weird:id", title: "t", content: PREFIX_BODY }],
+				edits: [{ action: "create", kind: "memory", id: "weird:id", title: "t", content: PREFIX_BODY, metadata: { memoryType: "reference" } }],
 			}, { scope: "global" });
 			const result = engine.apply("global", undefined, {
 				summary: "update keeps raw id",
@@ -474,7 +474,7 @@ describe("create id store-prefix hygiene (2026-08-22)", () => {
 				summary: "seed",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", id: "note1", title: "t", content: PREFIX_BODY }],
+				edits: [{ action: "create", kind: "memory", id: "note1", title: "t", content: PREFIX_BODY, metadata: { memoryType: "reference" } }],
 			}, { scope: "global" });
 			// The merged view prefixes colliding local ids; a planner update
 			// against that view used to address a nonexistent "local:note1".

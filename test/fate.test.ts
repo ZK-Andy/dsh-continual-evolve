@@ -45,7 +45,7 @@ function entry(id: string, kind: RefinementKind, title: string, overrides: Parti
 		scope: "local",
 		reference: {},
 		arguments: {},
-		metadata: {},
+		metadata: kind === "memory" ? { memoryType: "reference" } : {},
 		source: "evolve",
 		created_at: "2026-08-17T00:00:00.000Z",
 		updated_at: "2026-08-17T00:00:00.000Z",
@@ -162,10 +162,10 @@ describe("planLocalFates", () => {
 	}
 
 	it("partitions promotes, splits, and both archive kinds", () => {
-		const sourced = entry("m1", "memory", "持久结论", { metadata: { sourceSeqs: [1], sourceSession: "session-x" } });
+		const sourced = entry("m1", "memory", "持久结论", { metadata: { memoryType: "reference", sourceSeqs: [1], sourceSession: "session-x" } });
 		const covered = entry("m2", "memory", "已被全局覆盖的话题");
 		const noSource = entry("m3", "memory", "操作性条目");
-		const mixed = entry("m4", "memory", "混合条目", { metadata: { sourceSeqs: [2], sourceSession: "session-x" } });
+		const mixed = entry("m4", "memory", "混合条目", { metadata: { memoryType: "reference", sourceSeqs: [2], sourceSession: "session-x" } });
 		const global = emptyHarnessState();
 		global.entries.memory["m2"] = entry("m2", "memory", "已被全局覆盖的话题", {
 			scope: "global",
@@ -197,8 +197,8 @@ describe("planLocalFates", () => {
 	});
 
 	it("routes sourced+uncovered archives to review and splits that duplicate a global topic to splitSkipped", () => {
-		const sourced = entry("m1", "memory", "有来源且未覆盖", { metadata: { sourceSeqs: [1], sourceSession: "session-x" } });
-		const duplicate = entry("m2", "memory", "混合但清洗会重复全局", { metadata: { sourceSeqs: [2], sourceSession: "session-x" } });
+		const sourced = entry("m1", "memory", "有来源且未覆盖", { metadata: { memoryType: "reference", sourceSeqs: [1], sourceSession: "session-x" } });
+		const duplicate = entry("m2", "memory", "混合但清洗会重复全局", { metadata: { memoryType: "reference", sourceSeqs: [2], sourceSession: "session-x" } });
 		const global = emptyHarnessState();
 		global.entries.memory["g"] = entry("g", "memory", "已存在的全局话题");
 		const candidates = [candidateOf(sourced), candidateOf(duplicate)];
@@ -311,7 +311,7 @@ describe("applyLocalFates", () => {
 			const engine = createEvolutionEngine(dir);
 			const local = emptyHarnessState();
 			local.entries.memory["prom"] = entry("prom", "memory", "要提升");
-			local.entries.memory["spl"] = entry("spl", "memory", "混合", { metadata: { sourceSeqs: [1] } });
+			local.entries.memory["spl"] = entry("spl", "memory", "混合", { metadata: { memoryType: "reference", sourceSeqs: [1] } });
 			local.entries.memory["arc"] = entry("arc", "memory", "操作性归档");
 			saveHarnessState(storePaths(dir, "local", "session-fate").stateDir, local);
 

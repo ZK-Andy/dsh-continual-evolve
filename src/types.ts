@@ -24,8 +24,26 @@ export type SkillKind = "executable" | "guidance";
 /** How an entry changes. */
 export type RefinementAction = "create" | "update" | "delete" | "archive";
 
-/** Where an entry lives: session-scoped or cross-session. */
-export type HarnessScope = "local" | "global";
+/** Where an entry lives: session staging, one project, or cross-project. */
+export type HarnessScope = "local" | "project" | "global";
+
+/**
+ * Memory-entry shape discipline (one fact per entry, typed like ZCode's
+ * memory frontmatter): every `memory` create must stamp one of these in
+ * `metadata[MEMORY_TYPE_KEY]` — the recall hook the directory shows.
+ */
+export const MEMORY_TYPE_KEY = "memoryType";
+
+/** Closed memory-type set: user | feedback | project | reference. */
+export const MEMORY_TYPES = ["user", "feedback", "project", "reference"] as const;
+
+/** One of {@link MEMORY_TYPES}. */
+export type MemoryRecallType = (typeof MEMORY_TYPES)[number];
+
+/** True when the value is a closed-set memory type. */
+export function isMemoryType(value: unknown): value is MemoryRecallType {
+	return typeof value === "string" && (MEMORY_TYPES as readonly string[]).includes(value);
+}
 
 /**
  * Metadata key recording which session an entry's content was distilled from

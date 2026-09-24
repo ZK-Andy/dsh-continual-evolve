@@ -47,7 +47,7 @@ function seedGlobal(dir: string, entries: readonly HarnessEntry[]): void {
 }
 
 function createProposal(kind: HarnessEntry["kind"], title: string, content: string) {
-	return { summary: "test", rationale: "test", expectedOutcome: "test", edits: [{ action: "create" as const, kind, title, content }] };
+	return { summary: "test", rationale: "test", expectedOutcome: "test", edits: [{ action: "create" as const, kind, title, content, metadata: { memoryType: "reference" } }] };
 }
 
 describe("mostSimilarEntry / buildConflictNotice", () => {
@@ -207,7 +207,7 @@ describe("secret screen covers structured fields (review B2)", () => {
 						summary: "t",
 						rationale: "t",
 						expectedOutcome: "t",
-						edits: [{ action: "create", kind: "memory", title: "T", content: "clean body text", metadata: { env: `token ${GHP}` } }],
+						edits: [{ action: "create", kind: "memory", title: "T", content: "clean body text", metadata: { memoryType: "reference", env: `token ${GHP}` } }],
 					},
 					{ scope: "global" },
 				),

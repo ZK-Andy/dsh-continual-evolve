@@ -6,7 +6,9 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool, type ToolRunContext } from "@deepseek-ai/dsh-tools";
 import type { HarnessScope, RefinementEdit, RefinementKind } from "./types.js";
+import { MEMORY_TYPE_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
+import { projectKeyOf } from "./project.js";
 import { formatHarnessStateForPrompt } from "./render.js";
 import { requireGlobalApproval } from "./approval.js";
 import { CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry } from "./promotion.js";
@@ -14,16 +16,54 @@ import { entrySourceOf } from "./source.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 
-const SCOPES: HarnessScope[] = ["local", "global"];
+const SCOPES: HarnessScope[] = ["local", "project", "global"];
 
-/** Accept both the boolean tool parameter (`global: true`) and the string form. */
+/**
+ * Accept the string form (`scope: "project"`) with the legacy boolean tool
+ * parameter (`global: true`) as fallback. `scope` wins when both are given.
+ */
 export function scopeOf(value: unknown, fallback: HarnessScope): HarnessScope {
-	return value === "global" || value === true ? "global" : fallback;
+	if (value === "global" || value === true) {
+		return "global";
+	}
+	if (value === "project") {
+		return "project";
+	}
+	return fallback;
 }
 
 /** The calling agent's session id; tools always run inside an agent scope. */
 function sessionIdOf(exec: ToolRunContext): string | undefined {
 	return exec.agent?.id;
+}
+
+/**
+ * The store id a scope reads/writes: session id for local, derived project
+ * key for project, undefined for global. Throws for project when the
+ * session cwd is unavailable — fail loud instead of writing local-by-mistake.
+ */
+function storeIdFor(scope: HarnessScope, exec: ToolRunContext): string | undefined {
+	if (scope === "local") {
+		return sessionIdOf(exec);
+	}
+	if (scope === "project") {
+		const key = projectKeyOf(exec.agent);
+		if (!key) {
+			throw new Error("project scope needs the session cwd (unavailable for this agent) — use local or global instead");
+		}
+		return key;
+	}
+	return undefined;
+}
+
+/** Human-approval gate shared by global and project writes (both cross-session). */
+function needsApproval(scope: HarnessScope): boolean {
+	return scope === "global" || scope === "project";
+}
+
+/** Store label used in approval prompts. */
+function storeLabel(scope: HarnessScope): string {
+	return scope === "project" ? "本项目跨会话 store" : "跨会话全局 store";
 }
 
 function textResult(text: string) {
@@ -39,12 +79,12 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 		defineTool({
 			name: "evolve_list",
 			description:
-				"List the continual harness state (prompt notes, memories, skills, subagent specs) for the current session (local) or across sessions (global).",
+				"List the continual harness state (prompt notes, memories, skills, subagent specs) for the current session (local), the current project (project), or across projects (global).",
 			parameters: {
 				scope: {
 					type: "string",
 					enum: SCOPES,
-					description: "Which store to list: 'local' (default) or 'global'.",
+					description: "Which store to list: 'local' (default), 'project', or 'global'.",
 				},
 			},
 			output: {
@@ -53,7 +93,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 			},
 			execute: async (args, exec) => {
 				const scope = scopeOf(args.scope, "local");
-				const state = engine.load(scope, sessionIdOf(exec));
+				const state = engine.load(scope, storeIdFor(scope, exec));
 				const text = formatHarnessStateForPrompt(state);
 				// Append injection usage counts (gap B1).
 				const usage = loadUsage(engine.baseDir);
@@ -87,6 +127,8 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				skill_kind: { type: "string", enum: ["executable", "guidance"], description: "For skills: executable (python reference, default) or guidance (SKILL.md document, no reference)." },
 				reference: { type: "object", additionalProperties: true, description: "For executable skills: {type:'python', import, callable}." },
 				arguments: { type: "object", additionalProperties: true, description: "For executable skills: accepted input contract." },
+				memoryType: { type: "string", enum: ["user", "feedback", "project", "reference"], description: "Required for memory: one fact per entry (feedback/project must carry Why + How to apply)." },
+				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
 				global: { type: "boolean", description: "Set true to write the cross-session store (requires human approval; only for durable, reusable lessons)." },
 			},
 			output: {
@@ -94,15 +136,18 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				render: (_args, value) => [{ type: "text", text: value.text ?? "" }],
 			},
 			execute: async (args, exec) => {
-				const scope = scopeOf(args.global, "local");
-				if (scope === "global" && opts.requireGlobalApproval) {
+				const scope = scopeOf(args.scope ?? args.global, "local");
+				// Resolve first: a project scope without a session cwd fails
+				// here, before any human approval question is asked.
+				const storeId = storeIdFor(scope, exec);
+				if (needsApproval(scope) && opts.requireGlobalApproval) {
 					// Informed approval: surface a similarity hit against the
-					// existing global store BEFORE the human decides — the
-					// engine's write-time guard still has the final say.
-					const globalState = engine.load("global", undefined);
-					const hit = mostSimilarEntry(Object.values(globalState.entries[args.kind as RefinementKind]), args.title ?? "", args.content ?? "", CONFLICT_WARN_SCORE);
+					// target store BEFORE the human decides — the engine's
+					// write-time guard still has the final say.
+					const targetState = engine.load(scope, storeId);
+					const hit = mostSimilarEntry(Object.values(targetState.entries[args.kind as RefinementKind]), args.title ?? "", args.content ?? "", CONFLICT_WARN_SCORE);
 					const conflictNote = hit ? ` ⚠️ ${buildConflictNotice(hit)}——建议改用 evolve_update` : "";
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_add ${args.kind} "${args.title}" → 跨会话全局 store${conflictNote}`);
+					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_add ${args.kind} "${args.title}" → ${storeLabel(scope)}${conflictNote}`);
 				}
 				const edit: RefinementEdit = {
 					action: "create",
@@ -114,7 +159,10 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				if (args.skill_kind !== undefined) edit.skill_kind = args.skill_kind;
 				if (args.reference !== undefined) edit.reference = args.reference;
 				if (args.arguments !== undefined) edit.arguments = args.arguments;
-				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));
+				if (args.kind === "memory" && args.memoryType !== undefined) {
+					edit.metadata = { [MEMORY_TYPE_KEY]: args.memoryType };
+				}
+				return textResult(applyEditsText(engine, scope, storeId, [edit], exec.agent, sessionIdOf(exec)));
 			},
 		}),
 	);
@@ -128,6 +176,8 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				id: { type: "string", required: true, description: "Existing entry id." },
 				title: { type: "string" },
 				content: { type: "string" },
+				memoryType: { type: "string", enum: ["user", "feedback", "project", "reference"], description: "For memory: (re)classify the entry's recall type." },
+				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
 				global: { type: "boolean", description: "Set true to edit the cross-session store (requires human approval)." },
 			},
 			output: {
@@ -135,14 +185,16 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				render: (_args, value) => [{ type: "text", text: value.text ?? "" }],
 			},
 			execute: async (args, exec) => {
-				const scope = scopeOf(args.global, "local");
-				if (scope === "global" && opts.requireGlobalApproval) {
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_update ${args.kind}:${args.id} → 跨会话全局 store`);
+				const scope = scopeOf(args.scope ?? args.global, "local");
+				const storeId = storeIdFor(scope, exec);
+				if (needsApproval(scope) && opts.requireGlobalApproval) {
+					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_update ${args.kind}:${args.id} → ${storeLabel(scope)}`);
 				}
 				const edit: RefinementEdit = { action: "update", kind: args.kind as RefinementKind, id: args.id };
 				if (args.title !== undefined) edit.title = args.title;
 				if (args.content !== undefined) edit.content = args.content;
-				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));
+				if (args.memoryType !== undefined) edit.metadata = { [MEMORY_TYPE_KEY]: args.memoryType };
+				return textResult(applyEditsText(engine, scope, storeId, [edit], exec.agent, sessionIdOf(exec)));
 			},
 		}),
 	);
@@ -154,6 +206,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 			parameters: {
 				kind: { type: "string", enum: ["prompt", "memory", "skill", "subagent"], required: true },
 				id: { type: "string", required: true },
+				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
 				global: { type: "boolean", description: "Set true to edit the cross-session store (requires human approval)." },
 			},
 			output: {
@@ -161,12 +214,13 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				render: (_args, value) => [{ type: "text", text: value.text ?? "" }],
 			},
 			execute: async (args, exec) => {
-				const scope = scopeOf(args.global, "local");
-				if (scope === "global" && opts.requireGlobalApproval) {
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_delete ${args.kind}:${args.id} → 跨会话全局 store`);
+				const scope = scopeOf(args.scope ?? args.global, "local");
+				const storeId = storeIdFor(scope, exec);
+				if (needsApproval(scope) && opts.requireGlobalApproval) {
+					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_delete ${args.kind}:${args.id} → ${storeLabel(scope)}`);
 				}
 				const edit: RefinementEdit = { action: "delete", kind: args.kind as RefinementKind, id: args.id };
-				return textResult(applyEditsText(engine, scope, sessionIdOf(exec), [edit], exec.agent));
+				return textResult(applyEditsText(engine, scope, storeId, [edit], exec.agent, sessionIdOf(exec)));
 			},
 		}),
 	);
@@ -177,6 +231,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 			description: "Deterministically revert a previous refinement by its id (from evolve_list history or the /evolve command).",
 			parameters: {
 				refinementId: { type: "string", required: true, description: "The refinement id to roll back." },
+				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
 				global: { type: "boolean", description: "Set true to roll back a cross-session refinement." },
 			},
 			output: {
@@ -184,8 +239,8 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				render: (_args, value) => [{ type: "text", text: value.text ?? "" }],
 			},
 			execute: async (args, exec) => {
-				const scope = scopeOf(args.global, "local");
-				const result = engine.rollback(scope, sessionIdOf(exec), args.refinementId);
+				const scope = scopeOf(args.scope ?? args.global, "local");
+				const result = engine.rollback(scope, storeIdFor(scope, exec), args.refinementId);
 				return textResult(
 					`Rolled back ${result.rollbackOf ?? result.id}: ${result.appliedEdits.filter((e) => e.applied).length} edit(s) reverted.`,
 				);
@@ -197,13 +252,14 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 function applyEditsText(
 	engine: EvolutionEngine,
 	scope: HarnessScope,
-	sessionId: string | undefined,
+	storeId: string | undefined,
 	edits: RefinementEdit[],
 	agent?: ToolRunContext["agent"],
+	eventSessionId?: string | undefined,
 ): string {
 	const result = engine.apply(
 		scope,
-		sessionId,
+		storeId,
 		{
 			summary: "Direct tool edit",
 			rationale: "Model-invoked single edit via evolve_* tool.",
@@ -213,15 +269,17 @@ function applyEditsText(
 		agent
 			? {
 					scope,
-					...(entrySourceOf(agent, sessionId) ? { source: entrySourceOf(agent, sessionId) } : {}),
+					...(entrySourceOf(agent, eventSessionId ?? storeId) ? { source: entrySourceOf(agent, eventSessionId ?? storeId) } : {}),
 				}
 			: { scope },
 	);
 	const applied = result.appliedEdits.filter((e) => e.applied);
 	const failed = result.appliedEdits.filter((e) => !e.applied);
 	// Gap C4: emit structured evolve_complete event for third-party consumers.
-	if (applied.length > 0 && sessionId) {
-		emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, "manual_tool", sessionId));
+	// The event keys on the live session (not the project store key).
+	const eventSession = eventSessionId ?? storeId;
+	if (applied.length > 0 && eventSession) {
+		emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, "manual_tool", eventSession));
 	}
 	const lines = [`refinement ${result.id}: ${applied.length} applied, ${failed.length} failed`];
 	for (const e of applied) {

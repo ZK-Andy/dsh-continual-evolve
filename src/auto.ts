@@ -29,6 +29,7 @@ import { notifyAutoReview } from "./notify.js";
 import { runLocalFatePhase } from "./fate.js";
 import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
+import { projectKeyOf } from "./project.js";
 import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 import { captureAutoCase } from "./autocase.js";
@@ -254,15 +255,16 @@ function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 
 /**
  * The state view the gate and planner judge: the session's local entries
- * merged with the global store, each entry carrying its real scope. Without
- * the global half the gate cannot see that a topic is already covered
- * cross-session and happily re-sediments a local duplicate of it.
+ * merged with the project and global stores, each entry carrying its real
+ * scope. Without the global half the gate cannot see that a topic is already
+ * covered cross-session and happily re-sediments a local duplicate of it.
  *
  * The merged view is read-only context — applying still targets the raw
  * local state (baseline checks compare local entries only).
  */
-export function loadGateHarnessView(engine: EvolutionEngine, sessionId: string): HarnessState {
-	return mergeHarnessStates(engine.load("global", undefined), engine.load("local", sessionId));
+export function loadGateHarnessView(engine: EvolutionEngine, sessionId: string, opts?: { projectKey?: string }): HarnessState {
+	const projectState = opts?.projectKey ? engine.load("project", opts.projectKey) : undefined;
+	return mergeHarnessStates(engine.load("global", undefined), engine.load("local", sessionId), projectState ? { projectState } : undefined);
 }
 
 /**
@@ -367,7 +369,8 @@ async function runReviewPhase(
 	// can recognize topics already covered globally and decline duplicates;
 	// applying still targets the raw local store.
 	const localState = engine.load("local", sessionId);
-	const harnessState = loadGateHarnessView(engine, sessionId);
+	const projectKey = projectKeyOf(agent);
+	const harnessState = loadGateHarnessView(engine, sessionId, projectKey ? { projectKey } : undefined);
 	const history = engine.history("local", sessionId);
 	// Gap C1: resolve optional review model override.
 	const reviewRoute = parseReviewModel(config.reviewModel, agent.options.provider);

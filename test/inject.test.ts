@@ -9,19 +9,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import type { HarnessEntry, HarnessState } from "../src/types.js";
-import { emptyHarnessState, VALENCE_NEGATIVE_KEY } from "../src/types.js";
+import { MEMORY_TYPE_KEY, emptyHarnessState, VALENCE_NEGATIVE_KEY } from "../src/types.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { storePaths } from "../src/store.js";
 import { saveHarnessState } from "../src/state.js";
 import { entryLine } from "../src/render.js";
 import {
 	MAX_INJECTED_ENTRIES_PER_KIND,
+	directoryLine,
 	entriesSectionText,
 	formatEntriesDirectory,
+	formatEntriesDirectoryRanked,
 	formatPromptEntriesSection,
 	formatSubagentSpecsSection,
 	nearestLocalStateWithEntries,
 	rankEntries,
+	rankedDirectoryEntries,
 	recentUserText,
 	recencyScore,
 	tokenize,
@@ -29,6 +32,7 @@ import {
 	DEFAULT_DIRECTORY_LINES,
 } from "../src/inject.js";
 import { buildRelevanceIndex, relevanceScore } from "../src/search.js";
+import { resolveProjectKey } from "../src/project.js";
 
 /**
  * Relative fixture timestamp: anchored to the run time instead of a hardcoded
@@ -63,7 +67,7 @@ function stateWith(entries: HarnessEntry[]): HarnessState {
 	return state;
 }
 
-function saveState(engine: ReturnType<typeof createEvolutionEngine>, scope: "global" | "local", sessionId: string | undefined, state: HarnessState): void {
+function saveState(engine: ReturnType<typeof createEvolutionEngine>, scope: "global" | "project" | "local", sessionId: string | undefined, state: HarnessState): void {
 	saveHarnessState(storePaths(engine.baseDir, scope, sessionId).stateDir, state);
 }
 
@@ -672,11 +676,25 @@ describe("entriesSectionText directory integration (B3)", () => {
 	it("omits directory when all entries fit in curated sections", () => {
 		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
 		try {
-			const state = stateWith([entry({ id: "only", kind: "memory", title: "Only" })]);
+			const state = stateWith([entry({ id: "only", kind: "prompt", title: "Only" })]);
 			saveState(engine, "local", "session-b3-small", state);
 			const agent = { id: "session-b3-small" };
 			const text = entriesSectionText(engine, agent);
 			expect(text).not.toContain("Entry Directory");
+		} finally {
+			cleanup(engine);
+		}
+	});
+
+	it("shows the directory for a small memory-only store (memories have no content section)", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			const state = stateWith([entry({ id: "only", kind: "memory", title: "Only" })]);
+			saveState(engine, "local", "session-b3-small-mem", state);
+			const agent = { id: "session-b3-small-mem" };
+			const text = entriesSectionText(engine, agent);
+			expect(text).toContain("Entry Directory");
+			expect(text).toContain("[memory:only]");
 		} finally {
 			cleanup(engine);
 		}
@@ -700,6 +718,60 @@ describe("entry directory cap (2026-08-22 throttle)", () => {
 			entry({ id: `mem_${i}`, kind: "memory", title: `Memory ${i}` }),
 		);
 		expect(formatEntriesDirectory(...[entries])).toBe(formatEntriesDirectoryCapped(DEFAULT_DIRECTORY_LINES, entries));
+	});
+});
+
+describe("entry directory relevance order (2026-09-23)", () => {
+	it("sorts the directory by relevance so the cap folds irrelevant entries", () => {
+		const lint = entry({ id: "lint", kind: "memory", title: "oxlint setup", content: "oxlint configuration notes" });
+		const baking = entry({ id: "baking", kind: "memory", title: "Baking", content: "oven temperature" });
+		const text = formatEntriesDirectoryRanked(1, "oxlint lint", [], [], [lint, baking], []);
+		expect(text).toContain("[memory:lint]");
+		expect(text).not.toContain("[memory:baking]");
+		expect(text).toContain("and 1 more entries");
+		// same call without a query still renders (recency/stable fallback)
+		expect(formatEntriesDirectoryRanked(5, undefined, [], [], [lint, baking], [])).toContain("Entry Directory");
+	});
+
+	it("keeps the capped helper backward compatible", () => {
+		const entries = [entry({ id: "a", kind: "memory", title: "A" }), entry({ id: "b", kind: "memory", title: "B" })];
+		expect(formatEntriesDirectoryCapped(5, [], [], entries, [])).toContain("[memory:a]");
+	});
+
+	it("tags memory lines with their recall type hook", () => {
+		const typed = entry({ id: "pit", kind: "memory", title: "oxlint pitfall", metadata: { [MEMORY_TYPE_KEY]: "feedback" } });
+		const legacy = entry({ id: "old", kind: "memory", title: "legacy fact" });
+		expect(directoryLine(typed)).toBe("- [memory:feedback:pit] oxlint pitfall");
+		expect(directoryLine(legacy)).toBe("- [memory:old] legacy fact");
+		expect(directoryLine(entry({ id: "p", kind: "prompt", title: "Note" }))).toBe("- [prompt:p] Note");
+	});
+
+	it("exposes the single display-ordered source for usage accounting", () => {
+		const lint = entry({ id: "lint", kind: "memory", title: "oxlint setup", content: "oxlint configuration notes" });
+		const baking = entry({ id: "baking", kind: "memory", title: "Baking", content: "oven temperature" });
+		const shown = rankedDirectoryEntries(1, "oxlint lint", [], [], [lint, baking], []);
+		expect(shown.map((e) => e.id)).toEqual(["lint"]);
+	});
+});
+
+describe("entriesSectionText project layer (2026-09-23)", () => {
+	it("merges the project store when the session cwd resolves one", () => {
+		const engine = makeEngine() as ReturnType<typeof createEvolutionEngine> & { _dir: string };
+		try {
+			saveState(engine, "global", undefined, stateWith([entry({ id: "g", kind: "memory", title: "Global fact" })]));
+			const agent = { id: "session-proj", session: { header: { cwd: "/mnt/work/app" } } };
+			const key = resolveProjectKey("/mnt/work/app");
+			saveState(engine, "project", key, stateWith([entry({ id: "p", kind: "memory", title: "Project fact" })]));
+			const text = entriesSectionText(engine, agent);
+			expect(text).toContain("[memory:p]");
+			expect(text).toContain("[memory:g]");
+			// an agent without cwd degrades to global+local
+			const plain = entriesSectionText(engine, { id: "session-proj" });
+			expect(plain).toContain("[memory:g]");
+			expect(plain).not.toContain("[memory:p]");
+		} finally {
+			cleanup(engine as ReturnType<typeof createEvolutionEngine> & { _dir: string });
+		}
 	});
 });
 

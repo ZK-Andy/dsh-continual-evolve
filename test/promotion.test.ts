@@ -48,7 +48,7 @@ function candidateOf(overrides: Partial<WrapupCandidate> = {}): WrapupCandidate 
 		content: PORTABLE,
 		path: "general",
 		version: 1,
-		metadata: {},
+		metadata: { memoryType: "reference" },
 		coveredGlobally: false,
 		globalHints: [],
 		injectionCount: 0,
@@ -130,17 +130,17 @@ describe("splitPromoteBlocked guards", () => {
 	});
 
 	it("blocks a project-scoped cleaned payload", () => {
-		expect(splitPromoteBlocked(item(PORTABLE + " 路径见 /mnt/data/cache。"), emptyHarnessState(), "memory")).toContain(
+		expect(splitPromoteBlocked(item(PORTABLE + " 路径见 /mnt/data/cache。"), emptyHarnessState(), "memory", undefined, { memoryType: "reference" })).toContain(
 			"project-scoped",
 		);
 	});
 
 	it("blocks a too-thin cleaned payload", () => {
-		expect(splitPromoteBlocked(item("太短"), emptyHarnessState(), "memory")).toContain("too thin");
+		expect(splitPromoteBlocked(item("太短"), emptyHarnessState(), "memory", undefined, { memoryType: "reference" })).toContain("too thin");
 	});
 
 	it("allows a portable, substantial cleaned payload", () => {
-		expect(splitPromoteBlocked(item(PORTABLE), emptyHarnessState(), "memory")).toBeUndefined();
+		expect(splitPromoteBlocked(item(PORTABLE), emptyHarnessState(), "memory", undefined, { memoryType: "reference" })).toBeUndefined();
 	});
 });
 
@@ -204,7 +204,7 @@ describe("secret guard in promotion paths", () => {
 			reason: "mixed",
 			promote: { title: "清洗后的结论", content: `${PORTABLE} ${SECRET}` },
 		};
-		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory")).toContain("split promotion blocked");
+		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory", undefined, { memoryType: "reference" })).toContain("split promotion blocked");
 	});
 });
 

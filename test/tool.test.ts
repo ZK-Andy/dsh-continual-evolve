@@ -76,7 +76,7 @@ function toolHarness(toolGateOptions: { requireGlobalApproval: boolean; answer?:
 const agentExec = { agent: { id: "session-tool" } };
 
 async function addMemory(harness: ReturnType<typeof toolHarness>, title = "lint first"): Promise<string> {
-	return harness.byName("evolve_add").execute({ kind: "memory", title, content: "run lint before committing" }, agentExec).then((r) => r.text);
+	return harness.byName("evolve_add").execute({ kind: "memory", title, content: "Run lint before committing. Why: catches errors early. How to apply: run pnpm lint.", memoryType: "feedback" }, agentExec).then((r) => r.text);
 }
 
 describe("evolve_list", () => {
@@ -128,7 +128,7 @@ describe("evolve_add", () => {
 		try {
 			const result = await harness
 				.byName("evolve_add")
-				.execute({ kind: "memory", title: "anon", content: "c" }, {});
+				.execute({ kind: "memory", title: "anon", content: "c", memoryType: "reference" }, {});
 			expect(result.text).toContain("1 applied, 0 failed");
 			expect(harness.reviewsLines()).toHaveLength(0);
 		} finally {
@@ -162,7 +162,7 @@ describe("evolve_add", () => {
 	it("applies a global edit after explicit approval and skips the gate when approval is off", async () => {
 		const gated = toolHarness({ requireGlobalApproval: true, answer: "批准" });
 		try {
-			const result = await gated.byName("evolve_add").execute({ kind: "memory", title: "g", content: "c", global: true }, agentExec);
+			const result = await gated.byName("evolve_add").execute({ kind: "memory", title: "g", content: "c", memoryType: "reference", global: true }, agentExec);
 			expect(result.text).toContain("1 applied, 0 failed");
 			expect(Object.keys(gated.engine.load("global").entries.memory)).toContain("g");
 		} finally {
@@ -174,7 +174,7 @@ describe("evolve_add", () => {
 		const gated = toolHarness({ requireGlobalApproval: true, answer: "拒绝" });
 		try {
 			await expect(
-				gated.byName("evolve_add").execute({ kind: "memory", title: "g", content: "c", global: true }, agentExec),
+				gated.byName("evolve_add").execute({ kind: "memory", title: "g", content: "c", memoryType: "reference", global: true }, agentExec),
 			).rejects.toThrow(/rejected by the user/);
 			expect(Object.keys(gated.engine.load("global").entries.memory)).toHaveLength(0);
 		} finally {
@@ -190,7 +190,7 @@ describe("evolve_update / evolve_delete", () => {
 			await addMemory(harness, "old title");
 			const result = await harness
 				.byName("evolve_update")
-				.execute({ kind: "memory", id: "old_title", title: "old title", content: "new body" }, agentExec);
+				.execute({ kind: "memory", id: "old_title", title: "old title", content: "new body. Why: updated. How to apply: read this." }, agentExec);
 			expect(result.text).toMatch(/- update memory:old_title \(v2\)/);
 			expect(harness.engine.load("local", "session-tool").entries.memory["old_title"]?.title).toBe("old title");
 		} finally {
@@ -225,6 +225,46 @@ describe("evolve_rollback", () => {
 			expect(result.text).toContain(`Rolled back ${refinementId}`);
 			expect(result.text).toContain("1 edit(s) reverted.");
 			expect(Object.keys(harness.engine.load("local", "session-tool").entries.memory)).not.toContain("to_revert");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("memory shape + project scope at the tool surface (2026-09-23)", () => {
+	it("fails a memory create without memoryType loudly", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			const result = await harness.byName("evolve_add").execute({ kind: "memory", title: "t", content: "c" }, agentExec);
+			expect(result.text).toContain("0 applied, 1 failed");
+			expect(result.text).toContain("memoryType");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("writes the project store when the session cwd resolves one", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		const projExec = { agent: { id: "session-proj", session: { header: { cwd: "/mnt/work/app" } } } };
+		try {
+			const result = await harness
+				.byName("evolve_add")
+				.execute({ kind: "memory", title: "proj fact", content: "c", memoryType: "reference", scope: "project" }, projExec);
+			expect(result.text).toContain("1 applied, 0 failed");
+			const { resolveProjectKey } = await import("../src/project.js");
+			const key = resolveProjectKey("/mnt/work/app");
+			expect(Object.keys(harness.engine.load("project", key).entries.memory)).toContain("proj_fact");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses project scope loudly when the cwd is unavailable", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await expect(
+				harness.byName("evolve_add").execute({ kind: "memory", title: "t", content: "c", memoryType: "reference", scope: "project" }, agentExec),
+			).rejects.toThrow(/session cwd/);
 		} finally {
 			rmSync(harness.dir, { recursive: true, force: true });
 		}

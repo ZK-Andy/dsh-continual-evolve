@@ -22,12 +22,13 @@ import { executeMountCommand, executeUnmountCommand } from "./mount-command.js";
 import { executeBenchmarkCommand } from "./benchmark-command.js";
 import { executeWrapupCommand } from "./wrapup-command.js";
 import type { PromotionPolicy } from "./promotion.js";
+import { projectKeyOf } from "./project.js";
 import { loadUsage } from "./usage.js";
 import { planConsolidation } from "./consolidate.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
-  /evolve list [global]    list entries (add "global" for the cross-session store)
+  /evolve list [project|global]    list entries (default local staging; "project" = this project's cross-session store, "global" = cross-project store)
   /evolve history [global] show applied refinements (rollback ids)
   /evolve rollback <id> [global]  deterministically revert a refinement
   /evolve plan [msg]       run the LLM planner against the current store
@@ -78,7 +79,29 @@ function scopeArg(tokens: string[]): { scope: HarnessScope; rest: string[] } {
 	if (tokens[0] === "global") {
 		return { scope: "global", rest: tokens.slice(1) };
 	}
+	if (tokens[0] === "project") {
+		return { scope: "project", rest: tokens.slice(1) };
+	}
 	return { scope: "local", rest: tokens };
+}
+
+/**
+ * The store id a scope reads/writes from the human command: live session id
+ * for local, derived project key for project, undefined for global. Throws
+ * for project when the session cwd is unavailable.
+ */
+function storeIdForCommand(scope: HarnessScope, invocation: CommandInvocation): string | undefined {
+	if (scope === "local") {
+		return invocation.agent.id;
+	}
+	if (scope === "project") {
+		const key = projectKeyOf(invocation.agent);
+		if (!key) {
+			throw new Error("project scope needs the session cwd (unavailable here) — use local or global instead");
+		}
+		return key;
+	}
+	return undefined;
 }
 
 /**
@@ -165,11 +188,11 @@ async function executeEvolveCommand(
 				return success(`${USAGE}\n\n${formatHarnessStateForPrompt(engine.load("local", sessionId))}`);
 			case "list": {
 				const { scope } = scopeArg(rest);
-				return success(formatHarnessStateForPrompt(engine.load(scope, sessionId)));
+				return success(formatHarnessStateForPrompt(engine.load(scope, storeIdForCommand(scope, invocation))));
 			}
 			case "history": {
 				const { scope } = scopeArg(rest);
-				const history = engine.history(scope, sessionId);
+				const history = engine.history(scope, storeIdForCommand(scope, invocation));
 				return success(historyForPrompt(history) || "(no refinements yet)");
 			}
 			case "rollback": {
@@ -178,7 +201,7 @@ async function executeEvolveCommand(
 				if (!id) {
 					return error(`rollback requires a refinement id.\n${USAGE}`);
 				}
-				const result = engine.rollback(scope, sessionId, id);
+				const result = engine.rollback(scope, storeIdForCommand(scope, invocation), id);
 				return success(renderResult(result));
 			}
 			case "archive":
@@ -190,9 +213,9 @@ async function executeEvolveCommand(
 					return error(`${sub} requires an entry id.\n${USAGE}`);
 				}
 				if (sub === "demote") {
-					return demoteEntry(engine, id, sessionId);
+					return demoteEntry(engine, id, sessionId, projectKeyOf(invocation.agent));
 				}
-				const state = engine.load(scope, sessionId);
+				const state = engine.load(scope, storeIdForCommand(scope, invocation));
 				const found = findEntryById(state, id);
 				if (!found) {
 					return error(`entry ${id} not found in the ${scope} store`);
@@ -207,7 +230,7 @@ async function executeEvolveCommand(
 				const archived = sub === "archive";
 				const result = engine.apply(
 					scope,
-					sessionId,
+					storeIdForCommand(scope, invocation),
 					{
 						summary: `${archived ? "Archive" : "Unarchive"} entry ${kind}:${id}`,
 						rationale: "Human-invoked archive/unarchive via the /evolve command.",
@@ -306,8 +329,8 @@ async function executeEvolveCommand(
 				if (!path) {
 					return error(`export requires an output path.\n${USAGE}`);
 				}
-				const state = engine.load(scope, sessionId);
-				const history = engine.history(scope, sessionId);
+				const state = engine.load(scope, storeIdForCommand(scope, invocation));
+				const history = engine.history(scope, storeIdForCommand(scope, invocation));
 				const payload = {
 					version: 1,
 					scope,
@@ -339,7 +362,7 @@ async function executeEvolveCommand(
 					},
 					refinements: Array.isArray(payload["refinements"]) ? (payload["refinements"] as HarnessState["refinements"]) : [],
 				};
-				const paths = storePaths(engine.baseDir, scope, sessionId);
+				const paths = storePaths(engine.baseDir, scope, storeIdForCommand(scope, invocation));
 				saveHarnessState(paths.stateDir, state);
 				if (Array.isArray(payload["history"])) {
 					for (const result of payload["history"]) {
@@ -353,8 +376,8 @@ async function executeEvolveCommand(
 			case "plan": {
 				const { scope, rest: after } = scopeArg(rest);
 				const instructions = after.length > 0 ? after.join(" ") : undefined;
-				const state = engine.load(scope, sessionId);
-				const history = engine.history(scope, sessionId);
+				const state = engine.load(scope, storeIdForCommand(scope, invocation));
+				const history = engine.history(scope, storeIdForCommand(scope, invocation));
 				const proposal = await planWithLlm(ctx, {
 					agent: invocation.agent,
 					state,
@@ -365,15 +388,15 @@ async function executeEvolveCommand(
 					// skill-creator template facts (fallback: builtin guide).
 					skillsRoot: join(engine.baseDir, "skills"),
 				});
-				if (scope === "global" && opts.requireGlobalApproval && proposal.edits.length > 0) {
+				if ((scope === "global" || scope === "project") && opts.requireGlobalApproval && proposal.edits.length > 0) {
 					await requireGlobalApproval(
 						ctx,
 						invocation.agent,
 						invocation.signal,
-						`/evolve plan global 将应用 ${proposal.edits.length} 条编辑到跨会话 store：${proposal.summary}`,
+						`/evolve plan ${scope} 将应用 ${proposal.edits.length} 条编辑到${scope === "project" ? "本项目" : "跨会话"} store：${proposal.summary}`,
 					);
 				}
-				const result = engine.apply(scope, sessionId, proposal, {
+				const result = engine.apply(scope, storeIdForCommand(scope, invocation), proposal, {
 					scope,
 					baselineState: state,
 					...(entrySourceOf(invocation.agent, sessionId) ? { source: entrySourceOf(invocation.agent, sessionId) } : {}),
@@ -405,19 +428,24 @@ async function executeEvolveCommand(
 
 /**
  * Demote (2026-08-22): hide an entry from injection WITHOUT deleting it —
- * the one-command remedy for global-store pollution. Searches the global
- * store first (the primary target: cross-project noise), then the session's
- * local store. The data stays; `/evolve unarchive` restores it.
+ * the one-command remedy for store pollution. Searches the global store
+ * first (the primary target: cross-project noise), then the project store,
+ * then the session's local store. The data stays; `/evolve unarchive` restores it.
  */
-function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string): CommandResult {
-	for (const scope of ["global", "local"] as const) {
-		const state = engine.load(scope, sessionId);
+function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, projectKey?: string): CommandResult {
+	const targets: { scope: HarnessScope; storeId: string | undefined }[] = [
+		{ scope: "global", storeId: undefined },
+		...(projectKey ? [{ scope: "project" as const, storeId: projectKey }] : []),
+		{ scope: "local", storeId: sessionId },
+	];
+	for (const { scope, storeId } of targets) {
+		const state = engine.load(scope, storeId);
 		const found = findEntryById(state, id);
 		if (!found) continue;
 		const [kind, entry] = found;
 		const result = engine.apply(
 			scope,
-			sessionId,
+			storeId,
 			{
 				summary: `demote: archive ${kind}:${id} from the ${scope} store`,
 				rationale: "Human-invoked demote via the /evolve command.",
@@ -435,10 +463,10 @@ function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string): Co
 			},
 			{ scope },
 		);
-		const restoreScope = scope === "global" ? " global" : "";
+		const restoreScope = scope === "global" ? " global" : scope === "project" ? " project" : "";
 		return success(`demoted ${kind}:${id} from the ${scope} store (archived — restore with /evolve unarchive ${id}${restoreScope})\n${renderResult(result)}`);
 	}
-	return error(`entry ${id} not found in the global or local store`);
+	return error(`entry ${id} not found in the global, project, or local store`);
 }
 
 function renderResult(result: RefinementResult): string {	const applied = result.appliedEdits.filter((e) => e.applied);

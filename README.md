@@ -17,7 +17,8 @@ Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/d
 
 Agents accumulate reusable experience (repeated failures, durable facts, reusable procedures) and forget it next session. This plugin turns that experience into first-class state:
 
-- **Local scope** per session; **global scope** across sessions with merge semantics — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
+- **Three scopes** with merge semantics (global < project < local): **local** per-session staging, **project** per-workspace cross-session store, **global** cross-project — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
+- **Typed one-fact memories**: every memory entry carries a recall type (`user | feedback | project | reference`); pitfalls (`feedback`) must include Why + How to apply
 - **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
 - **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
 - **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives — with `merge`, near-duplicate content folds into the surviving original
@@ -26,8 +27,8 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 
 1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from the session trajectory (turn-interval + compaction checkpoints).
 2. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
-3. **Approve** — global writes require explicit human approval; local-fate proposals are consulted before they land.
-4. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a capped directory index.
+3. **Approve** — global and project writes require explicit human approval; local-fate proposals are consulted before they land.
+4. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a relevance-ordered capped directory index (`- [memory:type:id] title` hooks, full text one `evolve_list` away).
 5. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically and are captured as draft regression cases (`auto_regression` benchmark).
 
 ## Install

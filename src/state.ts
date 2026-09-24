@@ -23,7 +23,7 @@ export function stateFilePath(stateDir: string): string {
 }
 
 function normalizeScope(value: unknown, fallback: HarnessScope): HarnessScope {
-	return value === "global" || value === "local" ? value : fallback;
+	return value === "global" || value === "project" || value === "local" ? value : fallback;
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -101,16 +101,27 @@ export function loadHarnessState(stateDir: string, scope: HarnessScope = "global
 }
 
 /**
- * Merge global and local state into the view the model sees. Local entries
- * win over same-id global entries; a colliding local id is prefixed
- * `local:` so both remain addressable.
+ * Merge global, project, and local state into the view the model sees.
+ * Precedence is global < project < local: a colliding project id is
+ * prefixed `project:` so both remain addressable, and a colliding local id
+ * is prefixed `local:` (local always wins — it is the session's live
+ * staging copy). Called with two args the project layer is simply absent.
  */
-export function mergeHarnessStates(globalState: HarnessState, localState: HarnessState | undefined): HarnessState {
+export function mergeHarnessStates(
+	globalState: HarnessState,
+	localState?: HarnessState | undefined,
+	opts?: { projectState?: HarnessState | undefined },
+): HarnessState {
 	const merged = emptyHarnessState();
-	merged.schema = Math.max(globalState.schema, localState?.schema ?? 1);
+	merged.schema = Math.max(globalState.schema, opts?.projectState?.schema ?? 1, localState?.schema ?? 1);
 	for (const kind of Object.keys(merged.entries) as (keyof HarnessState["entries"])[]) {
 		for (const [id, entry] of Object.entries(globalState.entries[kind])) {
 			merged.entries[kind][id] = { ...entry, scope: "global" };
+		}
+		for (const [id, entry] of Object.entries(opts?.projectState?.entries[kind] ?? {})) {
+			const scoped = { ...entry, scope: "project" as const };
+			const mergedId = merged.entries[kind][id] ? `project:${id}` : id;
+			merged.entries[kind][mergedId] = scoped;
 		}
 		for (const [id, entry] of Object.entries(localState?.entries[kind] ?? {})) {
 			const scoped = { ...entry, scope: "local" as const };
@@ -118,7 +129,7 @@ export function mergeHarnessStates(globalState: HarnessState, localState: Harnes
 			merged.entries[kind][mergedId] = scoped;
 		}
 	}
-	merged.refinements = [...globalState.refinements, ...(localState?.refinements ?? [])];
+	merged.refinements = [...globalState.refinements, ...(opts?.projectState?.refinements ?? []), ...(localState?.refinements ?? [])];
 	return merged;
 }
 

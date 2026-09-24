@@ -354,7 +354,7 @@ describe("run", () => {
 				summary: "candidate refinement",
 				rationale: "test",
 				expectedOutcome: "entry exists",
-				edits: [{ action: "create", kind: "memory", id: "candidate_mem", title: "Candidate memory", content: "durable lesson" }],
+				edits: [{ action: "create", kind: "memory", id: "candidate_mem", title: "Candidate memory", content: "durable lesson", metadata: { memoryType: "reference" } }],
 			});
 			evaluateStateMock.mockResolvedValue(outcomeOf(`candidate:${created.id}`, [cell(cid, 50)]));
 			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["run", bid, "candidate", created.id], runtime);
@@ -382,7 +382,7 @@ describe("run", () => {
 				summary: "candidate refinement",
 				rationale: "test",
 				expectedOutcome: "entry exists",
-				edits: [{ action: "create", kind: "memory", id: "keep_mem", title: "Keep", content: "lesson" }],
+				edits: [{ action: "create", kind: "memory", id: "keep_mem", title: "Keep", content: "lesson", metadata: { memoryType: "reference" } }],
 			});
 			evaluateStateMock.mockResolvedValue(outcomeOf(`candidate:${created.id}`, [cell(cid, 50)]));
 			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["run", bid, "candidate", created.id], { ...runtime, autoRollbackOnReject: false });

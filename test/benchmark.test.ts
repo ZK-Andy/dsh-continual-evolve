@@ -112,7 +112,7 @@ describe("rollbackRejectedCandidate", () => {
 				summary: "candidate",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Doomed entry", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Doomed entry", content: "value", metadata: { memoryType: "reference" } }],
 			});
 			expect(engine.load("local", "session-x").entries.memory["doomed_entry"]).toBeDefined();
 			const outcome = rollbackRejectedCandidate(engine, "session-x", result.id);
@@ -149,7 +149,7 @@ describe("rollbackRejectedCandidate", () => {
 				summary: "candidate",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Only in A", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Only in A", content: "value", metadata: { memoryType: "reference" } }],
 			});
 			// same refinement id, different session: not found there
 			const wrongSession = rollbackRejectedCandidate(engine, "session-b", result.id);
@@ -169,7 +169,7 @@ describe("rollbackRejectedCandidate", () => {
 				summary: "candidate",
 				rationale: "r",
 				expectedOutcome: "o",
-				edits: [{ action: "create", kind: "memory", title: "Ground truth", content: "value" }],
+				edits: [{ action: "create", kind: "memory", title: "Ground truth", content: "value", metadata: { memoryType: "reference" } }],
 			});
 			const outcome = rollbackRejectedCandidate(engine, "session-x", result.id);
 			expect(outcome.rolledBack).toBe(true);
