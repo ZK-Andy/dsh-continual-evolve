@@ -5,7 +5,15 @@
 1. **版本基线**：只改 `package.json` 的 `version`——pnpm v9 lockfile 无 root version 字段，勿找 lockfile。
 2. **预检**：`pnpm typecheck && pnpm lint && pnpm test` 全绿；双语 README 数据同步已完成（测试徽章与文件数、配置表、功能清单）。
 3. **提交 + tag**：`chore(release): vX.Y.Z` 提交；annotated tag `vX.Y.Z` 推送 origin。
-4. **发布**：
+4. **GitHub Release**（DSH 版式，见 `implemented/process/2026-09-24-github-release-notes`）：
+   ```sh
+   scripts/draft-release-notes.sh   # 输出 releases/vX.Y.Z.md 草稿（上一 tag..HEAD 按 feat/fix 分组）
+   # polish：英文区润色、作者名换 @handle，确认 compare 链接两端 tag 正确
+   gh release create vX.Y.Z --notes-file releases/vX.Y.Z.md
+   ```
+   - notes 文件进仓（`releases/`，随 tag 审计）；`chore(release)` 提交本身不进条目（脚本已过滤）。
+   - 无 prev-tag 的首版取全历史，属一次性行为。
+5. **发布**：
 
    ```sh
    npm publish --userconfig=/mnt/work/work/.npmrc --cache=/mnt/work/work/.npm-cache
@@ -13,8 +21,8 @@
 
    - token 存工作区 `.npmrc`（0600，openorbit 账号，用户确认长期复用，无需 revoke/转 Automation）
    - `prepare` 脚本自动 tsc build；沙箱 `/home` 只读视图下裸 `npm publish` 报 EROFS（写 `~/.npm/_cacache` 失败），上述两个参数是绕过正解
-5. **核验**：`npm view dsh-continual-evolve version` 与 `dist-tags.latest` 命中新版本；GitHub tag 已在远端；README 徽章数据与本版一致。
-6. **收尾**：HANDOFF 记录版本号、提交哈希与发布日期；遗留项进待办。
+6. **核验**：`npm view dsh-continual-evolve version` 与 `dist-tags.latest` 命中新版本；GitHub tag 已在远端；GitHub Release 已发布（notes 双语、作者、compare 链接齐全）；README 徽章数据与本版一致。
+7. **收尾**：HANDOFF 记录版本号、提交哈希与发布日期；遗留项进待办。
 
 ## 已知坑位速查
 
