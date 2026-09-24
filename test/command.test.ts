@@ -94,7 +94,9 @@ describe("findEntryById", () => {
 });
 
 /** Harness driving the real `/evolve` handler against a temp-dir engine. */
-function commandHarness(): {
+function commandHarness(
+	runtimeOverride: Partial<Parameters<typeof registerEvolveCommand>[3]> = {},
+): {
 	dir: string;
 	engine: ReturnType<typeof createEvolutionEngine>;
 	run: (rawInput: string, sessionId?: string) => Promise<CommandResult>;
@@ -113,7 +115,7 @@ function commandHarness(): {
 		ctx,
 		engine,
 		{ requireGlobalApproval: false },
-		{ rubricKey: Buffer.alloc(32, 7), autoRollbackOnReject: true },
+		{ rubricKey: Buffer.alloc(32, 7), autoRollbackOnReject: true, ...runtimeOverride },
 	);
 	if (!handler) throw new Error("evolve command was not registered");
 	return {
@@ -124,9 +126,12 @@ function commandHarness(): {
 }
 
 /** Test body wrapper: builds the harness and always cleans the temp dir up. */
-function withDir(fn: (harness: ReturnType<typeof commandHarness>) => Promise<void>): () => Promise<void> {
+function withDir(
+	fn: (harness: ReturnType<typeof commandHarness>) => Promise<void>,
+	runtimeOverride: Partial<Parameters<typeof registerEvolveCommand>[3]> = {},
+): () => Promise<void> {
 	return async () => {
-		const harness = commandHarness();
+		const harness = commandHarness(runtimeOverride);
 		try {
 			await fn(harness);
 		} finally {
@@ -414,6 +419,20 @@ describe("executeEvolveCommand — pause / resume / status (#21 P2)", () => {
 		expect(status.text).toContain("retention:");
 		expect(status.text).toContain("token usage");
 	}));
+
+	// Regression (v0.7.5): the listener used to be registered only when
+	// `autoReview === true`, so a default install with no profile config got
+	// "wiring is disabled by project policy" and `/evolve resume` could not
+	// turn the Memory Agent on. The listener is always registered now.
+	it("resumes the Memory Agent on a default install where autoReview is false", withDir(async (h) => {
+		const resumed = await h.run("resume");
+		expect(resumed.kind).toBe("success");
+		expect(resumed.text).toContain("resumed");
+		expect(resumed.text).not.toContain("disabled");
+		const status = await h.run("status");
+		expect(status.text).toContain("Memory Agent running");
+		expect(status.text).toContain("config default off");
+	}, { autoReview: false }));
 });
 
 describe("executeEvolveCommand — usage (#21 P0)", () => {

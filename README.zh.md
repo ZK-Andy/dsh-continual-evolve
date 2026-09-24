@@ -19,14 +19,14 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 
 - **三作用域**与合并语义（global < project < local）：**local** 本会话暂存、**project** 本项目跨会话库、**global** 跨项目——配合机械化晋升守卫，只有可携带、有分量、非重复的知识才能进全局
 - **类型化单条记忆**：每条 memory 带召回类型（`user | feedback | project | reference`）；踩坑（`feedback`）必须含 Why + How to apply
-- **专用后台记忆 Agent**：`autoReview: true` 时，成功回合通过机械 eligibility 后才有界 ZCode 式 loop 检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码。该 listener 不运行通用 review/planner/fate
+- **专用后台记忆 Agent**：成功回合通过机械 eligibility 后，有界 ZCode 式 loop 检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码。该 listener 不运行通用 review/planner/fate
 - **确定性回滚**：逆操作编辑由已应用结果生成——不靠 LLM 重新猜测
 - **benchmark 闭环**：候选沉淀先经冻结用例 + 独立评分者评估再接受（rubric 加密落盘）
 - **store 卫生**：`/evolve consolidate` 把写入时冲突提示与零使用陈旧条目变成一次批准、完全可逆的批量归档——加 `merge` 可将近重复内容并入幸存原条目
 
 ## 工作原理
 
-1. **沉淀**——模型经 `evolve_add` 创建条目，或仅在 `autoReview: true` 时由专用 Memory Agent 消费成功回合后的增量 snapshot（以及压缩检查点）。通用 review/planner 保持手动，除非另行显式调用。
+1. **沉淀**——模型经 `evolve_add` 创建条目，或由专用 Memory Agent 消费成功回合后的增量 snapshot。通用 review/planner 保持手动，除非另行显式调用。
 2. **能力感知的辅助调用**——memory loop、review、planner、wrapup、fate 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
 3. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 4. **审批**——全局与项目写入需明确人工批准；弹窗展示有界结构化编辑 diff 与冲突提示，弹窗丢失/响应畸形会重试，不会被误记为拒绝。
@@ -79,14 +79,14 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | 键 | 默认 | 含义 |
 |---|---|---|
 | `baseDir` | 解析后的 DSH home | `evolve/` 存储根目录 |
-| `autoReview` | `false` | 专用 Memory Agent listener 的显式 opt-in；为 true 时也不会自动运行通用 review/planner/fate |
+| `autoReview` | `false` | 没有 `evolve/runtime.json` 时 Memory Agent 的初始默认；监听器始终注册，因此它不是注册门 |
 | `memoryMinUserWords` | `3` | ZCode 风格：单个直接用户文本至少包含的词数；使用 CJK 分词 |
 | `reviewIntervalTurns` | `6` | local-fate 的兼容节奏；成功回合 review 不再等待这个间隔 |
 | `maxReviewInputChars` | `40000` | 交给门禁的轨迹切片 |
 | `reviewBudgetTokens` | `4096` | 门禁调用输出预算 |
 | `notifyOnAutoReview` | `true` | 门禁应用后发可见跟进通知 |
 | `requireGlobalApproval` | `true` | 全局与项目写入需明确批准 |
-| `localFate` | `false` | 可选的本地条目晋升/归档 fate 评估；需要同时设置 `autoReview: true` 与显式 `localFate: true` |
+| `localFate` | `false` | 可选的本地条目晋升/归档 fate 评估；listener 以 memory-only 运行时不可达，只对直接/完整调用者生效 |
 | `fateIntervalTurns` | 跟随 `reviewIntervalTurns` | 归宿评估的最小回合间隔 |
 | `goalBlockedWrapupTurns` | `3` | 连续阻塞目标的门禁轮数触发一次归宿评估（`0` 关闭） |
 | `promotionBlockPatterns` | POSIX 路径、session id、`~/.dsh` | 内容命中即判定项目专属，永不晋升全局 |
@@ -112,13 +112,13 @@ profile patch 示例：
     reviewIntervalTurns: 6
 ```
 
-自动进化是项目源码层面的显式 opt-in。默认 `autoReview: false` 时，插件不注册回合/压缩监听器。设置 `autoReview: true` 时只注册专用 Memory Agent listener，不自动运行通用 review/planner、prompt/skill 写入或 local fate。Memory 触发采用 ZCode 的轻量 eligibility：单个直接用户文本至少包含 `memoryMinUserWords` 个词（使用 CJK 分词）；空增量、内部 Agent、直接 memory 写入会跳过，压缩不会额外触发 memory-only 管线。手动 `evolve_*` 工具和 `/evolve` 命令仍可用；`/evolve pause`、`/evolve resume`、`/evolve status` 控制或报告 Memory Agent listener。
+即使 `autoReview` 为 `false`，Memory Agent 监听器也会注册——`autoReview` 只提供初始默认值，装完即用，无需改 profile。使用 `/evolve resume` 立即开启成功回合 snapshot，使用 `/evolve pause` 抑制新 snapshot 与模型调用，使用 `/evolve status` 查看配置默认值与运行时状态。开关保存在 `evolve/runtime.json`；手动 `evolve_*` 工具和 `/evolve` 命令不受暂停影响。自动运行只有 Memory Agent：通用 review/planner、prompt/skill 写入与 local fate 都不由该 listener 触达。Memory 触发采用 ZCode 的轻量 eligibility：单个直接用户文本至少包含 `memoryMinUserWords` 个词（使用 CJK 分词）；空增量、内部 Agent、直接 memory 写入会跳过，压缩不会额外触发 memory-only 管线。
 
 ## 开发
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（743 例）
+pnpm test                    # vitest（742 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```
@@ -127,7 +127,7 @@ pnpm lint                    # oxlint src test
 
 ```
 ├── src/                   # 引擎、工具、命令、memory Agent、门禁、fate、benchmark、注入 + token 用量…
-├── test/                  # vitest 测试套件（45 个文件）
+├── test/                  # vitest 测试套件（44 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
 │   ├── design.md          # 完整设计文档（硬化矩阵）

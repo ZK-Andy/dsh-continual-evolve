@@ -3,10 +3,11 @@
  *
  * Mounts the evolution engine, registers the model-facing evolve_* tools,
  * the human-facing /evolve command, the system-prompt guidance section, and
- * (only under an explicit `autoReview: true` opt-in) the dedicated Memory
- * Agent listener. With the default `autoReview: false`, the automatic
- * turn/compaction listeners are not registered; manual tools and commands
- * remain available.
+ * the dedicated Memory Agent listener. The listener is always registered so
+ * an install works without profile edits; `autoReview` only supplies the
+ * initial default when `evolve/runtime.json` does not exist yet, and
+ * `/evolve pause|resume` own it afterwards. Generic review/planner/fate are
+ * not reachable from this listener.
  */
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
@@ -35,7 +36,7 @@ export const Config = z.object({
 	baseDir: z.string(),
 	/** System-prompt section order for the evolution guidance. */
 	sectionOrder: z.natural().default(118),
-	/** Explicit opt-in for the dedicated Memory Agent listener (off by default). */
+	/** Initial Memory Agent default when no `evolve/runtime.json` exists; not a registration gate. */
 	autoReview: z.boolean().default(false),
 	/** ZCode-style minimum lexical words in one direct user text part. */
 	memoryMinUserWords: z.natural().default(3),
@@ -138,11 +139,6 @@ export interface EvolutionService {
 	readonly baseDir: string;
 }
 
-/** True only when the project explicitly opts into automatic evolution wiring. */
-export function automaticEvolutionWired(config: Pick<EvolveConfig, "autoReview">): boolean {
-	return config.autoReview === true;
-}
-
 export function apply(ctx: Context, config: EvolveConfig): void {
 	const baseDir = resolveDshHome(config.baseDir);
 	const skillsRoot = config.skillsDir ? expandHomePath(config.skillsDir) : join(baseDir, "skills");
@@ -194,7 +190,6 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		autoCase: config.autoCase ?? true,
 		promotionPolicy,
 		autoReview: config.autoReview ?? false,
-		memoryOnly: config.autoReview === true,
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in
@@ -212,39 +207,34 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 	});
 
-	// `autoReview` is an explicit opt-in for the dedicated Memory Agent only.
-	// The general review/planner, prompt/skill writes, and local-fate phases
-	// are not reachable from this listener. Manual tools and commands remain
-	// available below.
-	if (automaticEvolutionWired(config)) {
-		registerAutoReview(ctx, engine, {
-			intervalTurns: config.reviewIntervalTurns ?? 6,
-			enabledByDefault: true,
-			memoryOnly: true,
-			memoryMinUserWords: config.memoryMinUserWords ?? 3,
-			maxInputChars: config.maxReviewInputChars ?? 40000,
-			budgetTokens: config.reviewBudgetTokens ?? 4096,
-			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
-			localFate: config.localFate ?? false,
-			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
-			goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
-			promotionPolicy,
-			autoCase: config.autoCase ?? true,
-			rubricKey,
-			...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
-			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
-			requireGlobalApproval: config.requireGlobalApproval ?? true,
-			...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
-			...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
-		});
-		ctx.logger("continual-evolve").info(
-			"continual-evolve automatic listener registered (Memory Agent only; generic review/planner/fate disconnected)",
-		);
-	} else {
-		ctx.logger("continual-evolve").info(
-			"continual-evolve automatic evolution wiring disabled (autoReview is not explicitly true; manual tools and commands remain available)",
-		);
-	}
+	// The Memory Agent listener is always registered: an install must work
+	// without profile edits, so `autoReview` is only the initial default when
+	// no `evolve/runtime.json` exists yet — `/evolve pause|resume` own the
+	// switch afterwards. The general review/planner, prompt/skill writes, and
+	// local-fate phases are not reachable from this listener.
+	registerAutoReview(ctx, engine, {
+		intervalTurns: config.reviewIntervalTurns ?? 6,
+		enabledByDefault: config.autoReview ?? false,
+		memoryOnly: true,
+		memoryMinUserWords: config.memoryMinUserWords ?? 3,
+		maxInputChars: config.maxReviewInputChars ?? 40000,
+		budgetTokens: config.reviewBudgetTokens ?? 4096,
+		notifyOnAutoReview: config.notifyOnAutoReview ?? true,
+		localFate: config.localFate ?? false,
+		fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
+		goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
+		promotionPolicy,
+		autoCase: config.autoCase ?? true,
+		rubricKey,
+		...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
+		...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
+		requireGlobalApproval: config.requireGlobalApproval ?? true,
+		...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
+		...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
+	});
+	ctx.logger("continual-evolve").info(
+		"continual-evolve automatic listener registered (Memory Agent only; generic review/planner/fate disconnected)",
+	);
 
 	ctx.logger("continual-evolve").info(`continual-evolve mounted (baseDir=${baseDir})`);
 }

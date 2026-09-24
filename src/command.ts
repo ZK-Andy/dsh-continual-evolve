@@ -70,10 +70,11 @@ export interface CommandRuntimeOptions {
 	autoCase: boolean;
 	/** Mechanical promotion guards for wrapup/fate (2026-08-22 policy). */
 	promotionPolicy: PromotionPolicy;
-	/** Explicit source-level opt-in for the automatic listener. `false` means no wiring. */
+	/**
+	 * Initial Memory Agent default from plugin config. The listener is always
+	 * registered; this is not a registration gate.
+	 */
 	autoReview?: boolean;
-	/** The automatic listener runs only the dedicated Memory Agent. */
-	memoryOnly?: boolean;
 }
 
 export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
@@ -432,10 +433,6 @@ async function executeEvolveCommand(
 			}
 			case "pause":
 			case "resume": {
-				if (runtime.autoReview === false) {
-					return success("automatic evolution wiring is disabled by project policy; no automatic Memory Agent listener is registered. Manual evolve_* tools and /evolve commands keep working.");
-				}
-				const memoryOnly = runtime.memoryOnly !== false;
 				// The switch is independent of the static registration flag. A
 				// resume explicitly enables the Memory Agent; a pause leaves the
 				// enable bit intact so status explains the paused state.
@@ -446,7 +443,7 @@ async function executeEvolveCommand(
 					return success("automatic Memory Agent is already paused (no change).");
 				}
 				if (!pausing && current.enabled && !current.paused) {
-					return success(memoryOnly ? "automatic Memory Agent is already running (no change)." : "automatic evolution is already running (no change).");
+					return success("automatic Memory Agent is already running (no change).");
 				}
 				saveGateRuntime(engine.baseDir, pausing, pausing ? current.enabled : true);
 				return success(
@@ -531,16 +528,12 @@ function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, pro
 function renderGateStatus(engine: EvolutionEngine, sessionId: string, projectKey: string | undefined, runtime: CommandRuntimeOptions): string {
 	const configuredDefault = runtime.autoReview === undefined ? "unknown" : runtime.autoReview ? "on" : "off";
 	const current = loadGateRuntime(engine.baseDir, runtime.autoReview ?? false);
-	const memoryOnly = runtime.memoryOnly !== false;
-	const effective = runtime.autoReview === false
-		? "disabled by project policy"
-		: current.paused
-			? "PAUSED (resume with /evolve resume)"
-			: current.enabled
-				? memoryOnly ? "Memory Agent running" : "running"
-				: memoryOnly ? "Memory Agent off (enable with /evolve resume)" : "off (enable with /evolve resume)";
-	const listener = runtime.autoReview === false ? "not wired" : memoryOnly ? "Memory Agent-only listener registered" : "listener registered";
-	const gateLine = `gate: ${listener} · config default ${configuredDefault} · runtime ${effective}`;
+	const effective = current.paused
+		? "PAUSED (resume with /evolve resume)"
+		: current.enabled
+			? "Memory Agent running"
+			: "Memory Agent off (enable with /evolve resume)";
+	const gateLine = `gate: Memory Agent-only listener registered · config default ${configuredDefault} · runtime ${effective}`;
 	const countEntries = (state: HarnessState): number => Object.values(state.entries).reduce((n, byKind) => n + Object.keys(byKind).length, 0);
 	const lines = [gateLine];
 	lines.push(`stores: global ${countEntries(engine.load("global", undefined))} entries · local(${sessionId}) ${countEntries(engine.load("local", sessionId))} entries`);

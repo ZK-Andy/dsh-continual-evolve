@@ -99,7 +99,7 @@ interface HarnessRefinementEvent {
 |---|---|---|
 | **手动命令** | `/evolve [instructions] [--global]` | 用户显式要求，最优先 |
 | **模型自觉** | `evolve` 工具（`refine.run` 同款 API） | 发现重复失败/可复用战术时主动调度 |
-| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 仅在 `autoReview: true` 时注册；每个成功回合产生候选增量 snapshot；eligibility 后只运行专用 Memory Agent，通用 review/planner 需显式手动调用；每次 skip/判断写 `reviews.jsonl` |
+| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 监听器始终注册（`autoReview` 只是初始默认，`/evolve pause\|resume` 拥有运行时开关）；每个成功回合产生候选增量 snapshot；eligibility 后只运行专用 Memory Agent，通用 review/planner 需显式手动调用；每次 skip/判断写 `reviews.jsonl` |
 | **压缩时** | `session/event`（`compaction/start`） | memory-only 模式不额外触发；仅保留给旧的 full/direct 调用路径，scheduler 仍保持串行 |
 
 ### 关键纪律（照抄 prime-agent）
