@@ -19,14 +19,14 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 
 - **三作用域**与合并语义（global < project < local）：**local** 本会话暂存、**project** 本项目跨会话库、**global** 跨项目——配合机械化晋升守卫，只有可携带、有分量、非重复的知识才能进全局
 - **类型化单条记忆**：每条 memory 带召回类型（`user | feedback | project | reference`）；踩坑（`feedback`）必须含 Why + How to apply
-- **专用后台记忆 Agent**：只有在显式启用自动接线时，成功回合通过机械 eligibility 后才有界 ZCode 式 loop 检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码
+- **专用后台记忆 Agent**：`autoReview: true` 时，成功回合通过机械 eligibility 后才有界 ZCode 式 loop 检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码。该 listener 不运行通用 review/planner/fate
 - **确定性回滚**：逆操作编辑由已应用结果生成——不靠 LLM 重新猜测
 - **benchmark 闭环**：候选沉淀先经冻结用例 + 独立评分者评估再接受（rubric 加密落盘）
 - **store 卫生**：`/evolve consolidate` 把写入时冲突提示与零使用陈旧条目变成一次批准、完全可逆的批量归档——加 `merge` 可将近重复内容并入幸存原条目
 
 ## 工作原理
 
-1. **沉淀**——模型经 `evolve_add` 创建条目，或仅在 `autoReview: true` 时由自动管线消费成功回合后的增量 snapshot（以及压缩检查点）：先运行专用 memory Agent，再由通用 review/planner 提议非 memory 精炼。
+1. **沉淀**——模型经 `evolve_add` 创建条目，或仅在 `autoReview: true` 时由专用 Memory Agent 消费成功回合后的增量 snapshot（以及压缩检查点）。通用 review/planner 保持手动，除非另行显式调用。
 2. **能力感知的辅助调用**——memory loop、review、planner、wrapup、fate 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
 3. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 4. **审批**——全局与项目写入需明确人工批准；弹窗展示有界结构化编辑 diff 与冲突提示，弹窗丢失/响应畸形会重试，不会被误记为拒绝。
@@ -79,7 +79,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | 键 | 默认 | 含义 |
 |---|---|---|
 | `baseDir` | 解析后的 DSH home | `evolve/` 存储根目录 |
-| `autoReview` | `false` | 自动 memory/review/planner/fate 接线的显式 opt-in；为 false 时不注册自动回合/压缩监听器 |
+| `autoReview` | `false` | 专用 Memory Agent listener 的显式 opt-in；为 true 时也不会自动运行通用 review/planner/fate |
 | `reviewIntervalTurns` | `6` | local-fate 的兼容节奏；成功回合 review 不再等待这个间隔 |
 | `maxReviewInputChars` | `40000` | 交给门禁的轨迹切片 |
 | `reviewBudgetTokens` | `4096` | 门禁调用输出预算 |
@@ -111,13 +111,13 @@ profile patch 示例：
     reviewIntervalTurns: 6
 ```
 
-自动进化是项目源码层面的显式 opt-in。默认 `autoReview: false` 时，插件不注册回合/压缩监听器：不会产生自动 snapshot、memory/review/planner/fate 调用，也不会自动写入本地 prompt/skill。手动 `evolve_*` 工具和 `/evolve` 命令仍可用。只有在项目配置中设置 `autoReview: true` 才会接线自动管线；`/evolve pause`、`/evolve resume`、`/evolve status` 只对显式接线的构建有意义。
+自动进化是项目源码层面的显式 opt-in。默认 `autoReview: false` 时，插件不注册回合/压缩监听器。设置 `autoReview: true` 时只注册专用 Memory Agent listener，不自动运行通用 review/planner、prompt/skill 写入或 local fate。手动 `evolve_*` 工具和 `/evolve` 命令仍可用；`/evolve pause`、`/evolve resume`、`/evolve status` 控制或报告 Memory Agent listener。
 
 ## 开发
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（740 例）
+pnpm test                    # vitest（741 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

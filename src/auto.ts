@@ -1,9 +1,10 @@
 /**
- * The automatic review driver: watches agent turns and session compaction,
- * runs the cheap review gate, and — when the gate approves — runs the
- * local-scope planner and applies the result. All auxiliary work is
- * fire-and-forget with error containment: an auto-review failure never
- * disturbs the agent loop.
+ * The automatic evolution driver: watches agent turns and session compaction.
+ * In the production wiring it runs only the dedicated Memory Agent; the
+ * general review/planner and local-fate phases remain available to direct
+ * callers but are not entered by memory-only mode. All auxiliary work is
+ * fire-and-forget with error containment: an automatic failure never disturbs
+ * the agent loop.
  *
  * Every gate decision (approved / declined / failed / skipped) is appended to
  * `<dshHome>/evolve/reviews.jsonl` so auto-review activity is durably
@@ -53,6 +54,11 @@ export interface AutoReviewConfig {
 	intervalTurns: number;
 	/** Initial runtime state when no runtime.json exists. */
 	enabledByDefault?: boolean;
+	/**
+	 * Run only the dedicated memory extraction phase. The general review,
+	 * planner, prompt/skill writes, and local-fate phases are never entered.
+	 */
+	memoryOnly?: boolean;
 	maxInputChars: number;
 	budgetTokens: number;
 	/** Queue a visible follow-up notice after an approved, applied gate run. */
@@ -203,7 +209,11 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 					return "no-op";
 				}
 				try {
-					await runGate(ctx, engine, agent, config, state, snapshot, record, signal);
+					if (config.memoryOnly) {
+						await runMemoryExtractionPhase(ctx, engine, agent, config, state, snapshot, signal);
+					} else {
+						await runGate(ctx, engine, agent, config, state, snapshot, record, signal);
+					}
 					return "success";
 				} catch (cause) {
 					const message = cause instanceof Error ? cause.message : String(cause);
@@ -291,7 +301,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 				reason: "boot",
 				turnsSinceLastReview: 0,
 				outcome: "armed",
-				rationale: `auto-review gate registered (default=${defaultEnabled ? "on" : "off"}; per-success-turn snapshots; local-fate every ${config.fateIntervalTurns} turns)`,
+				rationale: `automatic evolution listener registered (mode=${config.memoryOnly ? "memory-only" : "full"}; default=${defaultEnabled ? "on" : "off"}; per-success-turn snapshots)`,
 			})}\n`,
 			"utf8",
 		);

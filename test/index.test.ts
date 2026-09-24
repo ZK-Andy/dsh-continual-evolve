@@ -7,7 +7,7 @@ describe("automatic evolution wiring policy", () => {
 		expect(automaticEvolutionWired({ autoReview: false })).toBe(false);
 	});
 
-	it("registers automatic listeners only for an explicit true opt-in", () => {
+	it("registers the Memory Agent listener only for an explicit true opt-in", () => {
 		expect(automaticEvolutionWired({ autoReview: true })).toBe(true);
 	});
 });

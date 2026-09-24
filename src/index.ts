@@ -3,8 +3,8 @@
  *
  * Mounts the evolution engine, registers the model-facing evolve_* tools,
  * the human-facing /evolve command, the system-prompt guidance section, and
- * (only under an explicit `autoReview: true` opt-in) the automatic
- * memory+review pipeline. With the default `autoReview: false`, the automatic
+ * (only under an explicit `autoReview: true` opt-in) the dedicated Memory
+ * Agent listener. With the default `autoReview: false`, the automatic
  * turn/compaction listeners are not registered; manual tools and commands
  * remain available.
  */
@@ -35,7 +35,7 @@ export const Config = z.object({
 	baseDir: z.string(),
 	/** System-prompt section order for the evolution guidance. */
 	sectionOrder: z.natural().default(118),
-	/** Explicit opt-in for automatic memory/review/planner/fate listeners (off by default). */
+	/** Explicit opt-in for the dedicated Memory Agent listener (off by default). */
 	autoReview: z.boolean().default(false),
 	/** Legacy/local-fate cadence fallback; successful-turn review is snapshot-driven. */
 	reviewIntervalTurns: z.natural().default(6),
@@ -192,6 +192,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		autoCase: config.autoCase ?? true,
 		promotionPolicy,
 		autoReview: config.autoReview ?? false,
+		memoryOnly: config.autoReview === true,
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in
@@ -209,15 +210,15 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 	});
 
-	// Automatic evolution is an explicit project opt-in. With the default
-	// `autoReview: false`, do not register the turn/compaction listeners at
-	// all: this keeps the generic review/planner, dedicated memory agent,
-	// local-fate assessments, and their LLM calls disconnected from the host.
-	// Manual tools and commands remain available below.
+	// `autoReview` is an explicit opt-in for the dedicated Memory Agent only.
+	// The general review/planner, prompt/skill writes, and local-fate phases
+	// are not reachable from this listener. Manual tools and commands remain
+	// available below.
 	if (automaticEvolutionWired(config)) {
 		registerAutoReview(ctx, engine, {
 			intervalTurns: config.reviewIntervalTurns ?? 6,
 			enabledByDefault: true,
+			memoryOnly: true,
 			maxInputChars: config.maxReviewInputChars ?? 40000,
 			budgetTokens: config.reviewBudgetTokens ?? 4096,
 			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
@@ -234,7 +235,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
 		});
 		ctx.logger("continual-evolve").info(
-			`continual-evolve auto-review registered (explicit opt-in; local-fate ${config.localFate ?? false ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
+			"continual-evolve automatic listener registered (Memory Agent only; generic review/planner/fate disconnected)",
 		);
 	} else {
 		ctx.logger("continual-evolve").info(

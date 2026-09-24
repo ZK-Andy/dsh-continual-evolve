@@ -332,6 +332,42 @@ describe("registerAutoReview wiring", () => {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
+	it("runs only the dedicated memory phase in memory-only mode", async () => {
+		let calls = 0;
+		const llm = {
+			stream: async function* () {
+				calls += 1;
+				if (calls > 1) throw new Error("generic review/planner must not run in memory-only mode");
+				const text = JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] });
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
+		const agent = {
+			id: "session-memory-only",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) }, config: { enabledByDefault: false, memoryOnly: true } });
+		try {
+			const { saveGateRuntime } = await import("../src/runtime.js");
+			saveGateRuntime(h.dir, false, true);
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(calls).toBe(1));
+			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(1));
+			expect(loadTokenUsage(h.dir).records[0]).toMatchObject({ phase: "memory" });
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
 
 	it("warns and skips the count when turn-stopping carries no agent", () => {
 		const h = wiringHarness();
