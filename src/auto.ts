@@ -33,6 +33,7 @@ import { projectKeyOf } from "./project.js";
 import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 import { DEFAULT_REVIEWS_RETAIN, pruneJsonlFile } from "./store.js";
+import { isGatePaused } from "./runtime.js";
 import { captureAutoCase } from "./autocase.js";
 import type { PromotionPolicy } from "./promotion.js";
 import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
@@ -181,6 +182,11 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		// goal the plain turn interval applies.
 		const goalDriven = goalDrivesRounds(goalServiceOf(ctx)?.get(agent));
 		if (!goalDriven && state.turns - state.lastReviewAt < config.intervalTurns) return;
+		// #21 P2 runtime switch: a paused gate stays fully dormant — no LLM
+		// calls, no fate assessments, no audit records. Checked after the
+		// cheap in-memory interval check so the paused path costs one file
+		// read at most. Manual tools/commands are unaffected (separate path).
+		if (isGatePaused(engine.baseDir)) return;
 		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
 		// Every failure is durably recorded — nothing fails silently.
 		void runGate(ctx, engine, agent, config, state, "turn_interval", record).catch((cause) => {
@@ -229,7 +235,10 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		const agent = agents?.get(session.id);
 		if (!agent) return; // no live agent for that session (e.g. cold read)
 		const state = stateFor(perSession, agent.id);
-		// Compaction is unconditional: persist what is about to be summarized away.
+		// Compaction is unconditional — unless the human paused the gate
+		// (#21): a paused gate skips even the compaction run, so "pause"
+		// is a true zero-LLM-call state.
+		if (isGatePaused(engine.baseDir)) return;
 		void runGate(ctx, engine, agent, config, state, "compact", record).catch((cause) => {
 			logger.warn(`auto-review failed at compaction for ${agent.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
 			record({

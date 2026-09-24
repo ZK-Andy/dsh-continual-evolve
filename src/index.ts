@@ -182,6 +182,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		autoRollbackOnReject: config.autoRollbackOnReject ?? true,
 		autoCase: config.autoCase ?? true,
 		promotionPolicy,
+		...(config.autoReview !== undefined ? { autoReview: config.autoReview } : {}),
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in

@@ -349,6 +349,36 @@ describe("registerAutoReview wiring", () => {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
+
+	it("a paused gate stays dormant on the turn-interval path (no LLM, no record)", async () => {
+		const h = wiringHarness();
+		try {
+			const { saveGateRuntime } = await import("../src/runtime.js");
+			saveGateRuntime(h.dir, true);
+			h.emit("agent/turn-stopping", { agent: wireAgent });
+			h.emit("agent/turn-stopping", { agent: wireAgent });
+			h.emit("agent/turn-stopping", { agent: wireAgent });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await vi.waitFor(() => expect(true).toBe(true)); // flush microtasks
+			expect(h.reviewsLines()).toHaveLength(1); // armed marker only
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("a paused gate skips even the unconditional compaction run", async () => {
+		const agents = new Map<string, unknown>([["session-wire", wireAgent]]);
+		const h = wiringHarness({ agents });
+		try {
+			const { saveGateRuntime } = await import("../src/runtime.js");
+			saveGateRuntime(h.dir, true);
+			h.emit("session/event", { id: "session-wire" }, { type: "compaction/start" });
+			await vi.waitFor(() => expect(true).toBe(true));
+			expect(h.reviewsLines()).toHaveLength(1); // armed marker only
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("runGoalBlockedFate (D3)", () => {

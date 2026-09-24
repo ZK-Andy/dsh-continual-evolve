@@ -61,6 +61,8 @@ Commands (in-session):
 | `/evolve mount · unmount <skillId>` | hot-mount an executable skill as a live plugin |
 | `/evolve goal [objective · done · block]` | round-driven auto-review goal |
 | `/evolve benchmark …` | case lifecycle, runs, acceptance |
+| `/evolve pause · resume · status` | pause/resume the auto-review gate (manual tools keep working), gate state |
+| `/evolve usage` | injection counts per entry — what the harness actually surfaced |
 
 Model tools: `evolve_list / add / update / delete / rollback` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval).
 
@@ -109,7 +111,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (635 tests)
+pnpm test                    # vitest (645 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```

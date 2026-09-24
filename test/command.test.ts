@@ -384,3 +384,54 @@ describe("executeEvolveCommand — demote (2026-08-22)", () => {
 		expect(missing.text).toContain("not found in the global, project, or local store");
 	}));
 });
+
+describe("executeEvolveCommand — pause / resume / status (#21 P2)", () => {
+	it("pauses and resumes the gate, idempotently", withDir(async (h) => {
+		const paused = await h.run("pause");
+		expect(paused.kind).toBe("success");
+		expect(paused.text).toContain("paused");
+		const again = await h.run("pause");
+		expect(again.text).toContain("already paused");
+		const status = await h.run("status");
+		expect(status.kind).toBe("success");
+		expect(status.text).toContain("PAUSED");
+		const resumed = await h.run("resume");
+		expect(resumed.text).toContain("resumed");
+		const running = await h.run("status");
+		expect(running.text).toContain("running");
+		expect(running.text).not.toContain("PAUSED");
+	}));
+
+	it("status reports store counts and the unknown patch flag under test wiring", withDir(async (h) => {
+		await seedMemory(h);
+		const status = await h.run("status");
+		expect(status.kind).toBe("success");
+		expect(status.text).toContain("patch flag unknown");
+		expect(status.text).toContain("local(session-cmd) 1 entries");
+		expect(status.text).toContain("retention:");
+	}));
+});
+
+describe("executeEvolveCommand — usage (#21 P0)", () => {
+	it("reports injection counts with stale entries flagged", withDir(async (h) => {
+		const { entryId } = await seedMemory(h);
+		const globalId = seedGlobal(h);
+		const { recordInjection } = await import("../src/usage.js");
+		recordInjection(h.dir, [`memory:${entryId}`], "session-past");
+		recordInjection(h.dir, [`memory:${entryId}`], "session-past"); // same session: no double count
+		recordInjection(h.dir, [`memory:${entryId}`], "session-other");
+		const result = await h.run("usage");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain(`memory:${entryId} — 2×`);
+		expect(result.text).toContain("(last in session-other)");
+		expect(result.text).toContain("never injected (1):");
+		expect(result.text).toContain(`memory:${globalId}`);
+	}));
+
+	it("reports an empty ledger before anything was injected", withDir(async (h) => {
+		const result = await h.run("usage");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("0 of 0 stored entries");
+		expect(result.text).toContain("(none yet");
+	}));
+});

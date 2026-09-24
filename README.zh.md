@@ -61,6 +61,8 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve mount · unmount <skillId>` | 把可执行技能热挂载为 live 插件 |
 | `/evolve goal [objective · done · block]` | 回合驱动的自进化目标 |
 | `/evolve benchmark …` | 用例生命周期、运行、接受决策 |
+| `/evolve pause · resume · status` | 暂停/恢复自动门禁（手动工具不受影响）、门禁状态 |
+| `/evolve usage` | 每条目的注入次数——harness 到底让什么露过面 |
 
 模型工具：`evolve_list / add / update / delete / rollback`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批）。
 
@@ -109,7 +111,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（635 例）
+pnpm test                    # vitest（645 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

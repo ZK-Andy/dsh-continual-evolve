@@ -24,7 +24,8 @@ import { executeBenchmarkCommand } from "./benchmark-command.js";
 import { executeWrapupCommand } from "./wrapup-command.js";
 import type { PromotionPolicy } from "./promotion.js";
 import { projectKeyOf } from "./project.js";
-import { loadUsage } from "./usage.js";
+import { loadUsage, getUsageCount } from "./usage.js";
+import { loadGateRuntime, saveGateRuntime } from "./runtime.js";
 import { planConsolidation } from "./consolidate.js";
 
 const USAGE = `Usage:
@@ -51,7 +52,10 @@ const USAGE = `Usage:
   /evolve unmount <id>       remove a hot-mounted plugin
   /evolve goal               show the evolution goal (round-driven auto-review)
   /evolve goal <objective>   create/update the evolution goal
-  /evolve goal done          complete the evolution goal`;
+  /evolve goal done          complete the evolution goal
+  /evolve pause | resume     pause/resume the auto-review gate (manual tools and commands keep working)
+  /evolve status             gate state (patch flag + runtime switch) plus store entry counts
+  /evolve usage              injection counts per entry — what the harness actually surfaced`;
 
 export interface CommandGateOptions {
 	requireGlobalApproval: boolean;
@@ -65,6 +69,12 @@ export interface CommandRuntimeOptions {
 	autoCase: boolean;
 	/** Mechanical promotion guards for wrapup/fate (2026-08-22 policy). */
 	promotionPolicy: PromotionPolicy;
+	/**
+	 * Static patch flag for the auto-review gate (#21 status display).
+	 * Absent (older wiring/tests) renders as unknown — the runtime pause
+	 * switch still works.
+	 */
+	autoReview?: boolean;
 }
 
 export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
@@ -414,6 +424,29 @@ async function executeEvolveCommand(
 			case "wrapup": {
 				return await executeWrapupCommand(ctx, engine, invocation, runtime.promotionPolicy);
 			}
+			case "pause":
+			case "resume": {
+				// #21 P2 runtime switch: pause the AUTOMATIC gate only. Manual
+				// evolve_* tools and /evolve commands keep working — the human
+				// is acting explicitly there, so no gate is being bypassed.
+				const pausing = sub === "pause";
+				const current = loadGateRuntime(engine.baseDir);
+				if (current.paused === pausing) {
+					return success(`auto-review gate is already ${pausing ? "paused" : "running"} (no change).`);
+				}
+				saveGateRuntime(engine.baseDir, pausing);
+				return success(
+					pausing
+						? "auto-review gate paused: no automatic reviews, fate assessments, or gate LLM calls until /evolve resume. Manual evolve_* tools and /evolve commands keep working."
+						: "auto-review gate resumed: automatic reviews run again on their configured cadence.",
+				);
+			}
+			case "status": {
+				return success(renderGateStatus(engine, sessionId, projectKeyOf(invocation.agent), runtime));
+			}
+			case "usage": {
+				return success(renderUsageReport(engine, sessionId, projectKeyOf(invocation.agent)));
+			}
 			case "goal": {
 				return executeGoalCommand(ctx, invocation, rest);
 			}
@@ -475,6 +508,99 @@ function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, pro
 		return success(`demoted ${kind}:${id} from the ${scope} store (archived — restore with /evolve unarchive ${id}${restoreScope})\n${renderResult(result)}`);
 	}
 	return error(`entry ${id} not found in the global, project, or local store`);
+}
+
+/**
+ * #21 status: one screen answering "is the gate on, and what is in the
+ * stores". The patch flag says whether the gate was registered at boot;
+ * the runtime switch says whether the human paused it since.
+ */
+function renderGateStatus(engine: EvolutionEngine, sessionId: string, projectKey: string | undefined, runtime: CommandRuntimeOptions): string {
+	const paused = loadGateRuntime(engine.baseDir).paused;
+	const patch = runtime.autoReview === undefined ? "unknown" : runtime.autoReview ? "on" : "off";
+	const gateLine =
+		patch === "off"
+			? "gate: disabled in patch config (autoReview off — /evolve pause has nothing to pause)"
+			: `gate: ${patch === "unknown" ? "patch flag unknown" : "enabled in patch config"} · ${paused ? "PAUSED by /evolve pause (resume with /evolve resume)" : "running"}`;
+	const countEntries = (state: HarnessState): number => Object.values(state.entries).reduce((n, byKind) => n + Object.keys(byKind).length, 0);
+	const lines = [gateLine];
+	lines.push(`stores: global ${countEntries(engine.load("global", undefined))} entries · local(${sessionId}) ${countEntries(engine.load("local", sessionId))} entries`);
+	if (projectKey) {
+		try {
+			lines[lines.length - 1] += ` · project ${countEntries(engine.load("project", projectKey))} entries`;
+		} catch {
+			lines[lines.length - 1] += " · project (unavailable)";
+		}
+	}
+	const retention = engine.retention;
+	if (retention) {
+		lines.push(`retention: snapshots ${retention.snapshots} · refinements ${retention.refinements} · reviews ${retention.reviews} (historyRetain)`);
+	}
+	return lines.join("\n");
+}
+
+/**
+ * #21 P0 usage ledger: injection counts per entry across the stores the
+ * human can see (global + this session + this project). Counts are
+ * per-session since the v2 usage shape — "in how many sessions did this
+ * entry surface" — the exposure half of the #18a归零实验 verdict.
+ */
+function renderUsageReport(engine: EvolutionEngine, sessionId: string, projectKey: string | undefined): string {
+	const store = loadUsage(engine.baseDir);
+	const rows: { key: string; title: string; count: number; lastSession?: string }[] = [];
+	const seen = new Set<string>();
+	const collect = (state: HarnessState): void => {
+		for (const kind of Object.keys(state.entries) as RefinementKind[]) {
+			for (const entry of Object.values(state.entries[kind])) {
+				const key = `${kind}:${entry.id}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				const count = getUsageCount(store, kind, entry.id);
+				rows.push({
+					key,
+					title: entry.title,
+					count,
+					...(store.lastSession?.[`${kind}:${entry.id}`] ? { lastSession: store.lastSession[`${kind}:${entry.id}`] } : {}),
+				});
+			}
+		}
+	};
+	collect(engine.load("global", undefined));
+	collect(engine.load("local", sessionId));
+	if (projectKey) {
+		try {
+			collect(engine.load("project", projectKey));
+		} catch {
+			// project store unavailable here — global+local still report
+		}
+	}
+	const liveKeys = new Set(rows.map((r) => r.key));
+	const orphaned = Object.keys(store.counts).filter((k) => !liveKeys.has(k)).length;
+	const total = rows.reduce((n, r) => n + r.count, 0);
+	const injected = rows.filter((r) => r.count > 0).sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1));
+	const stale = rows.filter((r) => r.count === 0).sort((a, b) => (a.key < b.key ? -1 : 1));
+	const lines = [`usage: ${total} injections across ${injected.length} of ${rows.length} stored entries${orphaned > 0 ? ` (+${orphaned} historical key(s) for deleted entries)` : ""}`];
+	if (injected.length > 0) {
+		lines.push("injected (top 15):");
+		for (const row of injected.slice(0, 15)) {
+			lines.push(`  ${row.key} — ${row.count}× · ${row.title}${row.lastSession ? ` (last in ${row.lastSession})` : ""}`);
+		}
+		if (injected.length > 15) {
+			lines.push(`  … and ${injected.length - 15} more`);
+		}
+	} else {
+		lines.push("injected: (none yet — nothing has surfaced into a session prompt)");
+	}
+	if (stale.length > 0) {
+		lines.push(`never injected (${stale.length}):`);
+		for (const row of stale.slice(0, 20)) {
+			lines.push(`  ${row.key} · ${row.title}`);
+		}
+		if (stale.length > 20) {
+			lines.push(`  … and ${stale.length - 20} more`);
+		}
+	}
+	return lines.join("\n");
 }
 
 function renderResult(result: RefinementResult): string {	const applied = result.appliedEdits.filter((e) => e.applied);
