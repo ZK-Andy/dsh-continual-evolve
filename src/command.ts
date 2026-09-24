@@ -525,8 +525,8 @@ function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, pro
 }
 
 /**
- * Status answers whether the always-registered listener is enabled at runtime
- * and what stores/retention it currently sees.
+ * Status answers whether the automatic listener is wired and what
+ * stores/retention it currently sees.
  */
 function renderGateStatus(engine: EvolutionEngine, sessionId: string, projectKey: string | undefined, runtime: CommandRuntimeOptions): string {
 	const configuredDefault = runtime.autoReview === undefined ? "unknown" : runtime.autoReview ? "on" : "off";
