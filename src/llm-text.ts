@@ -13,6 +13,7 @@ import {
 	BlockAssembler,
 	createUserMessage,
 	type ContentBlock,
+	type GenerateOptions,
 	type LlmResolvedModelInfo,
 	type Message,
 	type ReasoningEffortId,
@@ -24,6 +25,14 @@ import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 
 /** Terminal outcome of one shared direct LLM call. */
 export type StreamTextOutcome = "success" | "max-tokens" | "error" | "aborted" | "empty";
+
+/** Host-owned session identity type used by provider routing metadata. */
+export type LlmSessionId = NonNullable<GenerateOptions["sessionId"]>;
+
+/** Carry the host Agent id across the plugin's direct-call boundary. */
+export function asLlmSessionId(value: string): LlmSessionId {
+	return value as LlmSessionId;
+}
 
 /** Provider usage and terminal result observed after the stream settles. */
 export interface StreamTextObservation {
@@ -43,6 +52,8 @@ export interface StreamTextOptions {
 	prompt: string;
 	maxTokens?: number;
 	signal?: AbortSignal | undefined;
+	/** Host session identity forwarded to adapters for request routing. */
+	sessionId?: LlmSessionId;
 	/**
 	 * Route A session prefix: session-derived messages sent before the
 	 * trailing caller message so providers with prompt caching can serve
@@ -69,6 +80,8 @@ export interface StreamModelTurnOptions {
 	tools?: readonly ToolSchema[];
 	maxTokens?: number;
 	signal?: AbortSignal | undefined;
+	/** Host session identity forwarded to adapters for request routing. */
+	sessionId?: LlmSessionId;
 	/** Require at least one text block; tool-only turns must leave this false. */
 	requireText?: boolean;
 	/** Require visible text or a tool call; reasoning-only agent turns are empty. */
@@ -149,6 +162,7 @@ export async function streamModelTurn(ctx: Context, opts: StreamModelTurnOptions
 			...(reasoningEffort === undefined ? {} : { reasoningEffort }),
 			maxTokens: opts.maxTokens ?? 8000,
 			...(opts.signal ? { signal: opts.signal } : {}),
+			...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
 		})) {
 			assembler.push(chunk);
 		}
@@ -200,6 +214,7 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 		requireText: true,
 		...(opts.maxTokens === undefined ? {} : { maxTokens: opts.maxTokens }),
 		...(opts.signal ? { signal: opts.signal } : {}),
+		...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
 		...(opts.onUsage ? { onUsage: opts.onUsage } : {}),
 	});
 	const text = blocks

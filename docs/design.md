@@ -116,7 +116,7 @@ interface HarnessRefinementEvent {
 ### 5.1 提案校验 —— 比 prime-agent 更硬
 prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己产出**的（LLM 调 LLM，自产自审）。DSH 方案：
 - 提案生成走 [`src/llm-text.ts`](../src/llm-text.ts) 的 **`ctx.llm` 流式调用**（memory loop、review、planner 与主 agent 默认同 provider/model；由共享入口按精确 provider/model 能力选择最低开启 reasoning effort，无开启档时回退关闭档，无元数据时省略该字段，见 FAQ #7）+ 截断感知 JSON 恢复，非法输出即判失败——而不是让模型自产自审
-- 专用 memory loop 另走 `streamModelTurn`：provider 请求只携带冻结 manifest 和两个闭集工具 schema；`memory_propose` 仅返回结构化编辑，不直接写状态
+- 专用 memory loop 另走 `streamModelTurn`：provider 请求只携带冻结 manifest 和两个闭集工具 schema；`memory_propose` 仅返回结构化编辑，不直接写状态；共享直调边界同时转发 host `GenerateOptions.sessionId`，保持 provider 路由身份与 Agent loop 一致
 - 应用前仍跑一遍 `validateEdit`（双保险）
 - 评估单元格走 **`dsh-subagent` `outputSchema` 结构化输出**（schema 校验是 DSH 内建能力）：provider 校验子代理回复，宿主从不解析模型文本（见 FAQ #3）
 

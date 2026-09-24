@@ -67,8 +67,9 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 2. 自动管线的正常触发不再是固定 `reviewIntervalTurns`。`agent/turn-stopping` 记录成功回合边界，`agent/status=idle` 捕获增量 snapshot；eligibility 会把空增量、内部 agent、直接 evolve memory mutation、synthetic/model-only 或过短用户文本记录为 `skipped`，不调用模型。
 3. eligible snapshot 先进入专用 memory loop：最多 5 个内部 turn，只能使用冻结 manifest 的 `memory_search` 与结构化 `memory_propose`；成功/no-op 后才进入通用 review/planner，且通用 planner 的 memory 编辑会被机械剥离。
 4. 每个 session 的 scheduler 串行运行；运行中的新 snapshot 只保留最新 pending，任一 phase 失败/abort 都不推进共享 cursor，下一份 snapshot 从原边界重试。
+5. provider 适配器可能要求 host Agent 的 `sessionId` 作为路由元数据；插件自己的 `ctx.llm.stream` 直调不能假设 Agent loop 会自动补齐。
 
-**修复与观察**：用 `/evolve status` 区分“listener 已注册但 runtime off/paused”和“确实没有成功回合”；用 `/evolve resume` 即时开启，不需要改 profile 或重启。用 `/evolve pause` 停止新 snapshot、memory/review/fate 模型调用。每次判断或机械 skip 都追加到 `<dshHome>/evolve/reviews.jsonl`；`agent/disposed` 会 abort scheduler。
+**修复与观察**：用 `/evolve status` 区分“listener 已注册但 runtime off/paused”和“确实没有成功回合”；用 `/evolve resume` 即时开启，不需要改 profile 或重启。直调 LLM 的共享边界现在把 host Agent id 作为 `GenerateOptions.sessionId` 传给 review、memory agent、planner 和 wrap-up，避免 opencode-go 等 provider 报 `MissingSessionID`。用 `/evolve pause` 停止新 snapshot、memory/review/fate 模型调用。每次判断或机械 skip 都追加到 `<dshHome>/evolve/reviews.jsonl`；`agent/disposed` 会 abort scheduler。
 ## 6. `/evolve benchmark add-case` 的参数被拆烂（statement 变成 `hygiene"`）
 
 **症状**：case 的 statement/rubric 落盘后内容残缺。

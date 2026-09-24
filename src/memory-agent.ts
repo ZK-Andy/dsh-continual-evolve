@@ -20,7 +20,7 @@ import {
 	type ToolSchema,
 } from "@deepseek-ai/dsh-llm";
 import { requestScopeApproval, type ScopeApprovalDecision } from "./approval.js";
-import { streamModelTurn } from "./llm-text.js";
+import { streamModelTurn, type LlmSessionId } from "./llm-text.js";
 import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 import { extractJsonObject, parseJsonCandidate } from "./plan.js";
 import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
@@ -203,6 +203,7 @@ export function searchMemoryManifest(
 export interface MemoryAgentOptions {
 	provider: string;
 	model: string;
+	sessionId?: LlmSessionId;
 	manifest: readonly MemoryManifestEntry[];
 	trajectory: string;
 	trajectoryEvents?: readonly unknown[];
@@ -247,6 +248,7 @@ export async function runMemoryAgent(ctx: Context, options: MemoryAgentOptions):
 		const blocks = await streamModelTurn(ctx, {
 			provider: options.provider,
 			model: options.model,
+			...(options.sessionId ? { sessionId: options.sessionId } : {}),
 			system: MEMORY_AGENT_SYSTEM_PROMPT,
 			messages,
 			tools: MEMORY_AGENT_TOOL_SCHEMAS,

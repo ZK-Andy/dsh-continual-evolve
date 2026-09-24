@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import { ReasoningEffortId, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
-import { selectLowestReasoningEffort, streamText, type StreamTextObservation, type StreamTextOptions } from "../src/llm-text.js";
+import { asLlmSessionId, selectLowestReasoningEffort, streamText, type StreamTextObservation, type StreamTextOptions } from "../src/llm-text.js";
 
 const BASE_OPTS: StreamTextOptions = {
 	provider: "test-provider",
@@ -70,6 +70,14 @@ describe("streamText success path", () => {
 	it("concatenates text blocks across a stream ending with stop", async () => {
 		const ctx = ctxWith([...textBlock("hello ", 0), ...textBlock("world", 1), { type: "finish", reason: { kind: "stop" } }]);
 		await expect(streamText(ctx, BASE_OPTS)).resolves.toBe("hello \nworld");
+	});
+
+	it("forwards the host session identity to the provider request", async () => {
+		const requests: GenerateOptions[] = [];
+		const ctx = ctxWith([...textBlock("routed"), { type: "finish", reason: { kind: "stop" } }], undefined, requests);
+		const sessionId = asLlmSessionId("session-routing-test");
+		await streamText(ctx, { ...BASE_OPTS, sessionId });
+		expect(requests[0]?.sessionId).toBe(sessionId);
 	});
 
 	it("returns text even when no explicit finish chunk arrives (defaults to stop)", async () => {

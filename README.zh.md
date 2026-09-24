@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-737%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-738%20passing-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
@@ -27,7 +27,7 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 ## 工作原理
 
 1. **沉淀**——模型经 `evolve_add` 创建条目，或自动管线消费成功回合后的增量 snapshot（以及压缩检查点）：先运行专用 memory Agent，再由通用 review/planner 提议非 memory 精炼。
-2. **能力感知的辅助调用**——memory loop、review、planner、wrapup、fate 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
+2. **能力感知的辅助调用**——memory loop、review、planner、wrapup、fate 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
 3. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 4. **审批**——全局与项目写入需明确人工批准；弹窗展示有界结构化编辑 diff 与冲突提示，弹窗丢失/响应畸形会重试，不会被误记为拒绝。
 5. **应用与注入**——memory 批次先完成所有持久化审批，写前重查 abort；后续 scope 失败时补偿回滚先前写入，成功 scope 仍保留快照与审计。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；memory/skill 以按相关性排序的目录索引出现（`[memory:type:id] 标题`钩子）。
@@ -43,7 +43,7 @@ dsh plugin add dsh-continual-evolve
 dsh plugin add ZK-Andy/dsh-continual-evolve
 ```
 
-安装或更新后重启 `dsh web`。
+安装或更新后，重启你实际使用的 DSH profile（`dsh web` 或桌面宿主）。
 
 ## 使用
 

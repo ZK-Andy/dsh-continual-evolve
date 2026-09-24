@@ -13,7 +13,7 @@ import { extractJsonObject } from "./plan.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { sessionEventsOf } from "./inject.js";
 import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
-import { streamText } from "./llm-text.js";
+import { asLlmSessionId, streamText } from "./llm-text.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
 
 export interface AutoRefineReview {
@@ -177,6 +177,7 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 	const text = await streamText(ctx, {
 		provider,
 		model,
+		sessionId: asLlmSessionId(agent.id),
 		system: AUTO_REVIEW_SYSTEM_PROMPT,
 		prompt: userPrompt,
 		maxTokens: options.budgetTokens ?? 8000,

@@ -45,6 +45,7 @@ import {
 	type MemoryScopeBaselines,
 } from "./memory-agent.js";
 import type { PromotionPolicy } from "./promotion.js";
+import { asLlmSessionId } from "./llm-text.js";
 import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
 
 export interface AutoReviewConfig {
@@ -512,6 +513,7 @@ export async function runMemoryExtractionPhase(
 	const run = await runMemoryAgent(ctx, {
 		provider,
 		model,
+		sessionId: asLlmSessionId(sessionId),
 		manifest,
 		trajectory: memorySnapshot.trajectory,
 		trajectoryEvents: memorySnapshot.events,

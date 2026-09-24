@@ -25,7 +25,7 @@ import { ARCHIVED_AT_KEY, PROMOTED_AT_KEY, PROMOTED_TO_KEY, SOURCE_SEQS_KEY, SOU
 import { MEMORY_TYPE_KEY, isMemoryType } from "./types.js";
 import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
-import { streamText } from "./llm-text.js";
+import { asLlmSessionId, streamText } from "./llm-text.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
 import { recencyScore } from "./inject.js";
@@ -697,6 +697,7 @@ export async function assessLocalEntries(
 	const text = await streamText(ctx, {
 		provider: agent.options.provider,
 		model: agent.options.model,
+		sessionId: asLlmSessionId(agent.id),
 		system: WRAPUP_ASSESS_SYSTEM_PROMPT,
 		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 4096,

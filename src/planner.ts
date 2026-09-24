@@ -15,7 +15,7 @@ import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { recentUserText, sessionEventsOf } from "./inject.js";
 import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
 import { skillQualityGuide } from "./skillquality.js";
-import { streamText } from "./llm-text.js";
+import { asLlmSessionId, streamText } from "./llm-text.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the /evolve continual harness subsystem.
@@ -178,6 +178,7 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 	const text = await streamText(ctx, {
 		provider: agent.options.provider,
 		model: agent.options.model,
+		sessionId: asLlmSessionId(agent.id),
 		system: PLANNER_SYSTEM_PROMPT,
 		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 8000,
