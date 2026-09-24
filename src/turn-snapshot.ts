@@ -33,6 +33,7 @@ export interface TurnSnapshot {
 	readonly userText: string;
 	readonly sourceSeqs: readonly number[];
 	readonly maxChars: number;
+	readonly minUserWords: number;
 	/** Cursor supplied by the shared scheduler before this snapshot selected events. */
 	readonly capturedAfterCursor?: string;
 	readonly eligible: boolean;
@@ -44,6 +45,23 @@ export interface SnapshotEligibility {
 	readonly eligible: boolean;
 	readonly reason?: SnapshotSkipReason;
 	readonly userText: string;
+}
+
+/** ZCode's minimum user-prose threshold, counted as lexical words. */
+export const MEMORY_MIN_USER_WORDS = 3;
+
+const WORD_SEGMENTER = new Intl.Segmenter("und", { granularity: "word" });
+
+function countUserWords(text: string): number {
+	return [...WORD_SEGMENTER.segment(text)].filter((segment) => segment.isWordLike).length;
+}
+
+function containsEligibleUserProse(events: readonly unknown[], minUserWords: number): boolean {
+	return events.some((event) => {
+		if (!isDirectUserEvent(event)) return false;
+		const row = event as { data?: { content?: unknown } };
+		return countUserWords(contentText(row.data?.content)) >= minUserWords;
+	});
 }
 
 /** DSH's surface reader is duck-typed to keep this module host-generation safe. */
@@ -64,12 +82,14 @@ export async function captureTurnSnapshot(
 		reason: TurnSnapshotReason;
 		cursor?: string;
 		maxChars: number;
+		minUserWords?: number;
 	},
 ): Promise<TurnSnapshot> {
 	const allEvents = await readSurface(ctx, agent);
 	const cursor = boundaryCursor(allEvents);
 	const events = eventsAfterCursor(allEvents, opts.cursor);
-	const eligibility = evaluateSnapshotEligibility(events, isInternalAgent(agent));
+	const minUserWords = opts.minUserWords ?? MEMORY_MIN_USER_WORDS;
+	const eligibility = evaluateSnapshotEligibility(events, isInternalAgent(agent), minUserWords);
 	const projectKey = projectKeyOf(agent);
 	return {
 		sessionId: agent.id,
@@ -82,6 +102,7 @@ export async function captureTurnSnapshot(
 		userText: eligibility.userText,
 		sourceSeqs: directUserSeqs(events),
 		maxChars: opts.maxChars,
+		minUserWords,
 		...(opts.cursor === undefined ? {} : { capturedAfterCursor: opts.cursor }),
 		eligible: eligibility.eligible,
 		...(eligibility.reason ? { skipReason: eligibility.reason } : {}),
@@ -96,7 +117,7 @@ export async function captureTurnSnapshot(
  */
 export function sliceTurnSnapshot(snapshot: TurnSnapshot, cursor: string): TurnSnapshot {
 	const events = sliceSnapshotEvents(snapshot, cursor);
-	const eligibility = evaluateSnapshotEligibility(events, false);
+	const eligibility = evaluateSnapshotEligibility(events, false, snapshot.minUserWords);
 	return {
 		...snapshot,
 		events,
@@ -113,12 +134,16 @@ export function sliceTurnSnapshot(snapshot: TurnSnapshot, cursor: string): TurnS
  * does not decide whether a fact is valuable; that remains the review model's
  * job. It only removes mechanical noise before the scheduler spends tokens.
  */
-export function evaluateSnapshotEligibility(events: readonly unknown[], internalAgent = false): SnapshotEligibility {
+export function evaluateSnapshotEligibility(
+	events: readonly unknown[],
+	internalAgent = false,
+	minUserWords = MEMORY_MIN_USER_WORDS,
+): SnapshotEligibility {
 	if (internalAgent) return { eligible: false, reason: "internal-agent", userText: "" };
 	if (events.length === 0) return { eligible: false, reason: "no-new-events", userText: "" };
 	if (containsDirectMemoryWrite(events)) return { eligible: false, reason: "direct-memory-write", userText: "" };
 	const userText = directUserText(events);
-	if (userText.length < 3) return { eligible: false, reason: "no-user-prose", userText };
+	if (!containsEligibleUserProse(events, minUserWords)) return { eligible: false, reason: "no-user-prose", userText };
 	return { eligible: true, userText };
 }
 

@@ -80,6 +80,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 |---|---|---|
 | `baseDir` | resolved DSH home | root for the `evolve/` stores |
 | `autoReview` | `false` | explicit opt-in for the dedicated Memory Agent listener; when true, generic review/planner/fate are not run |
+| `memoryMinUserWords` | `3` | ZCode-style minimum lexical words in one direct user text part; uses CJK-aware segmentation |
 | `reviewIntervalTurns` | `6` | legacy local-fate cadence fallback; successful-turn review no longer waits for this interval |
 | `maxReviewInputChars` | `40000` | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
@@ -115,15 +116,19 @@ Automatic evolution is an explicit source-level opt-in. With the default
 `autoReview: false`, the plugin does not register turn/compaction listeners.
 With `autoReview: true`, it registers only the dedicated Memory Agent listener;
 the generic review/planner, prompt/skill writes, and local-fate phases are not
-run automatically. Manual `evolve_*` tools and `/evolve` commands remain
-available. `/evolve pause`, `/evolve resume`, and `/evolve status` control or
-report the Memory Agent listener.
+run automatically. The memory trigger follows ZCode's lightweight eligibility:
+direct user text must contain at least `memoryMinUserWords` lexical words
+(CJK-aware segmentation), while empty/internal/direct-memory-write snapshots
+are skipped; compaction does not add a separate memory-only trigger. Manual
+`evolve_*` tools and `/evolve` commands remain available. `/evolve pause`,
+`/evolve resume`, and `/evolve status` control or report the Memory Agent
+listener.
 
 ## Development
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (741 tests)
+pnpm test                    # vitest (743 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```

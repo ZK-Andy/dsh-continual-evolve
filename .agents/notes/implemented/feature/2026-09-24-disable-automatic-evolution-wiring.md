@@ -8,7 +8,9 @@ Status: implemented
 
 ## Decision
 
-`autoReview` 变为专用 Memory Agent 自动接线的显式开关：只有严格为 `true` 时，`src/index.ts` 才注册 `registerAutoReview` 的回合/压缩监听器；该 listener 以 `memoryOnly` 模式只进入 `runMemoryExtractionPhase`，不会调用通用 review/planner、prompt/skill 写入或 local fate。默认 `false` 时完全不注册自动 listener。`localFate` 保持默认 `false`。
+`autoReview` 变为专用 Memory Agent 自动接线的显式开关：只有严格为 `true` 时，`src/index.ts` 才注册 `registerAutoReview` 的成功回合 listener；该 listener 以 `memoryOnly` 模式只进入 `runMemoryExtractionPhase`，不会调用通用 review/planner、prompt/skill 写入或 local fate。默认 `false` 时完全不注册自动 listener。memory-only 不从 compaction 事件额外触发。`localFate` 保持默认 `false`。
+
+Memory eligibility 对齐 ZCode：空增量、内部 Agent、直接 memory 写入、synthetic/model-only 文本继续机械跳过；直接用户文本按单个 text part 计算，至少 `memoryMinUserWords` 个词（默认 3，使用 `Intl.Segmenter` 做 CJK-aware 分词），不把多个短消息拼接后放宽门槛。
 
 `/evolve status` 真实报告 Memory Agent listener 是否接线；`/evolve pause`、`/evolve resume` 控制或说明 Memory Agent runtime，不声称控制通用 review/planner。手动 `evolve_*` 工具、`/evolve` 人工命令、benchmark 和存储能力保持可用。
 

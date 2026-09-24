@@ -429,7 +429,7 @@ describe("registerAutoReview wiring", () => {
 				for (const chunk of chunks) yield chunk;
 			},
 		} as unknown as Context["llm"];
-		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "remember this" }], source: { kind: "user" } } }];
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "remember this durable fact" }], source: { kind: "user" } } }];
 		const agent = {
 			id: "session-token",
 			options: { provider: "test-provider", model: "test-model" },
@@ -951,6 +951,17 @@ describe("registerAutoReview wiring", () => {
 			h.emit("session/event", { id: "session-cold" }, { type: "compaction/start" });
 			await vi.waitFor(() => expect(true).toBe(true));
 			expect(h.reviewsLines()).toHaveLength(2);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not add a compaction trigger in memory-only mode", async () => {
+		const agents = new Map<string, unknown>([["session-wire", wireAgent]]);
+		const h = wiringHarness({ agents, config: { memoryOnly: true } });
+		try {
+			h.emit("session/event", { id: "session-wire" }, { type: "compaction/start" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(1));
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}

@@ -54,6 +54,8 @@ export interface AutoReviewConfig {
 	intervalTurns: number;
 	/** Initial runtime state when no runtime.json exists. */
 	enabledByDefault?: boolean;
+	/** ZCode-style minimum lexical words in one direct user text part. */
+	memoryMinUserWords?: number;
 	/**
 	 * Run only the dedicated memory extraction phase. The general review,
 	 * planner, prompt/skill writes, and local-fate phases are never entered.
@@ -249,6 +251,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 				reason,
 				...(cursor !== undefined ? { cursor } : {}),
 				maxChars: config.maxInputChars,
+				...(config.memoryMinUserWords !== undefined ? { minUserWords: config.memoryMinUserWords } : {}),
 			});
 			if (!disposedSessions.has(agent.id)) schedulerFor(agent, state).schedule(snapshot);
 		}).catch((cause) => {
@@ -325,6 +328,10 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 	});
 
 	ctx.on("session/event", (session: { id: string }, event: { type: string }) => {
+		// ZCode schedules extraction from successful turns, not from compaction.
+		// Keep the legacy compaction path for direct/full callers, but do not
+		// add an extra automatic Memory Agent trigger in memory-only mode.
+		if (config.memoryOnly) return;
 		if (event.type !== "compaction/start") return;
 		const agents = (ctx as unknown as { agents?: { get(id: string): Agent | undefined } }).agents;
 		const agent = agents?.get(session.id);

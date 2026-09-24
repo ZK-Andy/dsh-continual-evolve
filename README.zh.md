@@ -80,6 +80,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 |---|---|---|
 | `baseDir` | 解析后的 DSH home | `evolve/` 存储根目录 |
 | `autoReview` | `false` | 专用 Memory Agent listener 的显式 opt-in；为 true 时也不会自动运行通用 review/planner/fate |
+| `memoryMinUserWords` | `3` | ZCode 风格：单个直接用户文本至少包含的词数；使用 CJK 分词 |
 | `reviewIntervalTurns` | `6` | local-fate 的兼容节奏；成功回合 review 不再等待这个间隔 |
 | `maxReviewInputChars` | `40000` | 交给门禁的轨迹切片 |
 | `reviewBudgetTokens` | `4096` | 门禁调用输出预算 |
@@ -111,13 +112,13 @@ profile patch 示例：
     reviewIntervalTurns: 6
 ```
 
-自动进化是项目源码层面的显式 opt-in。默认 `autoReview: false` 时，插件不注册回合/压缩监听器。设置 `autoReview: true` 时只注册专用 Memory Agent listener，不自动运行通用 review/planner、prompt/skill 写入或 local fate。手动 `evolve_*` 工具和 `/evolve` 命令仍可用；`/evolve pause`、`/evolve resume`、`/evolve status` 控制或报告 Memory Agent listener。
+自动进化是项目源码层面的显式 opt-in。默认 `autoReview: false` 时，插件不注册回合/压缩监听器。设置 `autoReview: true` 时只注册专用 Memory Agent listener，不自动运行通用 review/planner、prompt/skill 写入或 local fate。Memory 触发采用 ZCode 的轻量 eligibility：单个直接用户文本至少包含 `memoryMinUserWords` 个词（使用 CJK 分词）；空增量、内部 Agent、直接 memory 写入会跳过，压缩不会额外触发 memory-only 管线。手动 `evolve_*` 工具和 `/evolve` 命令仍可用；`/evolve pause`、`/evolve resume`、`/evolve status` 控制或报告 Memory Agent listener。
 
 ## 开发
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（741 例）
+pnpm test                    # vitest（743 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

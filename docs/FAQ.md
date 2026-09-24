@@ -63,8 +63,8 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 **症状**：`armed` 标记存在，但成功回合后没有 `skipped`、`declined` 或 `approved` 记录；或者配置了 `autoReview: true` 仍然没有调用。
 
 **原因**：
-1. `autoReview` 现在是项目源码层面的显式 opt-in：只有严格设置为 `true` 才会注册专用 Memory Agent 的回合/压缩 listener；默认 `false` 时不会注册，也不会产生 `armed` 标记。显式接线后，运行时开关仍是 v2 `{enabled, paused}`。
-2. 自动 listener 的正常触发不再是固定 `reviewIntervalTurns`。`agent/turn-stopping` 记录成功回合边界，`agent/status=idle` 捕获增量 snapshot；eligibility 会把空增量、内部 agent、直接 evolve memory mutation、synthetic/model-only 或过短用户文本记录为 `skipped`，不调用模型。
+1. `autoReview` 现在是项目源码层面的显式 opt-in：只有严格设置为 `true` 才会注册专用 Memory Agent 的成功回合 listener；默认 `false` 时不会注册，也不会产生 `armed` 标记。memory-only 模式不从压缩事件额外触发，显式接线后运行时开关仍是 v2 `{enabled, paused}`。
+2. 自动 listener 的正常触发不再是固定 `reviewIntervalTurns`。`agent/turn-stopping` 记录成功回合边界，`agent/status=idle` 捕获增量 snapshot；eligibility 会把空增量、内部 agent、直接 evolve memory mutation、synthetic/model-only 或单个直接用户文本少于 `memoryMinUserWords` 个词的情况记录为 `skipped`，不调用模型。词数使用 CJK-aware segmentation。
 3. eligible snapshot 只进入专用 memory loop：最多 5 个内部 turn，只能使用冻结 manifest 的 `memory_search` 与结构化 `memory_propose`。通用 review/planner、prompt/skill 写入和 local fate 不再由该 listener 调用；它们只能通过显式手动路径运行。
 4. 每个 session 的 scheduler 串行运行；运行中的新 snapshot 只保留最新 pending，任一 phase 失败/abort 都不推进共享 cursor，下一份 snapshot 从原边界重试。
 5. provider 适配器可能要求 host Agent 的 `sessionId` 作为路由元数据；插件自己的 `ctx.llm.stream` 直调不能假设 Agent loop 会自动补齐。

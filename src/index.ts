@@ -37,6 +37,8 @@ export const Config = z.object({
 	sectionOrder: z.natural().default(118),
 	/** Explicit opt-in for the dedicated Memory Agent listener (off by default). */
 	autoReview: z.boolean().default(false),
+	/** ZCode-style minimum lexical words in one direct user text part. */
+	memoryMinUserWords: z.natural().default(3),
 	/** Legacy/local-fate cadence fallback; successful-turn review is snapshot-driven. */
 	reviewIntervalTurns: z.natural().default(6),
 	/** Trajectory slice handed to the gate, in characters. */
@@ -219,6 +221,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			intervalTurns: config.reviewIntervalTurns ?? 6,
 			enabledByDefault: true,
 			memoryOnly: true,
+			memoryMinUserWords: config.memoryMinUserWords ?? 3,
 			maxInputChars: config.maxReviewInputChars ?? 40000,
 			budgetTokens: config.reviewBudgetTokens ?? 4096,
 			notifyOnAutoReview: config.notifyOnAutoReview ?? true,

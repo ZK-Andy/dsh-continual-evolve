@@ -38,6 +38,13 @@ describe("snapshot eligibility", () => {
 		expect(evaluateSnapshotEligibility([user(1, "足够长的用户内容"), direct])).toMatchObject({ eligible: false, reason: "direct-memory-write" });
 	});
 
+	it("uses a lexical threshold per direct user text part, with CJK segmentation", () => {
+		expect(evaluateSnapshotEligibility([user(1, "one two")])).toMatchObject({ eligible: false, reason: "no-user-prose" });
+		expect(evaluateSnapshotEligibility([user(1, "one two three")])).toMatchObject({ eligible: true });
+		expect(evaluateSnapshotEligibility([user(1, "好"), user(2, "谢谢")])).toMatchObject({ eligible: false, reason: "no-user-prose" });
+		expect(evaluateSnapshotEligibility([user(1, "请记住这个长期约定")])).toMatchObject({ eligible: true });
+	});
+
 	it("recognizes DSH internal-agent headers", () => {
 		expect(isInternalAgent({ session: { header: { origin: "subagent" } } } as never)).toBe(true);
 		expect(isInternalAgent({ session: { header: { origin: "internal" } } } as never)).toBe(true);
