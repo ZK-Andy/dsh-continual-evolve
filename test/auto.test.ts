@@ -28,7 +28,7 @@ import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import { loadTokenUsage } from "../src/token-usage.js";
 
 function fresh(): GateState {
-	return { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
+	return { turns: 0, completedTurn: 0, lastSnapshotTurn: 0, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
 }
 
 function baseConfig(overrides: Partial<AutoReviewConfig> = {}): AutoReviewConfig {
@@ -231,6 +231,7 @@ function wiringHarness(options: {
 	agents?: Map<string, unknown>;
 	llm?: Context["llm"];
 	sessionQuery?: { readSurface(sessionId: string): Promise<{ events: unknown[] }> };
+	config?: Partial<AutoReviewConfig>;
 } = {}): {
 	dir: string;
 	emit: (event: string, payload: unknown) => void;
@@ -258,7 +259,7 @@ function wiringHarness(options: {
 		...(options.sessionQuery ? { sessionQuery: options.sessionQuery } : {}),
 		...(options.agents ? { agents: { get: (id: string) => options.agents?.get(id) } } : {}),
 	} as unknown as Context;
-	registerAutoReview(ctx, engine, baseConfig());
+	registerAutoReview(ctx, engine, baseConfig(options.config));
 	return {
 		dir,
 		emit: (event, ...payloads) => {
@@ -283,7 +284,26 @@ describe("registerAutoReview wiring", () => {
 			expect(lines).toHaveLength(1);
 			const record = JSON.parse(lines[0] ?? "{}") as { outcome?: string; rationale?: string };
 			expect(record.outcome).toBe("armed");
-			expect(record.rationale).toContain("interval=3");
+				expect(record.rationale).toContain("per-success-turn snapshots");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the listener dormant by default and enables it through runtime.json", async () => {
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
+		const h = wiringHarness({ config: { enabledByDefault: false }, sessionQuery: { readSurface: async () => ({ events }) } });
+		try {
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(1));
+
+			const { saveGateRuntime } = await import("../src/runtime.js");
+			saveGateRuntime(h.dir, false, true);
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 2 });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ reason: "turn_snapshot" });
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
@@ -299,31 +319,31 @@ describe("registerAutoReview wiring", () => {
 		}
 	});
 
-	it("does not run the gate below the interval threshold", async () => {
+	it("records a mechanical skip when a successful turn has no new surface rows", async () => {
 		const h = wiringHarness();
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent });
-			h.emit("agent/turn-stopping", { agent: wireAgent });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" }); // 2 < interval 3
-			await vi.waitFor(() => expect(true).toBe(true)); // flush microtasks
-			expect(h.reviewsLines()).toHaveLength(1); // armed marker only
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
+			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string; rationale?: string };
+			expect(record.outcome).toBe("skipped");
+			expect(record.reason).toBe("turn_snapshot");
+			expect(record.rationale).toContain("no-new-events");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
-	it("runs the gate at the interval; trajectory failure is contained as a failed record", async () => {
-		const h = wiringHarness(); // no sessionQuery → readTrajectory always fails
+	it("contains snapshot acquisition failure and leaves the cursor retryable", async () => {
+		const h = wiringHarness({ sessionQuery: { readSurface: async () => { throw new Error("surface unavailable"); } } });
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent });
-			h.emit("agent/turn-stopping", { agent: wireAgent });
-			h.emit("agent/turn-stopping", { agent: wireAgent });
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
 			h.emit("agent/status", { agent: wireAgent, status: "idle" });
 			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
 			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string; rationale?: string };
 			expect(record.outcome).toBe("failed");
-			expect(record.reason).toBe("turn_interval");
-			expect(record.rationale).toContain("trajectory unavailable");
+			expect(record.reason).toBe("turn_snapshot");
+			expect(record.rationale).toContain("surface unavailable");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
@@ -356,7 +376,7 @@ describe("registerAutoReview wiring", () => {
 		};
 		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) } });
 		try {
-			for (let i = 0; i < 3; i += 1) h.emit("agent/turn-stopping", { agent });
+			for (let i = 0; i < 3; i += 1) h.emit("agent/turn-stopping", { agent, turn: i + 1 });
 			h.emit("agent/status", { agent, status: "idle" });
 			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(2));
 			expect(loadTokenUsage(h.dir).records).toEqual([
@@ -368,14 +388,15 @@ describe("registerAutoReview wiring", () => {
 		}
 	});
 
-	it("an active goal drives the gate even below the plain turn interval", async () => {
+	it("runs a successful turn snapshot even when the session goal is active", async () => {
 		const h = wiringHarness({ goals: { get: () => ({ phase: "active" }) } });
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent }); // 1 turn only
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
 			h.emit("agent/status", { agent: wireAgent, status: "idle" });
 			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
-			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string };
-			expect(record.outcome).toBe("failed"); // gate ran (and failed on the missing trajectory)
+			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string };
+			expect(record.outcome).toBe("skipped");
+			expect(record.reason).toBe("turn_snapshot");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
@@ -403,9 +424,9 @@ describe("registerAutoReview wiring", () => {
 		try {
 			const { saveGateRuntime } = await import("../src/runtime.js");
 			saveGateRuntime(h.dir, true);
-			h.emit("agent/turn-stopping", { agent: wireAgent });
-			h.emit("agent/turn-stopping", { agent: wireAgent });
-			h.emit("agent/turn-stopping", { agent: wireAgent });
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 2 });
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 3 });
 			h.emit("agent/status", { agent: wireAgent, status: "idle" });
 			await vi.waitFor(() => expect(true).toBe(true)); // flush microtasks
 			expect(h.reviewsLines()).toHaveLength(1); // armed marker only

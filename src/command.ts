@@ -71,9 +71,8 @@ export interface CommandRuntimeOptions {
 	/** Mechanical promotion guards for wrapup/fate (2026-08-22 policy). */
 	promotionPolicy: PromotionPolicy;
 	/**
-	 * Static patch flag for the auto-review gate (#21 status display).
-	 * Absent (older wiring/tests) renders as unknown — the runtime pause
-	 * switch still works.
+	 * Initial auto-review default from plugin config. The listener is always
+	 * registered; this is not a registration gate.
 	 */
 	autoReview?: boolean;
 }
@@ -434,19 +433,23 @@ async function executeEvolveCommand(
 			}
 			case "pause":
 			case "resume": {
-				// #21 P2 runtime switch: pause the AUTOMATIC gate only. Manual
-				// evolve_* tools and /evolve commands keep working — the human
-				// is acting explicitly there, so no gate is being bypassed.
+				// The switch is independent of the static registration flag. A
+				// resume explicitly enables automatic snapshots; a pause leaves
+				// the enable bit intact so status explains the paused state.
 				const pausing = sub === "pause";
-				const current = loadGateRuntime(engine.baseDir);
-				if (current.paused === pausing) {
-					return success(`auto-review gate is already ${pausing ? "paused" : "running"} (no change).`);
+				const defaultEnabled = runtime.autoReview ?? false;
+				const current = loadGateRuntime(engine.baseDir, defaultEnabled);
+				if (pausing && current.paused) {
+					return success("auto-review gate is already paused (no change).");
 				}
-				saveGateRuntime(engine.baseDir, pausing);
+				if (!pausing && current.enabled && !current.paused) {
+					return success("auto-review gate is already running (no change).");
+				}
+				saveGateRuntime(engine.baseDir, pausing, pausing ? current.enabled : true);
 				return success(
 					pausing
-						? "auto-review gate paused: no automatic reviews, fate assessments, or gate LLM calls until /evolve resume. Manual evolve_* tools and /evolve commands keep working."
-						: "auto-review gate resumed: automatic reviews run again on their configured cadence.",
+						? "auto-review gate paused: no automatic snapshots, fate assessments, or gate LLM calls until /evolve resume. Manual evolve_* tools and /evolve commands keep working."
+						: "auto-review gate resumed: successful turns will produce incremental snapshots immediately.",
 				);
 			}
 			case "status": {
@@ -519,17 +522,14 @@ function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, pro
 }
 
 /**
- * #21 status: one screen answering "is the gate on, and what is in the
- * stores". The patch flag says whether the gate was registered at boot;
- * the runtime switch says whether the human paused it since.
+ * Status answers whether the always-registered listener is enabled at runtime
+ * and what stores/retention it currently sees.
  */
 function renderGateStatus(engine: EvolutionEngine, sessionId: string, projectKey: string | undefined, runtime: CommandRuntimeOptions): string {
-	const paused = loadGateRuntime(engine.baseDir).paused;
-	const patch = runtime.autoReview === undefined ? "unknown" : runtime.autoReview ? "on" : "off";
-	const gateLine =
-		patch === "off"
-			? "gate: disabled in patch config (autoReview off — /evolve pause has nothing to pause)"
-			: `gate: ${patch === "unknown" ? "patch flag unknown" : "enabled in patch config"} · ${paused ? "PAUSED by /evolve pause (resume with /evolve resume)" : "running"}`;
+	const configuredDefault = runtime.autoReview === undefined ? "unknown" : runtime.autoReview ? "on" : "off";
+	const current = loadGateRuntime(engine.baseDir, runtime.autoReview ?? false);
+	const effective = current.paused ? "PAUSED (resume with /evolve resume)" : current.enabled ? "running" : "off (enable with /evolve resume)";
+	const gateLine = `gate: listener registered · config default ${configuredDefault} · runtime ${effective}`;
 	const countEntries = (state: HarnessState): number => Object.values(state.entries).reduce((n, byKind) => n + Object.keys(byKind).length, 0);
 	const lines = [gateLine];
 	lines.push(`stores: global ${countEntries(engine.load("global", undefined))} entries · local(${sessionId}) ${countEntries(engine.load("local", sessionId))} entries`);

@@ -407,7 +407,8 @@ describe("executeEvolveCommand — pause / resume / status (#21 P2)", () => {
 		await seedMemory(h);
 		const status = await h.run("status");
 		expect(status.kind).toBe("success");
-		expect(status.text).toContain("patch flag unknown");
+		expect(status.text).toContain("config default unknown");
+		expect(status.text).toContain("runtime off");
 		expect(status.text).toContain("local(session-cmd) 1 entries");
 		expect(status.text).toContain("retention:");
 		expect(status.text).toContain("token usage");

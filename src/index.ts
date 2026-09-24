@@ -3,9 +3,9 @@
  *
  * Mounts the evolution engine, registers the model-facing evolve_* tools,
  * the human-facing /evolve command, the system-prompt guidance section, and
- * (opt-in) the automatic review gate that runs the planner on a turn
- * interval. Store roots default under the resolved DSH home; a deployment
- * may override `baseDir` in the plugin config.
+ * the automatic review gate. The listener is always registered, while its
+ * effective state is controlled by the runtime switch. Successful turns feed
+ * incremental snapshots through a per-session serial scheduler.
  */
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
@@ -34,9 +34,9 @@ export const Config = z.object({
 	baseDir: z.string(),
 	/** System-prompt section order for the evolution guidance. */
 	sectionOrder: z.natural().default(118),
-	/** Enable the automatic review gate (off by default: it costs model calls). */
+	/** Initial automatic-review default when no runtime switch exists (off by default: it costs model calls). */
 	autoReview: z.boolean().default(false),
-	/** Gate runs when this many turns have passed since the last review. */
+	/** Legacy/local-fate cadence fallback; successful-turn review is snapshot-driven. */
 	reviewIntervalTurns: z.natural().default(6),
 	/** Trajectory slice handed to the gate, in characters. */
 	maxReviewInputChars: z.natural().default(40000),
@@ -202,27 +202,30 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 	});
 
-	if (config.autoReview) {
-		registerAutoReview(ctx, engine, {
-			intervalTurns: config.reviewIntervalTurns ?? 6,
-			maxInputChars: config.maxReviewInputChars ?? 40000,
-			budgetTokens: config.reviewBudgetTokens ?? 4096,
-			notifyOnAutoReview: config.notifyOnAutoReview ?? true,
-			localFate: config.localFate ?? true,
-			fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
-			goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
-			promotionPolicy,
-			autoCase: config.autoCase ?? true,
-			rubricKey,
-			...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
-			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
-			...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
-			...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
-		});
-		ctx.logger("continual-evolve").info(
-			`continual-evolve auto-review enabled (every ${config.reviewIntervalTurns ?? 6} turns; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
-		);
-	}
+	// The listener is always registered. `autoReview` is only the initial
+	// runtime default; `/evolve resume` can enable it without a profile edit
+	// or process restart, while manual tools and commands stay independent.
+	registerAutoReview(ctx, engine, {
+		intervalTurns: config.reviewIntervalTurns ?? 6,
+		enabledByDefault: config.autoReview ?? false,
+		maxInputChars: config.maxReviewInputChars ?? 40000,
+		budgetTokens: config.reviewBudgetTokens ?? 4096,
+		notifyOnAutoReview: config.notifyOnAutoReview ?? true,
+		localFate: config.localFate ?? true,
+		fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
+		goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
+		promotionPolicy,
+		autoCase: config.autoCase ?? true,
+		rubricKey,
+		...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
+		...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
+		...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
+		...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
+	});
+	const runtimeDefault = config.autoReview ?? false;
+	ctx.logger("continual-evolve").info(
+		`continual-evolve auto-review registered (default ${runtimeDefault ? "on" : "off"}; successful-turn snapshots; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
+	);
 
 	ctx.logger("continual-evolve").info(`continual-evolve mounted (baseDir=${baseDir})`);
 }

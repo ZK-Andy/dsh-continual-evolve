@@ -5,15 +5,16 @@
  * fire-and-forget with error containment: an auto-review failure never
  * disturbs the agent loop.
  *
- * Every gate decision (approved / declined / failed) is appended to
+ * Every gate decision (approved / declined / failed / skipped) is appended to
  * `<dshHome>/evolve/reviews.jsonl` so auto-review activity is durably
  * auditable — the server console is not a reliable place to look.
  *
  * Hook wiring:
- * - `agent/turn-stopping` increments a per-session turn counter (sync, cheap).
- * - `agent/status` (idle) checks the interval and may start the gate.
- * - `session/event` (compaction/start) starts an unconditional gate run so
- *   experiences about to be summarized away are persisted first.
+ * - `agent/turn-stopping` records the successful turn boundary.
+ * - `agent/status` (idle) captures an incremental snapshot and feeds the
+ *   per-session latest-pending serial scheduler.
+ * - `session/event` (compaction/start) forces a snapshot flush before data is
+ *   summarized away.
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -23,23 +24,27 @@ import type { HarnessState, RefinementEdit, RefinementProposal } from "./types.j
 import { slug } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
-import { reviewAutoRefine, serializeSurface, type AutoRefineReason } from "./review.js";
-import { goalDrivesRounds, goalServiceOf } from "./goal.js";
+import { reviewAutoRefine, type AutoRefineReason } from "./review.js";
+import { goalServiceOf } from "./goal.js";
 import { notifyAutoReview } from "./notify.js";
 import { runLocalFatePhase } from "./fate.js";
-import { entrySourceOf } from "./source.js";
 import { mergeHarnessStates } from "./state.js";
 import { projectKeyOf } from "./project.js";
 import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 import { DEFAULT_REVIEWS_RETAIN, pruneJsonlFile } from "./store.js";
-import { isGatePaused } from "./runtime.js";
+import { isGateEnabled } from "./runtime.js";
+import { createReviewScheduler, type ReviewScheduler } from "./review-scheduler.js";
+import { captureTurnSnapshot, type TurnSnapshot } from "./turn-snapshot.js";
 import { captureAutoCase } from "./autocase.js";
 import type { PromotionPolicy } from "./promotion.js";
 import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
 
 export interface AutoReviewConfig {
+	/** Legacy fate cadence; successful turns are no longer gated by this value. */
 	intervalTurns: number;
+	/** Initial runtime state when no runtime.json exists. */
+	enabledByDefault?: boolean;
 	maxInputChars: number;
 	budgetTokens: number;
 	/** Queue a visible follow-up notice after an approved, applied gate run. */
@@ -51,10 +56,9 @@ export interface AutoReviewConfig {
 	 */
 	localFate: boolean;
 	/**
-	 * Minimum turns between local-fate assessments on the turn-interval path
-	 * (compaction is unconditional). Independent of the review cadence so
-	 * goal-driven sessions (gate every round) do not pay an assessment per
-	 * round.
+	 * Minimum turns between local-fate assessments on the successful-turn path
+	 * (compaction is unconditional). Independent of snapshot review cadence so
+	 * eligible turns do not pay an assessment every round.
 	 */
 	fateIntervalTurns: number;
 	/**
@@ -102,6 +106,10 @@ export interface AutoReviewConfig {
 
 export interface GateState {
 	turns: number;
+	/** Latest successful turn boundary seen by the listener. */
+	completedTurn: number;
+	/** Latest turn whose snapshot acquisition was reserved. */
+	lastSnapshotTurn: number;
 	lastReviewAt: number;
 	running: boolean;
 	/**
@@ -134,15 +142,17 @@ export interface ReviewRecord {
 	sessionId: string;
 	reason: AutoRefineReason;
 	turnsSinceLastReview: number;
-	outcome: "approved" | "declined" | "failed" | "assessed" | "deferred";
+	outcome: "approved" | "declined" | "failed" | "assessed" | "deferred" | "skipped" | "armed";
 	rationale?: string;
 	refinementId?: string;
 }
 
 export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config: AutoReviewConfig): void {
 	const perSession = new Map<string, GateState>();
+	const schedulers = new Map<string, ReviewScheduler<TurnSnapshot>>();
 	const logger = ctx.logger("continual-evolve");
 	const reviewsPath = join(engine.baseDir, "evolve", "reviews.jsonl");
+	const defaultEnabled = config.enabledByDefault ?? true;
 
 	const record = (entry: Omit<ReviewRecord, "timestamp">) => {
 		try {
@@ -160,10 +170,77 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		}
 	};
 
-	// Turn counting uses `agent/turn-stopping` — empirically the only event
-	// whose payload carries the agent subject in every dispatch (verified: the
-	// gate fired under it at 20:56). `agent/status` serves as the idle trigger.
-	ctx.on("agent/turn-stopping", (payload: { agent?: Agent }) => {
+	const schedulerFor = (agent: Agent, state: GateState): ReviewScheduler<TurnSnapshot> => {
+		const existing = schedulers.get(agent.id);
+		if (existing) return existing;
+		const scheduler = createReviewScheduler<TurnSnapshot>(
+			async ({ snapshot, signal }) => {
+				if (!isGateEnabled(engine.baseDir, defaultEnabled)) return "aborted";
+				if (!snapshot.eligible) {
+					record({
+						sessionId: snapshot.sessionId,
+						reason: snapshot.reason,
+						turnsSinceLastReview: state.turns - state.lastReviewAt,
+						outcome: "skipped",
+						rationale: `snapshot ${snapshot.cursor} skipped: ${snapshot.skipReason ?? "not eligible"}`,
+					});
+					return "no-op";
+				}
+				try {
+					await runGate(ctx, engine, agent, config, state, snapshot, record, signal);
+					return "success";
+				} catch (cause) {
+					const message = cause instanceof Error ? cause.message : String(cause);
+					logger.warn(`auto-review failed for ${agent.id}: ${message}`);
+					record({
+						sessionId: agent.id,
+						reason: snapshot.reason,
+						turnsSinceLastReview: state.turns - state.lastReviewAt,
+						outcome: "failed",
+						rationale: `gate error: ${message}`,
+					});
+					return "error";
+				}
+			},
+			(snapshot) => snapshot.cursor,
+		);
+		schedulers.set(agent.id, scheduler);
+		return scheduler;
+	};
+
+	const captureAndSchedule = (agent: Agent, state: GateState, reason: TurnSnapshot["reason"]): void => {
+		if (!isGateEnabled(engine.baseDir, defaultEnabled)) return;
+		const turn = state.completedTurn;
+		const previousSnapshotTurn = state.lastSnapshotTurn;
+		if (reason === "turn_snapshot" && turn <= previousSnapshotTurn) return;
+		if (reason === "turn_snapshot") state.lastSnapshotTurn = turn;
+		const cursor = schedulerFor(agent, state).getCursor();
+		void captureTurnSnapshot(ctx, agent, {
+			turn,
+			reason,
+			...(cursor !== undefined ? { cursor } : {}),
+			maxChars: config.maxInputChars,
+		})
+			.then((snapshot) => schedulerFor(agent, state).schedule(snapshot))
+			.catch((cause) => {
+				const message = cause instanceof Error ? cause.message : String(cause);
+				logger.warn(`auto-review snapshot failed for ${agent.id}: ${message}`);
+				record({
+					sessionId: agent.id,
+					reason,
+					turnsSinceLastReview: state.turns - state.lastReviewAt,
+					outcome: "failed",
+					rationale: `snapshot error: ${message}`,
+				});
+				if (reason === "turn_snapshot" && state.lastSnapshotTurn === turn) {
+					state.lastSnapshotTurn = previousSnapshotTurn;
+				}
+			});
+	};
+
+	// DSH emits this awaited boundary when a turn is about to close. The idle
+	// transition is the safe point at which to read the durable surface.
+	ctx.on("agent/turn-stopping", (payload: { agent?: Agent; turn?: number }) => {
 		const agent = payload.agent;
 		if (!agent) {
 			logger.warn(`auto-review gate: agent/turn-stopping payload missing agent; skipping count`);
@@ -171,41 +248,19 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		}
 		const state = stateFor(perSession, agent.id);
 		state.turns += 1;
+		if (typeof payload.turn === "number") state.completedTurn = Math.max(state.completedTurn, payload.turn);
 	});
 
 	ctx.on("agent/status", (payload: { agent?: Agent; status?: string }) => {
 		const agent = payload.agent;
 		if (!agent || payload.status !== "idle") return;
 		const state = stateFor(perSession, agent.id);
-		// v3 optional: an active evolution goal drives the gate EVERY round
-		// (the goal's round machine keeps the session continuing); without a
-		// goal the plain turn interval applies.
-		const goalDriven = goalDrivesRounds(goalServiceOf(ctx)?.get(agent));
-		if (!goalDriven && state.turns - state.lastReviewAt < config.intervalTurns) return;
-		// #21 P2 runtime switch: a paused gate stays fully dormant — no LLM
-		// calls, no fate assessments, no audit records. Checked after the
-		// cheap in-memory interval check so the paused path costs one file
-		// read at most. Manual tools/commands are unaffected (separate path).
-		if (isGatePaused(engine.baseDir)) return;
-		// Run the gate outside the listener turn: agent is idle, work is auxiliary.
-		// Every failure is durably recorded — nothing fails silently.
-		void runGate(ctx, engine, agent, config, state, "turn_interval", record).catch((cause) => {
-			const message = cause instanceof Error ? cause.message : String(cause);
-			logger.warn(`auto-review failed for ${agent.id}: ${message}`);
-			record({
-				sessionId: agent.id,
-				reason: "turn_interval",
-				turnsSinceLastReview: state.turns - state.lastReviewAt,
-				outcome: "failed",
-				rationale: `gate error: ${message}`,
-			});
-			state.lastReviewAt = state.turns; // back off until the interval elapses again
-		});
+		if (state.completedTurn <= state.lastSnapshotTurn) return;
+		captureAndSchedule(agent, state, "turn_snapshot");
 	});
 
-	// Diagnostic: the armed marker proves registerAutoReview ran with the
-	// configured interval; a restart that writes it but nothing after means the
-	// trigger events are not reaching this listener.
+	// Diagnostic: the armed marker proves the listener was registered even when
+	// its runtime default is off, distinguishing "not registered" from "off".
 	try {
 		mkdirSync(join(engine.baseDir, "evolve"), { recursive: true });
 		appendFileSync(
@@ -216,7 +271,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 				reason: "boot",
 				turnsSinceLastReview: 0,
 				outcome: "armed",
-				rationale: `auto-review gate registered (interval=${config.intervalTurns})`,
+				rationale: `auto-review gate registered (default=${defaultEnabled ? "on" : "off"}; per-success-turn snapshots; local-fate every ${config.fateIntervalTurns} turns)`,
 			})}\n`,
 			"utf8",
 		);
@@ -229,26 +284,21 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		// ignored — the next record retries
 	}
 
+	ctx.on("agent/disposed", (payload: { agent?: Agent }) => {
+		const agent = payload.agent;
+		if (!agent) return;
+		schedulers.get(agent.id)?.shutdown();
+		schedulers.delete(agent.id);
+		perSession.delete(agent.id);
+	});
+
 	ctx.on("session/event", (session: { id: string }, event: { type: string }) => {
 		if (event.type !== "compaction/start") return;
 		const agents = (ctx as unknown as { agents?: { get(id: string): Agent | undefined } }).agents;
 		const agent = agents?.get(session.id);
 		if (!agent) return; // no live agent for that session (e.g. cold read)
 		const state = stateFor(perSession, agent.id);
-		// Compaction is unconditional — unless the human paused the gate
-		// (#21): a paused gate skips even the compaction run, so "pause"
-		// is a true zero-LLM-call state.
-		if (isGatePaused(engine.baseDir)) return;
-		void runGate(ctx, engine, agent, config, state, "compact", record).catch((cause) => {
-			logger.warn(`auto-review failed at compaction for ${agent.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
-			record({
-				sessionId: agent.id,
-				reason: "compact",
-				turnsSinceLastReview: state.turns - state.lastReviewAt,
-				outcome: "failed",
-				rationale: `gate error at compaction: ${cause instanceof Error ? cause.message : String(cause)}`,
-			});
-		});
+		captureAndSchedule(agent, state, "compact");
 	});
 }
 
@@ -276,6 +326,8 @@ function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 	if (!state) {
 		state = {
 			turns: 0,
+			completedTurn: 0,
+			lastSnapshotTurn: 0,
 			lastReviewAt: 0,
 			running: false,
 			skillRejects: new Map(),
@@ -316,25 +368,25 @@ async function runGate(
 	agent: Agent,
 	config: AutoReviewConfig,
 	state: GateState,
-	reason: AutoRefineReason,
+	snapshot: TurnSnapshot,
 	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
+	signal?: AbortSignal,
 ): Promise<void> {
 	// Reentry guard (review audit 2026-08-28 S3): a gate run holds LLM calls
 	// and possibly a user question for a long time; an idle/compaction
 	// trigger overlapping the run would start a second concurrent pipeline
 	// whose stale whole-file saves clobber the first run's writes.
 	if (state.running) {
-		ctx.logger("continual-evolve").info(`auto-review skipped [${agent.id}]: previous gate run still in flight`);
-		return;
+		throw new Error(`previous gate run still in flight for ${agent.id}`);
 	}
 	state.running = true;
 	try {
-		await runReviewPhase(ctx, engine, agent, config, state, reason, record);
+		await runReviewPhase(ctx, engine, agent, config, state, snapshot, record, signal);
 		// D3: a goal stuck in "blocked" for consecutive gate runs gets one
 		// local-fate assessment (the pipeline below), so whatever led the
 		// goal astray is distilled before the session moves on.
-		await runGoalBlockedFate(ctx, engine, agent, config, state, reason, record);
-		await runLocalFatePhase(ctx, engine, agent, config, state, reason, record);
+		await runGoalBlockedFate(ctx, engine, agent, config, state, snapshot.reason, record);
+		await runLocalFatePhase(ctx, engine, agent, config, state, snapshot.reason, record);
 	} finally {
 		state.running = false;
 	}
@@ -383,10 +435,12 @@ async function runReviewPhase(
 	agent: Agent,
 	config: AutoReviewConfig,
 	state: GateState,
-	reason: AutoRefineReason,
+	snapshot: TurnSnapshot,
 	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
+	signal?: AbortSignal,
 ): Promise<void> {
 	const sessionId = agent.id;
+	const reason = snapshot.reason;
 	const turnsSinceLastReview = state.turns - state.lastReviewAt;
 	const logger = ctx.logger("continual-evolve");
 	const tokenUsage = {
@@ -396,14 +450,9 @@ async function runReviewPhase(
 		onError: (cause: unknown) => logger.warn(`token-usage ledger failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`),
 	};
 
-	const trajectory = await readTrajectory(ctx, agent, config.maxInputChars).catch((cause) => {
-		logger.warn(`auto-review skipped for ${sessionId}: trajectory unavailable: ${cause instanceof Error ? cause.message : String(cause)}`);
-		record({ sessionId, reason, turnsSinceLastReview, outcome: "failed", rationale: `trajectory unavailable: ${cause instanceof Error ? cause.message : String(cause)}` });
-		return undefined;
-	});
+	const trajectory = snapshot.trajectory;
 	if (!trajectory) {
-		state.lastReviewAt = state.turns;
-		return;
+		throw new Error("eligible snapshot has no trajectory");
 	}
 
 	// The gate judges the merged view (global + local, scopes labeled) so it
@@ -420,6 +469,8 @@ async function runReviewPhase(
 		state: harnessState,
 		history,
 		trajectory,
+		trajectoryEvents: snapshot.events,
+		...(signal ? { signal } : {}),
 		context: { reason, turnsSinceLastReview },
 		budgetTokens: config.budgetTokens,
 		tokenUsage,
@@ -445,6 +496,9 @@ async function runReviewPhase(
 		agent,
 		state: harnessState,
 		history,
+		trajectory: snapshot.trajectory,
+		trajectoryEvents: snapshot.events,
+		...(signal ? { signal } : {}),
 		...(review.instructions ? { instructions: review.instructions } : {}),
 		global: false,
 		// Read the skill-creator template facts (fallback: builtin distilled
@@ -497,7 +551,7 @@ async function runReviewPhase(
 		record({ sessionId, reason, turnsSinceLastReview, outcome: "declined", rationale: `${review.rationale}${withheld}` });
 		return;
 	}
-	const source = entrySourceOf(agent, sessionId);
+	const source = { sessionId, ...(snapshot.sourceSeqs.length > 0 ? { seqs: [...snapshot.sourceSeqs] } : {}) };
 	const result = engine.apply("local", sessionId, finalProposal, {
 		scope: "local",
 		baselineState: localState,
@@ -510,21 +564,12 @@ async function runReviewPhase(
 	// Gap C4: emit structured evolve_complete event for third-party consumers.
 	emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, `auto_review:${reason}`, sessionId), config.reviewsRetain ?? DEFAULT_REVIEWS_RETAIN);
 	// Visibility: tell the user what the gate just persisted. Only the
-	// turn-interval path notifies — a compaction-triggered gate must not wake
+	// turn snapshot path notifies — a compaction-triggered gate must not wake
 	// the agent mid-compaction — and only when something was actually applied
 	// (a notice for zero edits is noise). Failure is contained in notifyAutoReview.
-	if (config.notifyOnAutoReview && reason === "turn_interval" && result.appliedEdits.some((e) => e.applied)) {
+	if (config.notifyOnAutoReview && reason === "turn_snapshot" && result.appliedEdits.some((e) => e.applied)) {
 		notifyAutoReview(ctx, agent, result, turnsSinceLastReview);
 	}
-}
-
-async function readTrajectory(ctx: Context, agent: Agent, maxChars: number): Promise<string> {
-	const sessionQuery = (ctx as unknown as { sessionQuery?: { readSurface(sessionId: string): Promise<{ events: unknown[] }> } }).sessionQuery;
-	if (!sessionQuery) {
-		throw new Error("sessionQuery unavailable");
-	}
-	const snapshot = await sessionQuery.readSurface(agent.id);
-	return serializeSurface(snapshot.events, maxChars);
 }
 
 /**

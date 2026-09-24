@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-665%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-675%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -25,7 +25,7 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 
 ## How it works
 
-1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from the session trajectory (turn-interval + compaction checkpoints).
+1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from incremental snapshots captured after successful turns (plus compaction checkpoints).
 2. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
 3. **Approve** — global and project writes require explicit human approval; local-fate proposals are consulted before they land.
 4. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a relevance-ordered capped directory index (`- [memory:type:id] title` hooks, full text one `evolve_list` away).
@@ -77,8 +77,8 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | Key | Default | Meaning |
 |---|---|---|
 | `baseDir` | resolved DSH home | root for the `evolve/` stores |
-| `autoReview` | `false` | enable the automatic review gate |
-| `reviewIntervalTurns` | `6` | gate cadence on the turn-interval path |
+| `autoReview` | `false` | initial automatic-review default when no runtime switch exists; the listener is always registered |
+| `reviewIntervalTurns` | `6` | legacy local-fate cadence fallback; successful-turn review no longer waits for this interval |
 | `maxReviewInputChars` | `40000` | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
 | `notifyOnAutoReview` | `true` | visible follow-up notice after an applied gate run |
@@ -109,11 +109,18 @@ Example profile patch:
     reviewIntervalTurns: 6
 ```
 
+The listener is registered even when `autoReview` is `false`. Use `/evolve resume`
+to enable successful-turn snapshots immediately, `/evolve pause` to suppress new
+snapshots and fate/model work, and `/evolve status` to inspect the configured
+default plus the current runtime state. The runtime switch is stored in
+`evolve/runtime.json`; manual `evolve_*` tools and `/evolve` commands are not
+paused.
+
 ## Development
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (665 tests)
+pnpm test                    # vitest (675 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -122,7 +129,7 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (41 files)
+├── test/                  # vitest suites (43 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)

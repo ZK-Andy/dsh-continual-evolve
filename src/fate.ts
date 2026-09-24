@@ -290,7 +290,7 @@ export function applyLocalFates(
 
 /**
  * The gate's local-fate phase. Runs after the review phase on every gate
- * trigger (turn_interval / compact), subject to cadence and cooldown. All
+ * trigger (turn_snapshot / compact), subject to cadence and cooldown. All
  * failures are contained and recorded — a broken fate dimension never
  * disturbs the agent loop.
  */
@@ -361,7 +361,7 @@ export async function runLocalFatePhase(
 			rationale: `fate: ${assessment.rationale} (${applied.join("; ")})`,
 			refinementId: results.map((result) => result.id).join(","),
 		});
-		if (config.notifyOnAutoReview && reason === "turn_interval" && applied.length > 0) {
+		if (config.notifyOnAutoReview && (reason === "turn_snapshot" || reason === "turn_interval") && applied.length > 0) {
 			notifyFateApplied(ctx, agent, applied);
 		}
 		return;
@@ -420,7 +420,7 @@ export async function runLocalFatePhase(
 			rationale: `fate: ${assessment.rationale} (${applied.join("; ")})`,
 			refinementId: results.map((result) => result.id).join(","),
 		});
-		if (config.notifyOnAutoReview && reason === "turn_interval") {
+		if (config.notifyOnAutoReview && (reason === "turn_snapshot" || reason === "turn_interval")) {
 			notifyFateApplied(ctx, agent, applied);
 		}
 		return;
@@ -447,7 +447,7 @@ export function buildFateNotice(applied: readonly string[]): string {
 	].join("\n");
 }
 
-/** Queue the follow-up notice turn (turn_interval only, like the review notice). */
+/** Queue the follow-up notice turn (successful-turn path only). */
 function notifyFateApplied(ctx: Context, agent: Agent, applied: string[]): void {
 	try {
 		agent.followup(

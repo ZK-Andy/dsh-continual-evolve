@@ -22,7 +22,7 @@ export interface AutoRefineReview {
 	instructions?: string;
 }
 
-export type AutoRefineReason = "turn_interval" | "compact" | "goal_blocked";
+export type AutoRefineReason = "turn_snapshot" | "turn_interval" | "compact" | "goal_blocked";
 
 export interface AutoRefineReviewContext {
 	reason: AutoRefineReason;
@@ -36,6 +36,8 @@ export interface ReviewOptions {
 	context: AutoRefineReviewContext;
 	/** Serialized trajectory text; when absent the gate is skipped by the caller. */
 	trajectory?: string;
+	/** Incremental surface rows captured for this turn snapshot. */
+	trajectoryEvents?: readonly unknown[];
 	signal?: AbortSignal;
 	budgetTokens?: number;
 	/** Gap C1: optional provider/model override for the review gate (cheaper model). */
@@ -149,7 +151,7 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 	}
 	// Route A carries the judged conversation as a session-derived message
 	// prefix and drops the flat block; an empty prefix falls back to B.
-	const events = sessionEventsOf(agent);
+	const events = options.trajectoryEvents ?? sessionEventsOf(agent);
 	const routing = resolvePrefixCache(options.prefixCache);
 	const route = detectPlannerRoute(events, routing.mode);
 	let prefixMessages: (UserMessage | AssistantMessage)[] = [];

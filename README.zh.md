@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-665%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-675%20passing-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
@@ -25,7 +25,7 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 
 ## 工作原理
 
-1. **沉淀**——模型经 `evolve_add` 创建条目，或自动 review 门禁从会话轨迹提议（回合间隔 + 压缩检查点）。
+1. **沉淀**——模型经 `evolve_add` 创建条目，或自动 review 门禁从成功回合后的增量 snapshot（以及压缩检查点）提议。
 2. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 3. **审批**——全局与项目写入需明确人工批准；local 归宿提议先征询后落地。
 4. **应用与注入**——原子应用带快照与审计事件。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；memory/skill 以按相关性排序的目录索引出现（`[memory:type:id] 标题`钩子）。
@@ -77,8 +77,8 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | 键 | 默认 | 含义 |
 |---|---|---|
 | `baseDir` | 解析后的 DSH home | `evolve/` 存储根目录 |
-| `autoReview` | `false` | 启用自动 review 门禁 |
-| `reviewIntervalTurns` | `6` | 回合间隔路径的门禁节奏 |
+| `autoReview` | `false` | 没有 runtime 开关时的自动 review 初始默认；监听器始终注册 |
+| `reviewIntervalTurns` | `6` | local-fate 的兼容节奏；成功回合 review 不再等待这个间隔 |
 | `maxReviewInputChars` | `40000` | 交给门禁的轨迹切片 |
 | `reviewBudgetTokens` | `4096` | 门禁调用输出预算 |
 | `notifyOnAutoReview` | `true` | 门禁应用后发可见跟进通知 |
@@ -109,11 +109,13 @@ profile patch 示例：
     reviewIntervalTurns: 6
 ```
 
+即使 `autoReview` 为 `false`，监听器也会注册。使用 `/evolve resume` 立即开启成功回合 snapshot，使用 `/evolve pause` 抑制新 snapshot、fate 和模型调用，使用 `/evolve status` 查看配置默认值与运行时状态。开关保存在 `evolve/runtime.json`；手动 `evolve_*` 工具和 `/evolve` 命令不受暂停影响。
+
 ## 开发
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（665 例）
+pnpm test                    # vitest（675 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```
@@ -122,7 +124,7 @@ pnpm lint                    # oxlint src test
 
 ```
 ├── src/                   # 引擎、工具、命令、门禁、fate、benchmark、注入 + token 用量…
-├── test/                  # vitest 测试套件（41 个文件）
+├── test/                  # vitest 测试套件（43 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
 │   ├── design.md          # 完整设计文档（硬化矩阵）

@@ -98,14 +98,14 @@ interface HarnessRefinementEvent {
 |---|---|---|
 | **手动命令** | `/evolve [instructions] [--global]` | 用户显式要求，最优先 |
 | **模型自觉** | `evolve` 工具（`refine.run` 同款 API） | 发现重复失败/可复用战术时主动调度 |
-| **回合间隔** | `agent/turn-stopping`（计数）+ `agent/status`（idle 触发） | 每 N 回合（默认 6）跑一次**廉价 review 门禁**；计数器重启清零，每次判断写 `reviews.jsonl` 审计（见 FAQ #5） |
-| **压缩时** | `session/event`（`compaction/start`） | 压缩前无条件跑一次门禁，把会被丢掉的经验先沉淀 |
+| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 每个成功回合产生候选增量 snapshot；先做 eligibility，再由每会话串行 latest-pending scheduler 处理；每次 skip/判断写 `reviews.jsonl` |
+| **压缩时** | `session/event`（`compaction/start`） | 压缩前强制捕获 snapshot，把会被丢掉的经验先沉淀；scheduler 仍保持串行 |
 
 ### 关键纪律（照抄 prime-agent）
-- **绝不在 step 中途打断 agent**：手动路径（`/evolve plan`、evolve 工具）在显式调用点同步 apply（带 baseline 比对，天然串行）；自动路径（门禁批准后）在 `agent/status` idle 之后异步串行执行——两种路径都不会打断进行中的 step
+- **绝不在 step 中途打断 agent**：手动路径（`/evolve plan`、evolve 工具）在显式调用点同步 apply（带 baseline 比对，天然串行）；自动路径在 `agent/status` idle 后捕获 snapshot，再由后台串行 scheduler 执行——两种路径都不会打断进行中的 step
 - **plan 与 apply 分离**：LLM 规划可能耗时数十秒，期间共享文件可能被别的会话写——apply 前必须重读 + baseline 比对
-- **单回合一次**：门禁用 `lastReviewAt` 记账，间隔内不重复跑
-- **review 门禁是独立廉价 LLM 调用**（4k token 预算、只读最后 40k 字符），决定"该不该进化"，而非直接进化
+- **成功回合一次调度**：eligible snapshot 进入 scheduler；运行期间的新 snapshot 只保留最新一份，失败/abort 不推进 cursor，下一份 snapshot 可重试
+- **review 门禁是独立廉价 LLM 调用**（4k token 预算、只读当前增量 snapshot），决定“该不该进化”，而非直接进化
 
 ## 5. 验证层接线（DSH 相对两个参照物的结构性优势）
 
@@ -134,7 +134,7 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 
 | DSH 现有插件/服务 | 本插件如何用（实现状态） |
 |---|---|
-| `agent/turn-stopping`、`agent/status`、`session/event` | 回合计数 + idle 触发门禁 + `compaction/start` 压缩前 review（已实现，见 §4） |
+| `agent/turn-stopping`、`agent/status`、`session/event` | 成功回合边界 + idle 增量 snapshot + eligibility + 每会话串行 latest-pending scheduler + `compaction/start` 强制 flush（已实现，见 §4） |
 | `ctx.llm`（流式）+ `dsh-subagent` | 提案生成走 `ctx.llm` 流 + JSON 恢复；评估单元格走 `outputSchema` 结构化输出（均已实现） |
 | `dsh-skill-filesystem` | skill 条目落盘 `$DSH_HOME/skills/<kebab>/SKILL.md`（插件自写，发现机制复用 DSH 的） |
 | `userQuestions` | global 进化的人工评审门禁（`approval.ts`，等价替代 dsh-plan-mode） |
@@ -153,7 +153,7 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 - **验收**：真实会话中长出跨会话可复用的 memory/skill 条目，可回滚，坏 JSON/非法编辑全部代码级拒绝（已达成并有运行证据）
 
 ### Phase 2 —— 门禁与自动化
-- [x] turn_interval / compact review 门禁（廉价 LLM 调用）
+- [x] 成功回合增量 snapshot + eligibility + 串行 latest-pending scheduler（廉价 review/planner 调用）
 - [x] global scope 开启，带人工审批门禁
 - [x] skill 条目可执行化（对齐 prime-agent 的 python reference 契约，物化 `$DSH_HOME/skills/<kebab>/SKILL.md`）
 - [x] **prompt 条目真正注入系统提示词**（additive section，封顶 6 条/类）——`src/inject.ts` 的 `entriesSectionText` 在 `index.ts` 注册为 `tool:continual-evolve:entries` 动态 section（order 118+1）：text 是 provider，每次 assembly 用 `context.agent` 定位会话，读 global + 沿 `SessionHeader.parentSession` 链最近非空 local store 合并渲染；空 store 渲染为 "" 被 prompt renderer 丢弃，零 token 成本；全量仍由 `evolve_list` 提供

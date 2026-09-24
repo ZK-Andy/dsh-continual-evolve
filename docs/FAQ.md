@@ -58,16 +58,16 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 - `stripAngleBrackets()`：容忍 `<id>` 与 `id` 两种写法
 - 引号感知分词：`"多 词 参数"` 保持为一个 token 并剥引号，`#` 在外层开始注释
 
-## 5. 自动 review 门禁从不触发（reviews.jsonl 只有 armed）
+## 5. 自动 review 门禁不产生记录（reviews.jsonl 只有 armed）
 
-**症状**：`autoReview: true` 配置正确、`armed` 标记正常，但聊了很多轮 `reviews.jsonl` 里没有任何判断记录。
+**症状**：`armed` 标记存在，但成功回合后没有 `skipped`、`declined` 或 `approved` 记录；或者配置了 `autoReview: true` 仍然没有调用。
 
-**原因**（两个层面）：
-1. **每 6 回合一次且重启清零**——门禁的内存计数器随进程重启归零，两次重启之间没攒够 6 回合就不会触发。这是"看起来没工作"最常见的原因。
-2. `agent/turn-stopping` 事件的 **payload 是否带 `agent` 在不同版本间变过**：最初类型声明写有 `agent` 但发射处（agent-loop）没带上；`agent/status` 的 `running → idle` 转换路径被 host 消费者（dsh-host-apiproxy）验证可用。**最终接线（`src/auto.ts`，2026-08-14 验证）**：计数用 `agent/turn-stopping`（带 agent，20:56 真实触发过一次 approved），`agent/status` idle 只作间隔检查触发点；`advanceGateState`（status 转换计数，曾被保留为测试过的纯函数、未直接接线）已于 2026-08-28 审计轮删除——它与生产接线直接矛盾（docs/archive/refactor-audit.md P3-2 的删除建议至此执行）。
+**原因**：
+1. `autoReview` 现在只是没有 `evolve/runtime.json` 时的初始默认，运行时开关是 v2 `{enabled, paused}`。旧版把静态配置同时当作注册开关，导致默认关闭安装无法通过 `/evolve resume` 开启。
+2. 自动 review 的正常触发不再是固定 `reviewIntervalTurns`。`agent/turn-stopping` 记录成功回合边界，`agent/status=idle` 捕获增量 snapshot；eligibility 会把空增量、内部 agent、直接 evolve memory mutation、synthetic/model-only 或过短用户文本记录为 `skipped`。
+3. 每个 session 的 scheduler 串行运行；运行中的新 snapshot 只保留最新 pending，失败/abort 不推进 cursor，下一份 snapshot 才能重试。
 
-**修复**：见 `src/auto.ts`。每次门禁判断（approved / declined / failed）都会追加到 `<dshHome>/evolve/reviews.jsonl`，是唯一的可靠观察点；armed 标记在插件注册时写入，可区分"没触发"与"没加载"。
-
+**修复与观察**：用 `/evolve status` 区分“listener 已注册但 runtime off/paused”和“确实没有成功回合”；用 `/evolve resume` 即时开启，不需要改 profile 或重启。用 `/evolve pause` 停止新 snapshot、fate 和模型调用。每次判断或机械 skip 都追加到 `<dshHome>/evolve/reviews.jsonl`；`agent/disposed` 会 abort scheduler。
 ## 6. `/evolve benchmark add-case` 的参数被拆烂（statement 变成 `hygiene"`）
 
 **症状**：case 的 statement/rubric 落盘后内容残缺。
@@ -77,7 +77,7 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 **修复**：shell 风格引号分词（见 #4）。注意帮助文本里的 `<任务文本>` 是占位符——真实使用要写实际内容。
 ## 7. 门禁报 `gate error: review gate produced no text`
 
-**症状**：`reviews.jsonl` 里出现 `failed (turn_interval, 6 turns): gate error: evolve: review gate produced no text`，但 `maxTokens` 预算充足。
+**症状**：`reviews.jsonl` 里出现 `failed (turn_snapshot): gate error: evolve: review gate produced no text`，但 `maxTokens` 预算充足。
 
 **原因**：DeepSeek 推理模型把输出预算烧在**可见思考**上，最终文本块为零——门禁/规划器拿到的是空 text。prime-agent 源码有同款处理："keep the refinement request non-reasoning so the model uses its output budget for the JSON object"。
 

@@ -13,7 +13,7 @@ describe("loadGateRuntime", () => {
 	it("reports running when the file is absent", () => {
 		const dir = mkdtempSync(join(tmpdir(), "evolve-runtime-"));
 		try {
-			expect(loadGateRuntime(dir)).toMatchObject({ version: 1, paused: false });
+			expect(loadGateRuntime(dir)).toMatchObject({ version: 2, enabled: false, paused: false });
 			expect(isGatePaused(dir)).toBe(false);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

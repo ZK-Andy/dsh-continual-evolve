@@ -105,6 +105,11 @@ export interface PlanOptions {
 	 */
 	trajectory?: string;
 	/**
+	 * Explicit session-trajectory rows for prefix-cache Route A. When supplied,
+	 * the planner sees only the scheduler snapshot rather than the full session.
+	 */
+	trajectoryEvents?: readonly unknown[];
+	/**
 	 * Skills root to read the skill-creator template facts from
 	 * (`<root>/skill-creator/references/template.md`). When omitted or the
 	 * skills are not installed, the builtin distilled quality guide is
@@ -139,7 +144,7 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 	// as a session-derived message prefix (cache-eligible on providers with
 	// prompt caching) and drops the auto-extracted trajectory block; Route B
 	// keeps the legacy flat-text block. An empty prefix falls back to B.
-	const events = sessionEventsOf(agent);
+	const events = options.trajectoryEvents ?? sessionEventsOf(agent);
 	const routing = resolvePrefixCache(options.prefixCache);
 	const route = detectPlannerRoute(events, routing.mode);
 	let prefixMessages: (UserMessage | AssistantMessage)[] = [];
