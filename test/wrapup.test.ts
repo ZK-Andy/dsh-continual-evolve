@@ -36,9 +36,13 @@ const PROMOTABLE_BODY =
  * Relative fixture timestamp: anchored to the run time instead of a hardcoded
  * past date, so the 30-day recency cliff in recencyScore can never flip the
  * stale classification of the default fixtures as the calendar advances.
+ *
+ * Frozen per module load (see inject.test.ts): per-call Date.now() lets
+ * millisecond jitter leak into recencyScore and flakes tie-order assertions.
  */
+const FIXTURE_NOW = Date.now();
 function isoDaysAgo(days: number): string {
-	return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+	return new Date(FIXTURE_NOW - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function entry(id: string, kind: RefinementKind, title: string, overrides: Partial<HarnessEntry> = {}): HarnessEntry {

@@ -38,9 +38,15 @@ import { resolveProjectKey } from "../src/project.js";
  * Relative fixture timestamp: anchored to the run time instead of a hardcoded
  * past date, so the 30-day recency cliff in recencyScore can never reorder
  * the fixtures as the calendar advances (the 2026-09 CI rot).
+ *
+ * Frozen per module load: every default fixture shares the exact same
+ * timestamp, so recency ties stay ties and the stable dictionary order
+ * decides deterministically. (Per-call Date.now() lets millisecond jitter
+ * leak into recencyScore and flakes tie-order assertions on slow runners.)
  */
+const FIXTURE_NOW = Date.now();
 function isoDaysAgo(days: number): string {
-	return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+	return new Date(FIXTURE_NOW - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function entry(overrides: Partial<HarnessEntry> & { id: string; kind: HarnessEntry["kind"]; title: string }): HarnessEntry {
