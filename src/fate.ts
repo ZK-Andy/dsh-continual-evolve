@@ -306,6 +306,12 @@ export async function runLocalFatePhase(
 	if (!config.localFate) return;
 	const logger = ctx.logger("continual-evolve");
 	const sessionId = agent.id;
+	const tokenUsage = {
+		baseDir: engine.baseDir,
+		sessionId,
+		retain: engine.retention.tokenUsage,
+		onError: (cause: unknown) => logger.warn(`token-usage ledger failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`),
+	};
 	const localState = engine.load("local", sessionId);
 	const globalState = engine.load("global", undefined);
 	const candidates = listLocalCandidates(localState, globalState, engine.baseDir);
@@ -321,7 +327,7 @@ export async function runLocalFatePhase(
 	state.lastFateAt = state.turns;
 	let assessment: WrapupAssessment;
 	try {
-		assessment = await assessLocalEntries(ctx, agent, candidates);
+		assessment = await assessLocalEntries(ctx, agent, candidates, { tokenUsage, tokenUsagePhase: "fate" });
 	} catch (cause) {
 		const message = cause instanceof Error ? cause.message : String(cause);
 		logger.warn(`auto-review local-fate failed for ${sessionId}: ${message}`);

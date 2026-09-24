@@ -24,6 +24,8 @@ import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
 import { emptyHarnessState, type HarnessEntry, type RefinementProposal } from "../src/types.js";
 import type { Context } from "@deepseek-ai/cordis";
+import type { StreamChunk } from "@deepseek-ai/dsh-llm";
+import { loadTokenUsage } from "../src/token-usage.js";
 
 function fresh(): GateState {
 	return { turns: 0, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
@@ -224,7 +226,12 @@ describe("parseReviewModel", () => {
 });
 
 /** Wiring harness: captures listeners so tests can fire harness events. */
-function wiringHarness(options: { goals?: { get(agent: unknown): unknown }; agents?: Map<string, unknown> } = {}): {
+function wiringHarness(options: {
+	goals?: { get(agent: unknown): unknown };
+	agents?: Map<string, unknown>;
+	llm?: Context["llm"];
+	sessionQuery?: { readSurface(sessionId: string): Promise<{ events: unknown[] }> };
+} = {}): {
 	dir: string;
 	emit: (event: string, payload: unknown) => void;
 	warnings: string[];
@@ -247,6 +254,8 @@ function wiringHarness(options: { goals?: { get(agent: unknown): unknown }; agen
 			info: (message: string) => infos.push(message),
 		}),
 		get: (name: string) => (name === "goals" ? options.goals : undefined),
+		...(options.llm ? { llm: options.llm } : {}),
+		...(options.sessionQuery ? { sessionQuery: options.sessionQuery } : {}),
 		...(options.agents ? { agents: { get: (id: string) => options.agents?.get(id) } } : {}),
 	} as unknown as Context;
 	registerAutoReview(ctx, engine, baseConfig());
@@ -315,6 +324,45 @@ describe("registerAutoReview wiring", () => {
 			expect(record.outcome).toBe("failed");
 			expect(record.reason).toBe("turn_interval");
 			expect(record.rationale).toContain("trajectory unavailable");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("records exact provider usage for automatic review and planner calls", async () => {
+		let call = 0;
+		const llm = {
+			stream: async function* () {
+				call += 1;
+				const text = call === 1
+					? JSON.stringify({ shouldRefine: true, rationale: "useful evidence", instructions: "plan nothing" })
+					: JSON.stringify({ summary: "no edits", rationale: "already covered", expectedOutcome: "none", edits: [] });
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "usage", usage: { inputTokens: call * 10, outputTokens: 2, totalTokens: call * 10 + 2 } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "remember this" }], source: { kind: "user" } } }];
+		const agent = {
+			id: "session-token",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) } });
+		try {
+			for (let i = 0; i < 3; i += 1) h.emit("agent/turn-stopping", { agent });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(2));
+			expect(loadTokenUsage(h.dir).records).toEqual([
+				expect.objectContaining({ phase: "review", usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }),
+				expect.objectContaining({ phase: "planner", usage: { inputTokens: 20, outputTokens: 2, totalTokens: 22 } }),
+			]);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}

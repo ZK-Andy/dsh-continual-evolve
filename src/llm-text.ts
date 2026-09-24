@@ -9,8 +9,20 @@
  * and JSON parsing.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage, ReasoningEffortId, type Message } from "@deepseek-ai/dsh-llm";
+import { BlockAssembler, createUserMessage, ReasoningEffortId, type Message, type TokenUsage } from "@deepseek-ai/dsh-llm";
 import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
+
+/** Terminal outcome of one shared direct LLM call. */
+export type StreamTextOutcome = "success" | "max-tokens" | "error" | "aborted" | "empty";
+
+/** Provider usage and terminal result observed after the stream settles. */
+export interface StreamTextObservation {
+	usage?: TokenUsage;
+	outcome: StreamTextOutcome;
+}
+
+/** Diagnostic observer invoked before streamText returns or throws. */
+export type StreamTextUsageObserver = (observation: StreamTextObservation) => void;
 
 export interface StreamTextOptions {
 	provider: string;
@@ -26,6 +38,12 @@ export interface StreamTextOptions {
 	 * legacy single-message request.
 	 */
 	prefixMessages?: readonly Message[];
+	/**
+	 * Observe the provider-reported usage and terminal outcome after the
+	 * stream settles. The callback runs before success/error return and is
+	 * diagnostic-only: throwing from it never changes the model call result.
+	 */
+	onUsage?: StreamTextUsageObserver;
 }
 
 /**
@@ -39,40 +57,54 @@ export interface StreamTextOptions {
  */
 export async function streamText(ctx: Context, opts: StreamTextOptions): Promise<string> {
 	const assembler = new BlockAssembler();
-	for await (const chunk of ctx.llm.stream({
-		provider: opts.provider,
-		model: opts.model,
-		system: opts.system,
-		messages: [
-			...(opts.prefixMessages ?? []),
-			createUserMessage({
-				content: [{ type: "text", text: opts.prompt }],
-				source: EVOLVE_MESSAGE_SOURCE,
-			}),
-		],
-		reasoningEffort: ReasoningEffortId("off"),
-		maxTokens: opts.maxTokens ?? 8000,
-		...(opts.signal ? { signal: opts.signal } : {}),
-	})) {
-		assembler.push(chunk);
+	let outcome: StreamTextOutcome = "error";
+	try {
+		for await (const chunk of ctx.llm.stream({
+			provider: opts.provider,
+			model: opts.model,
+			system: opts.system,
+			messages: [
+				...(opts.prefixMessages ?? []),
+				createUserMessage({
+					content: [{ type: "text", text: opts.prompt }],
+					source: EVOLVE_MESSAGE_SOURCE,
+				}),
+			],
+			reasoningEffort: ReasoningEffortId("off"),
+			maxTokens: opts.maxTokens ?? 8000,
+			...(opts.signal ? { signal: opts.signal } : {}),
+		})) {
+			assembler.push(chunk);
+		}
+		const finish = assembler.finish;
+		if (finish.kind === "error") {
+			outcome = "error";
+			throw new Error(`evolve: LLM call failed: ${(finish as { failure?: { message?: string } }).failure?.message ?? "unknown"}`);
+		}
+		if (finish.kind === "aborted") {
+			outcome = "aborted";
+			throw new Error("evolve: LLM call aborted");
+		}
+		if (finish.kind === "max-tokens") {
+			outcome = "max-tokens";
+			throw new Error("evolve: LLM output budget exhausted (max-tokens)");
+		}
+		const text = assembler
+			.blocks()
+			.filter((block) => block.type === "text")
+			.map((block) => block.text)
+			.join("\n");
+		if (text.length === 0) {
+			outcome = "empty";
+			throw new Error("evolve: LLM produced no text output");
+		}
+		outcome = "success";
+		return text;
+	} finally {
+		try {
+			opts.onUsage?.({ ...(assembler.usage ? { usage: assembler.usage } : {}), outcome });
+		} catch {
+			// Usage observation is diagnostic; its failure must not alter the model call.
+		}
 	}
-	const finish = assembler.finish;
-	if (finish.kind === "error") {
-		throw new Error(`evolve: LLM call failed: ${(finish as { failure?: { message?: string } }).failure?.message ?? "unknown"}`);
-	}
-	if (finish.kind === "aborted") {
-		throw new Error("evolve: LLM call aborted");
-	}
-	if (finish.kind === "max-tokens") {
-		throw new Error("evolve: LLM output budget exhausted (max-tokens)");
-	}
-	const text = assembler
-		.blocks()
-		.filter((block) => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-	if (text.length === 0) {
-		throw new Error("evolve: LLM produced no text output");
-	}
-	return text;
 }

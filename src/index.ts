@@ -110,14 +110,16 @@ export const Config = z.object({
 	/**
 	 * Storage hygiene (#20): how much append-only past each write keeps.
 	 * `snapshots` = full-state copies per store, `refinements` = tail lines
-	 * per store history, `reviews` = tail lines of the shared audit trail.
-	 * Absent fields fall back to the store defaults (20 / 500 / 500) —
+	 * per store history, `reviews` = tail lines of the shared audit trail,
+	 * `tokenUsage` = tail lines of the direct-call token ledger.
+	 * Absent fields fall back to the store defaults (20 / 500 / 500 / 500) —
 	 * rollback needs recent snapshots, readers need a recent window.
 	 */
 	historyRetain: z.object({
 		snapshots: z.natural(),
 		refinements: z.natural(),
 		reviews: z.natural(),
+		tokenUsage: z.natural(),
 	}),
 });
 

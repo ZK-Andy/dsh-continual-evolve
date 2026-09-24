@@ -14,6 +14,7 @@ import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
 import { sessionEventsOf } from "./inject.js";
 import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
 import { streamText } from "./llm-text.js";
+import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
 
 export interface AutoRefineReview {
 	shouldRefine: boolean;
@@ -47,6 +48,8 @@ export interface ReviewOptions {
 	 * auto-detect with the default budget.
 	 */
 	prefixCache?: PrefixCacheOptions;
+	/** Direct-call token ledger destination; the review phase is fixed by this module. */
+	tokenUsage?: TokenUsageTarget;
 }
 
 export const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
@@ -176,6 +179,7 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 		maxTokens: options.budgetTokens ?? 8000,
 		signal: options.signal,
 		...(prefixMessages.length > 0 ? { prefixMessages } : {}),
+		...(options.tokenUsage ? { onUsage: createTokenUsageObserver(options.tokenUsage, "review", provider, model) } : {}),
 	});
 	return parseAutoRefineReview(text);
 }

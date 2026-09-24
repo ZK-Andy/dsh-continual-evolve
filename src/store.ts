@@ -31,8 +31,9 @@ export const EVOLVE_DIR = "evolve";
 export const DEFAULT_SNAPSHOT_RETAIN = 20;
 export const DEFAULT_REFINEMENTS_RETAIN = 500;
 export const DEFAULT_REVIEWS_RETAIN = 500;
+export const DEFAULT_TOKEN_USAGE_RETAIN = 500;
 
-/** Resolved retention triple: how many snapshots / JSONL tail lines to keep. */
+/** Resolved retention set: how many snapshots / JSONL tail lines to keep. */
 export interface HistoryRetention {
 	/** Full-state snapshots kept per store (oldest pruned first). */
 	snapshots: number;
@@ -40,6 +41,8 @@ export interface HistoryRetention {
 	refinements: number;
 	/** Tail lines kept in the shared reviews.jsonl audit trail. */
 	reviews: number;
+	/** Tail lines kept in the direct-call token-usage.jsonl ledger. */
+	tokenUsage: number;
 }
 
 /** Defaults applied for absent / non-positive retention fields (fail loud never: clamp, don't throw). */
@@ -50,6 +53,7 @@ export function resolveHistoryRetention(raw?: Partial<HistoryRetention>): Histor
 		snapshots: pick(raw?.snapshots, DEFAULT_SNAPSHOT_RETAIN),
 		refinements: pick(raw?.refinements, DEFAULT_REFINEMENTS_RETAIN),
 		reviews: pick(raw?.reviews, DEFAULT_REVIEWS_RETAIN),
+		tokenUsage: pick(raw?.tokenUsage, DEFAULT_TOKEN_USAGE_RETAIN),
 	};
 }
 

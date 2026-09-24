@@ -87,6 +87,15 @@ describe("executeWrapupCommand", () => {
 			});
 			const result = await executeWrapupCommand(ctxOf(approvedQuestions), engine, invocationOf(agentOf("session-x")));
 			expect(result.kind).toBe("success");
+			expect(assessMock).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ id: "session-x" }),
+				expect.any(Array),
+				expect.objectContaining({
+					tokenUsagePhase: "wrapup",
+					tokenUsage: expect.objectContaining({ baseDir: base, sessionId: "session-x", retain: engine.retention.tokenUsage }),
+				}),
+			);
 			expect(result.text).toContain("PROMOTE (to global): 1");
 			expect(result.text).toMatch(/promoted memory:mem_1 → global:mem_1/);
 			const globalEntry = Object.values(engine.load("global", undefined).entries.memory)[0];

@@ -27,6 +27,7 @@ import { extractJsonObject } from "./plan.js";
 import { compactText } from "./render.js";
 import { streamText } from "./llm-text.js";
 import { getUsageCount, loadUsage } from "./usage.js";
+import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
 import { recencyScore } from "./inject.js";
 import { DEFAULT_PROMOTION_POLICY, mostSimilarGlobalEntry, projectScopedReason, secretLeakReason, type PromotionPolicy } from "./promotion.js";
 
@@ -651,6 +652,10 @@ export interface AssessOptions {
 	maxOutputTokens?: number;
 	/** Abort signal forwarded to the model call. */
 	signal?: AbortSignal;
+	/** Direct-call token ledger destination; phase is selected by the caller. */
+	tokenUsage?: TokenUsageTarget;
+	/** Ledger phase for this classifier call (manual wrapup or automatic fate). */
+	tokenUsagePhase?: "wrapup" | "fate";
 }
 
 /**
@@ -696,6 +701,16 @@ export async function assessLocalEntries(
 		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 4096,
 		signal: options.signal,
+		...(options.tokenUsage
+			? {
+					onUsage: createTokenUsageObserver(
+						options.tokenUsage,
+						options.tokenUsagePhase ?? "wrapup",
+						agent.options.provider,
+						agent.options.model,
+					),
+				}
+			: {}),
 	});
 	return parseWrapupAssessment(text, candidates);
 }

@@ -16,6 +16,7 @@ import { recentUserText, sessionEventsOf } from "./inject.js";
 import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
 import { skillQualityGuide } from "./skillquality.js";
 import { streamText } from "./llm-text.js";
+import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the /evolve continual harness subsystem.
 
@@ -121,6 +122,8 @@ export interface PlanOptions {
 	 * the default budget.
 	 */
 	prefixCache?: PrefixCacheOptions;
+	/** Direct-call token ledger destination; the planner phase is fixed by this module. */
+	tokenUsage?: TokenUsageTarget;
 }
 
 export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<RefinementProposal> {
@@ -175,6 +178,9 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		maxTokens: options.maxOutputTokens ?? 8000,
 		signal: options.signal,
 		...(prefixMessages.length > 0 ? { prefixMessages } : {}),
+		...(options.tokenUsage
+			? { onUsage: createTokenUsageObserver(options.tokenUsage, "planner", agent.options.provider, agent.options.model) }
+			: {}),
 	});
 	return parseProposal(text);
 }

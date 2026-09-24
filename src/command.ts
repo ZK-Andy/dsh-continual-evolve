@@ -27,6 +27,7 @@ import { projectKeyOf } from "./project.js";
 import { loadUsage, getUsageCount } from "./usage.js";
 import { loadGateRuntime, saveGateRuntime } from "./runtime.js";
 import { planConsolidation } from "./consolidate.js";
+import { loadTokenUsage, renderTokenUsageReport } from "./token-usage.js";
 
 const USAGE = `Usage:
   /evolve                  show this help and the current local store
@@ -55,7 +56,7 @@ const USAGE = `Usage:
   /evolve goal done          complete the evolution goal
   /evolve pause | resume     pause/resume the auto-review gate (manual tools and commands keep working)
   /evolve status             gate state (patch flag + runtime switch) plus store entry counts
-  /evolve usage              injection counts per entry — what the harness actually surfaced`;
+  /evolve usage              injection counts + exact direct-call token usage (benchmark subagents excluded)`;
 
 export interface CommandGateOptions {
 	requireGlobalApproval: boolean;
@@ -403,6 +404,13 @@ async function executeEvolveCommand(
 					...(instructions ? { instructions } : {}),
 					global: scope === "global",
 					signal: invocation.signal,
+					tokenUsage: {
+						baseDir: engine.baseDir,
+						sessionId,
+						retain: engine.retention.tokenUsage,
+						onError: (cause: unknown) =>
+							ctx.logger("continual-evolve").warn(`token-usage ledger failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`),
+					},
 					// skill-creator template facts (fallback: builtin guide).
 					skillsRoot: join(engine.baseDir, "skills"),
 				});
@@ -534,7 +542,9 @@ function renderGateStatus(engine: EvolutionEngine, sessionId: string, projectKey
 	}
 	const retention = engine.retention;
 	if (retention) {
-		lines.push(`retention: snapshots ${retention.snapshots} · refinements ${retention.refinements} · reviews ${retention.reviews} (historyRetain)`);
+		lines.push(
+			`retention: snapshots ${retention.snapshots} · refinements ${retention.refinements} · reviews ${retention.reviews} · token usage ${retention.tokenUsage} (historyRetain)`,
+		);
 	}
 	return lines.join("\n");
 }
@@ -579,7 +589,7 @@ function renderUsageReport(engine: EvolutionEngine, sessionId: string, projectKe
 	const total = rows.reduce((n, r) => n + r.count, 0);
 	const injected = rows.filter((r) => r.count > 0).sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1));
 	const stale = rows.filter((r) => r.count === 0).sort((a, b) => (a.key < b.key ? -1 : 1));
-	const lines = [`usage: ${total} injections across ${injected.length} of ${rows.length} stored entries${orphaned > 0 ? ` (+${orphaned} historical key(s) for deleted entries)` : ""}`];
+	const lines = [`injected entries: ${total} injections across ${injected.length} of ${rows.length} stored entries${orphaned > 0 ? ` (+${orphaned} historical key(s) for deleted entries)` : ""}`];
 	if (injected.length > 0) {
 		lines.push("injected (top 15):");
 		for (const row of injected.slice(0, 15)) {
@@ -600,6 +610,7 @@ function renderUsageReport(engine: EvolutionEngine, sessionId: string, projectKe
 			lines.push(`  … and ${stale.length - 20} more`);
 		}
 	}
+	lines.push("", ...renderTokenUsageReport(loadTokenUsage(engine.baseDir), engine.retention.tokenUsage));
 	return lines.join("\n");
 }
 

@@ -5,6 +5,9 @@
  * Route B keeps the legacy input; an empty prefix falls back to B).
  */
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import {
@@ -17,6 +20,7 @@ import {
 import { planWithLlm } from "../src/planner.js";
 import { reviewAutoRefine } from "../src/review.js";
 import type { HarnessState } from "../src/types.js";
+import { loadTokenUsage } from "../src/token-usage.js";
 
 const emptyState: HarnessState = {
 	schema: 1,
@@ -148,6 +152,7 @@ function fakeCtx(): { ctx: Context; captured: { roles: string[]; userPrompt: str
 					{ type: "block-start", index: 0, blockType: "text" },
 					{ type: "text-delta", index: 0, text },
 					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "usage", usage: { inputTokens: 15, outputTokens: 3, totalTokens: 18 } },
 					{ type: "finish", reason: { kind: "stop" } },
 				];
 				for (const chunk of chunks) {
@@ -202,19 +207,28 @@ describe("planner Route A wiring", () => {
 describe("gate Route A wiring", () => {
 	const reviewContext = { reason: "turn_interval" as const, turnsSinceLastReview: 6 };
 
-	it("prepends the prefix and drops the flat <conversation> block on cache evidence", async () => {
-		const { ctx, captured } = fakeCtx();
-		const agent = agentWith([userRow(1, "did the thing"), assistantRow(2, "done", 12)]);
-		await reviewAutoRefine(ctx, {
-			agent: agent as unknown as Parameters<typeof reviewAutoRefine>[1]["agent"],
-			state: emptyState,
-			history: [],
-			trajectory: "flat conversation text",
-			context: reviewContext,
-		});
-		expect(captured.roles).toEqual(["user", "assistant", "user"]);
-		expect(captured.userPrompt).not.toContain("<conversation>");
-		expect(captured.userPrompt).not.toContain("flat conversation text");
+	it("prepends the prefix, drops flat text, and records exact review usage", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-review-token-"));
+		try {
+			const { ctx, captured } = fakeCtx();
+			const agent = agentWith([userRow(1, "did the thing"), assistantRow(2, "done", 12)]);
+			await reviewAutoRefine(ctx, {
+				agent: agent as unknown as Parameters<typeof reviewAutoRefine>[1]["agent"],
+				state: emptyState,
+				history: [],
+				trajectory: "flat conversation text",
+				context: reviewContext,
+				tokenUsage: { baseDir: dir, sessionId: "session-main", retain: 10 },
+			});
+			expect(captured.roles).toEqual(["user", "assistant", "user"]);
+			expect(captured.userPrompt).not.toContain("<conversation>");
+			expect(captured.userPrompt).not.toContain("flat conversation text");
+			expect(loadTokenUsage(dir).records).toEqual([
+				expect.objectContaining({ phase: "review", outcome: "success", usage: { inputTokens: 15, outputTokens: 3, totalTokens: 18 } }),
+			]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("keeps the flat block on Route B", async () => {

@@ -13,6 +13,7 @@ import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands
 import { findEntryById, registerEvolveCommand, stripAngleBrackets, tokenizeEvolveInput } from "../src/command.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { emptyHarnessState, ARCHIVED_AT_KEY, type HarnessEntry } from "../src/types.js";
+import { TOKEN_USAGE_LEDGER_VERSION, appendTokenUsage } from "../src/token-usage.js";
 
 describe("tokenizeEvolveInput", () => {
 	it("splits on whitespace", () => {
@@ -409,6 +410,7 @@ describe("executeEvolveCommand — pause / resume / status (#21 P2)", () => {
 		expect(status.text).toContain("patch flag unknown");
 		expect(status.text).toContain("local(session-cmd) 1 entries");
 		expect(status.text).toContain("retention:");
+		expect(status.text).toContain("token usage");
 	}));
 });
 
@@ -426,6 +428,39 @@ describe("executeEvolveCommand — usage (#21 P0)", () => {
 		expect(result.text).toContain("(last in session-other)");
 		expect(result.text).toContain("never injected (1):");
 		expect(result.text).toContain(`memory:${globalId}`);
+	}));
+
+	it("reports retained direct-call token totals and explicit scope limits", withDir(async (h) => {
+		const target = { baseDir: h.dir, sessionId: "session-cmd", retain: h.engine.retention.tokenUsage };
+		appendTokenUsage(target, {
+			version: TOKEN_USAGE_LEDGER_VERSION,
+			timestamp: "2026-09-24T00:00:00.000Z",
+			sessionId: "session-cmd",
+			phase: "review",
+			provider: "p",
+			model: "m",
+			outcome: "success",
+			usageStatus: "reported",
+			usage: { inputTokens: 2, outputTokens: 3, cacheReadTokens: 4, cacheWriteTokens: 1, totalTokens: 10 },
+			totalSource: "provider",
+		});
+		appendTokenUsage(target, {
+			version: TOKEN_USAGE_LEDGER_VERSION,
+			timestamp: "2026-09-24T00:00:01.000Z",
+			sessionId: "session-cmd",
+			phase: "planner",
+			provider: "p",
+			model: "m",
+			outcome: "error",
+			usageStatus: "missing",
+			totalSource: "unavailable",
+		});
+		const result = await h.run("usage");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("direct LLM token usage: 2 valid calls (1 reported usage, 1 missing)");
+		expect(result.text).toContain("exact total:    10 (reported calls only)");
+		expect(result.text).toContain(`window: last ${h.engine.retention.tokenUsage} call(s), not a lifetime total`);
+		expect(result.text).toContain("host benchmark subagents");
 	}));
 
 	it("reports an empty ledger before anything was injected", withDir(async (h) => {

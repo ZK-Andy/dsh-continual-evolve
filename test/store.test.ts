@@ -12,6 +12,7 @@ import {
 	DEFAULT_REFINEMENTS_RETAIN,
 	DEFAULT_REVIEWS_RETAIN,
 	DEFAULT_SNAPSHOT_RETAIN,
+	DEFAULT_TOKEN_USAGE_RETAIN,
 	pruneJsonlFile,
 	pruneSnapshots,
 	resolveHistoryRetention,
@@ -25,10 +26,12 @@ describe("resolveHistoryRetention", () => {
 			snapshots: DEFAULT_SNAPSHOT_RETAIN,
 			refinements: DEFAULT_REFINEMENTS_RETAIN,
 			reviews: DEFAULT_REVIEWS_RETAIN,
+			tokenUsage: DEFAULT_TOKEN_USAGE_RETAIN,
 		});
 		expect(DEFAULT_SNAPSHOT_RETAIN).toBeGreaterThan(0);
 		expect(DEFAULT_REFINEMENTS_RETAIN).toBeGreaterThanOrEqual(500);
 		expect(DEFAULT_REVIEWS_RETAIN).toBeGreaterThanOrEqual(500);
+		expect(DEFAULT_TOKEN_USAGE_RETAIN).toBeGreaterThanOrEqual(500);
 	});
 
 	it("clamps absent and non-positive fields instead of failing loudly", () => {
@@ -36,11 +39,13 @@ describe("resolveHistoryRetention", () => {
 			snapshots: 3,
 			refinements: DEFAULT_REFINEMENTS_RETAIN,
 			reviews: DEFAULT_REVIEWS_RETAIN,
+			tokenUsage: DEFAULT_TOKEN_USAGE_RETAIN,
 		});
-		expect(resolveHistoryRetention({ snapshots: 0, refinements: -5, reviews: Number.NaN })).toEqual({
+		expect(resolveHistoryRetention({ snapshots: 0, refinements: -5, reviews: Number.NaN, tokenUsage: -1 })).toEqual({
 			snapshots: DEFAULT_SNAPSHOT_RETAIN,
 			refinements: DEFAULT_REFINEMENTS_RETAIN,
 			reviews: DEFAULT_REVIEWS_RETAIN,
+			tokenUsage: DEFAULT_TOKEN_USAGE_RETAIN,
 		});
 	});
 });
@@ -120,6 +125,7 @@ describe("engine write-time retention (#20)", () => {
 			expect(engine.retention.snapshots).toBe(DEFAULT_SNAPSHOT_RETAIN);
 			expect(engine.retention.refinements).toBe(DEFAULT_REFINEMENTS_RETAIN);
 			expect(engine.retention.reviews).toBe(DEFAULT_REVIEWS_RETAIN);
+			expect(engine.retention.tokenUsage).toBe(DEFAULT_TOKEN_USAGE_RETAIN);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

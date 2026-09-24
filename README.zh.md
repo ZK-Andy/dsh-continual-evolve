@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-618%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-665%20passing-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
 
@@ -62,11 +62,13 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve goal [objective · done · block]` | 回合驱动的自进化目标 |
 | `/evolve benchmark …` | 用例生命周期、运行、接受决策 |
 | `/evolve pause · resume · status` | 暂停/恢复自动门禁（手动工具不受影响）、门禁状态 |
-| `/evolve usage` | 每条目的注入次数——harness 到底让什么露过面 |
+| `/evolve usage` | 每条目注入次数 + review/planner/wrapup/fate 直属调用的 provider 精确 token（不含 benchmark 宿主子代理） |
 
 模型工具：`evolve_list / add / update / delete / rollback`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批）。
 
 第三方消费：每次进化落地（门禁或手动）都会向 `reviews.jsonl` 追加结构化 `evolve_complete` 事件（shape 见 `src/evolve-event.ts`），与人类可读的审计记录并存。
+
+`/evolve usage` 还会读取 `evolve/token-usage.jsonl`：插件直属 review、planner、手动 wrapup 与自动 fate 调用的 provider 精确 input/cache/output/total token。报告只覆盖保留尾部而非终身累计，单独显示 provider 未返回 usage 的调用，并明确排除宿主 benchmark 子代理、其 agent-loop 调用与逐条 memory 注入归因。
 
 注入形态：prompt 补充与委派规格带内容注入（每 kind ≤6 条 × 180 字符，按相关性排序）。memory/skill 以按相关性排序的目录索引出现（`[memory:type:id] 标题`钩子，15 行封顶 + 折叠计数行）——全文经 `evolve_list` 获取。空 store = 零注入 token。
 
@@ -96,7 +98,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `reviewModel` | agent 自身 | 门禁可选更便宜的模型（`"provider/model"`） |
 | `plannerPrefixCache` | `auto` | 有缓存证据时用会话前缀输入（`session` 总是前缀，`off` 保持旧扁平文本） |
 | `plannerPrefixMaxChars` | `12000` | Route A 会话前缀预算（字符） |
-| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500}` | 存储卫生：每 store 保留的快照数、每 store 历史尾行数、共享 `reviews.jsonl` 审计尾行数 |
+| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500, tokenUsage: 500}` | 存储卫生：每 store 快照数、每 store 历史尾行、共享 `reviews.jsonl` 尾行、直属调用 `token-usage.jsonl` 尾行 |
 
 profile patch 示例：
 
@@ -111,7 +113,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（645 例）
+pnpm test                    # vitest（665 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```
@@ -119,8 +121,8 @@ pnpm lint                    # oxlint src test
 目录结构：
 
 ```
-├── src/                   # 引擎、工具、命令、门禁、fate、benchmark、usage…
-├── test/                  # vitest 测试套件（37 个文件）
+├── src/                   # 引擎、工具、命令、门禁、fate、benchmark、注入 + token 用量…
+├── test/                  # vitest 测试套件（41 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
 │   ├── design.md          # 完整设计文档（硬化矩阵）

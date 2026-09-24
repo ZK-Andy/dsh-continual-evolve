@@ -13,6 +13,7 @@ import type { HarnessState } from "../src/types.js";
 import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import { PLANNER_SYSTEM_PROMPT, planWithLlm, type PlanOptions } from "../src/planner.js";
 import { parseProposal } from "../src/plan.js";
+import { loadTokenUsage } from "../src/token-usage.js";
 
 describe("PLANNER_SYSTEM_PROMPT", () => {
 	it("tells the planner to propose archive instead of delete for stale entries", () => {
@@ -58,6 +59,7 @@ function fakeCtx(): { ctx: Context; captured: { userPrompt: string } } {
 					{ type: "block-start", index: 0, blockType: "text" },
 					{ type: "text-delta", index: 0, text },
 					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "usage", usage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 } },
 					{ type: "finish", reason: { kind: "stop" } },
 				];
 				for (const chunk of chunks) {
@@ -126,6 +128,35 @@ describe("planWithLlm trajectory grounding", () => {
 		expect(proposal.edits).toEqual([]);
 		expect(proposal.summary).toBe("no edits");
 		expect(captured.userPrompt).not.toContain("<session_trajectory>");
+	});
+});
+
+describe("planWithLlm token ledger wiring", () => {
+	it("records the exact planner provider usage", async () => {
+		const dir = mkdtempSync(join(process.cwd(), "test/.tmp/"));
+		try {
+			const { ctx } = fakeCtx();
+			const agent = agentWith([]);
+			await planWithLlm(ctx, {
+				agent,
+				state: emptyState,
+				history: [],
+				tokenUsage: { baseDir: dir, sessionId: agent.id, retain: 10 },
+			});
+			const loaded = loadTokenUsage(dir);
+			expect(loaded.records).toHaveLength(1);
+			expect(loaded.records[0]).toMatchObject({
+				phase: "planner",
+				provider: "test-provider",
+				model: "test-model",
+				outcome: "success",
+				usageStatus: "reported",
+				totalSource: "provider",
+				usage: { totalTokens: 24 },
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

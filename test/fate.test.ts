@@ -30,6 +30,7 @@ import { createEvolutionEngine } from "../src/service.js";
 import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
 import type { WrapupCandidate } from "../src/wrapup.js";
+import { loadTokenUsage } from "../src/token-usage.js";
 
 /** Portable fixture body clearing the promotion floor (>=100 chars). */
 const PROMOTABLE_BODY =
@@ -104,6 +105,7 @@ function llmStreaming(text: string): Context["llm"] {
 				{ type: "block-start", index: 0, blockType: "text" },
 				{ type: "text-delta", index: 0, text },
 				{ type: "block-end", index: 0, block: { type: "text", text } },
+				{ type: "usage", usage: { inputTokens: 30, outputTokens: 5, totalTokens: 35 } },
 				{ type: "finish", reason: { kind: "stop" } },
 			];
 			for (const chunk of chunks) {
@@ -423,6 +425,7 @@ describe("runLocalFatePhase", () => {
 						{ type: "block-start", index: 0, blockType: "text" },
 						{ type: "text-delta", index: 0, text: json },
 						{ type: "block-end", index: 0, block: { type: "text", text: json } },
+						{ type: "usage", usage: { inputTokens: 30, outputTokens: 5, totalTokens: 35 } },
 						{ type: "finish", reason: { kind: "stop" } },
 					];
 					for (const chunk of chunks) {
@@ -472,6 +475,9 @@ describe("runLocalFatePhase", () => {
 		expect(local.entries.memory["m1"]?.metadata[PROMOTED_TO_KEY]).toBe("m1");
 		expect(local.entries.memory["m1"]?.metadata.archivedAt).toBeTruthy();
 		expect(h.records.some((entry) => entry.outcome === "approved" && entry.rationale?.includes("fate:"))).toBe(true);
+		expect(loadTokenUsage(h.engine.baseDir).records).toEqual([
+			expect.objectContaining({ phase: "fate", outcome: "success", usageStatus: "reported", usage: { inputTokens: 30, outputTokens: 5, totalTokens: 35 } }),
+		]);
 	});
 
 	it("declines without applying and records the cooldown (no re-ask within it)", async () => {

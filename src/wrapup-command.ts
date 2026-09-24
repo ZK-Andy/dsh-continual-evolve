@@ -30,7 +30,17 @@ export async function executeWrapupCommand(
 	}
 
 	// 1. Classify: the model judges each audited candidate's fate.
-	const assessment = await assessLocalEntries(ctx, invocation.agent, candidates, { signal: invocation.signal });
+	const assessment = await assessLocalEntries(ctx, invocation.agent, candidates, {
+		signal: invocation.signal,
+		tokenUsage: {
+			baseDir: engine.baseDir,
+			sessionId,
+			retain: engine.retention.tokenUsage,
+			onError: (cause: unknown) =>
+				ctx.logger("continual-evolve").warn(`token-usage ledger failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`),
+		},
+		tokenUsagePhase: "wrapup",
+	});
 	const byKey = new Map(candidates.map((candidate) => [candidateKey(candidate.kind, candidate.id), candidate]));
 
 	// 2. Partition by action. Deterministic guards re-check the LIVE global

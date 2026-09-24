@@ -6,6 +6,8 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import type { Context } from "@deepseek-ai/cordis";
+import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { HarnessEntry, HarnessState, RefinementKind } from "../src/types.js";
 import { PROMOTED_TO_KEY, VALENCE_NEGATIVE_KEY, emptyHarnessState } from "../src/types.js";
 
@@ -15,6 +17,7 @@ function tmpBase(): string {
 	return mkdtempSync(join(base, "/"));
 }
 import {
+	assessLocalEntries,
 	filterPromotable,
 	globalCoverageDetected,
 	globalHintsFor,
@@ -27,6 +30,7 @@ import {
 	type WrapupCandidate,
 	type WrapupItem,
 } from "../src/wrapup.js";
+import { loadTokenUsage } from "../src/token-usage.js";
 
 /** Portable fixture body clearing the promotion floor (>=100 chars). */
 const PROMOTABLE_BODY =
@@ -431,5 +435,38 @@ describe("archive review guard (symmetric)", () => {
 		const { silent, review } = splitArchiveGuards(items, candidates);
 		expect(review.map((i) => i.key)).toEqual(["memory:m1"]);
 		expect(silent.map((i) => i.key).sort()).toEqual(["memory:m2", "memory:m3", "memory:m4"]);
+	});
+});
+
+describe("assessLocalEntries token ledger wiring", () => {
+	it("records exact provider usage for a manual wrapup classification", async () => {
+		const base = tmpBase();
+		try {
+			const text = JSON.stringify({ rationale: "keep", items: [{ key: "memory:m1", verdict: "keep", reason: "still useful" }] });
+			const ctx = {
+				llm: {
+					stream: async function* () {
+						const chunks: StreamChunk[] = [
+							{ type: "block-start", index: 0, blockType: "text" },
+							{ type: "text-delta", index: 0, text },
+							{ type: "block-end", index: 0, block: { type: "text", text } },
+							{ type: "usage", usage: { inputTokens: 11, outputTokens: 4, totalTokens: 15 } },
+							{ type: "finish", reason: { kind: "stop" } },
+						];
+						for (const chunk of chunks) yield chunk;
+					},
+				},
+			} as unknown as Context;
+			const agent = { id: "session-wrapup", options: { provider: "p", model: "m" } } as never;
+			await assessLocalEntries(ctx, agent, [candidateOf(entry("m1", "memory", "still useful"))], {
+				tokenUsage: { baseDir: base, sessionId: "session-wrapup", retain: 10 },
+				tokenUsagePhase: "wrapup",
+			});
+			expect(loadTokenUsage(base).records).toEqual([
+				expect.objectContaining({ phase: "wrapup", usageStatus: "reported", usage: { inputTokens: 11, outputTokens: 4, totalTokens: 15 } }),
+			]);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
 	});
 });

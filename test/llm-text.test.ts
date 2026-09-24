@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import type { StreamChunk } from "@deepseek-ai/dsh-llm";
-import { streamText, type StreamTextOptions } from "../src/llm-text.js";
+import { streamText, type StreamTextObservation, type StreamTextOptions } from "../src/llm-text.js";
 
 const BASE_OPTS: StreamTextOptions = {
 	provider: "test-provider",
@@ -38,6 +38,14 @@ function textBlock(text: string, index = 0): StreamChunk[] {
 		{ type: "text-delta", index, text },
 		{ type: "block-end", index, block: { type: "text", text } },
 	];
+}
+
+/** One valid provider usage sample; every count is deliberately distinct. */
+function usageChunk(): StreamChunk {
+	return {
+		type: "usage",
+		usage: { inputTokens: 10, outputTokens: 3, totalTokens: 18, cacheReadTokens: 5, cacheWriteTokens: 0, reasoningTokens: 1 },
+	};
 }
 
 describe("streamText success path", () => {
@@ -82,5 +90,58 @@ describe("streamText finish-state errors", () => {
 			{ type: "finish", reason: { kind: "max-tokens" } },
 		]);
 		await expect(streamText(ctx, BASE_OPTS)).rejects.toThrow(/output budget exhausted/);
+	});
+});
+
+describe("streamText usage settlement", () => {
+	it("observes provider usage exactly once on success", async () => {
+		const seen: StreamTextObservation[] = [];
+		const ctx = ctxWith([...textBlock("done"), usageChunk(), { type: "finish", reason: { kind: "stop" } }]);
+		await expect(streamText(ctx, { ...BASE_OPTS, onUsage: (value) => seen.push(value) })).resolves.toBe("done");
+		expect(seen).toEqual([{ usage: { inputTokens: 10, outputTokens: 3, totalTokens: 18, cacheReadTokens: 5, cacheWriteTokens: 0, reasoningTokens: 1 }, outcome: "success" }]);
+	});
+
+	for (const testCase of [
+		{ name: "provider error", outcome: "error", chunks: [usageChunk(), { type: "finish", reason: { kind: "error", failure: { message: "provider 500", code: "upstream_error" } } } as StreamChunk], error: /LLM call failed/ },
+		{ name: "abort", outcome: "aborted", chunks: [usageChunk(), { type: "finish", reason: { kind: "aborted", failure: { message: "cancelled", code: "aborted" } } } as StreamChunk], error: /LLM call aborted/ },
+		{ name: "max tokens", outcome: "max-tokens", chunks: [usageChunk(), { type: "finish", reason: { kind: "max-tokens" } } as StreamChunk], error: /output budget exhausted/ },
+		{ name: "empty text", outcome: "empty", chunks: [usageChunk(), { type: "finish", reason: { kind: "stop" } } as StreamChunk], error: /no text output/ },
+	] as const) {
+		it(`observes usage before throwing ${testCase.name}`, async () => {
+			const seen: StreamTextObservation[] = [];
+			const ctx = ctxWith([...testCase.chunks]);
+			await expect(streamText(ctx, { ...BASE_OPTS, onUsage: (value) => seen.push(value) })).rejects.toThrow(testCase.error);
+			expect(seen).toHaveLength(1);
+			expect(seen[0]?.outcome).toBe(testCase.outcome);
+			expect(seen[0]?.usage?.totalTokens).toBe(18);
+		});
+	}
+
+	it("records missing usage without inventing zero", async () => {
+		const seen: StreamTextObservation[] = [];
+		await streamText(ctxWith([...textBlock("done"), { type: "finish", reason: { kind: "stop" } }]), {
+			...BASE_OPTS,
+			onUsage: (value) => seen.push(value),
+		});
+		expect(seen).toEqual([{ outcome: "success" }]);
+	});
+
+	it("contains observer failures", async () => {
+		const ctx = ctxWith([...textBlock("done"), usageChunk(), { type: "finish", reason: { kind: "stop" } }]);
+		await expect(streamText(ctx, { ...BASE_OPTS, onUsage: () => { throw new Error("ledger unavailable"); } })).resolves.toBe("done");
+	});
+
+	it("observes an error when the stream throws after usage arrived", async () => {
+		const seen: StreamTextObservation[] = [];
+		const ctx = {
+			llm: {
+				stream: async function* () {
+					yield usageChunk();
+					throw new Error("socket closed");
+				},
+			},
+		} as unknown as Context;
+		await expect(streamText(ctx, { ...BASE_OPTS, onUsage: (value) => seen.push(value) })).rejects.toThrow("socket closed");
+		expect(seen).toEqual([{ usage: { inputTokens: 10, outputTokens: 3, totalTokens: 18, cacheReadTokens: 5, cacheWriteTokens: 0, reasoningTokens: 1 }, outcome: "error" }]);
 	});
 });

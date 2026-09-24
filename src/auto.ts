@@ -389,6 +389,12 @@ async function runReviewPhase(
 	const sessionId = agent.id;
 	const turnsSinceLastReview = state.turns - state.lastReviewAt;
 	const logger = ctx.logger("continual-evolve");
+	const tokenUsage = {
+		baseDir: engine.baseDir,
+		sessionId,
+		retain: engine.retention.tokenUsage,
+		onError: (cause: unknown) => logger.warn(`token-usage ledger failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`),
+	};
 
 	const trajectory = await readTrajectory(ctx, agent, config.maxInputChars).catch((cause) => {
 		logger.warn(`auto-review skipped for ${sessionId}: trajectory unavailable: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -416,6 +422,7 @@ async function runReviewPhase(
 		trajectory,
 		context: { reason, turnsSinceLastReview },
 		budgetTokens: config.budgetTokens,
+		tokenUsage,
 		...(reviewRoute ? { overrideProvider: reviewRoute.provider, overrideModel: reviewRoute.model } : {}),
 		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
 			? {
@@ -443,6 +450,7 @@ async function runReviewPhase(
 		// Read the skill-creator template facts (fallback: builtin distilled
 		// guide) so skill proposals follow the standard.
 		skillsRoot: join(engine.baseDir, "skills"),
+		tokenUsage,
 		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
 			? {
 					prefixCache: {

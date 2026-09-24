@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-618%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-665%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -62,11 +62,13 @@ Commands (in-session):
 | `/evolve goal [objective · done · block]` | round-driven auto-review goal |
 | `/evolve benchmark …` | case lifecycle, runs, acceptance |
 | `/evolve pause · resume · status` | pause/resume the auto-review gate (manual tools keep working), gate state |
-| `/evolve usage` | injection counts per entry — what the harness actually surfaced |
+| `/evolve usage` | per-entry injection counts + exact provider-reported tokens for direct review/planner/wrapup/fate calls (benchmark host subagents excluded) |
 
 Model tools: `evolve_list / add / update / delete / rollback` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval).
 
 For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
+
+`/evolve usage` also reads `evolve/token-usage.jsonl`: exact provider-reported input/cache/output/total tokens for the plugin's direct review, planner, manual-wrapup, and automatic-fate calls. The report covers a retained tail rather than lifetime usage, distinguishes missing provider samples, and explicitly excludes host benchmark subagents, their agent-loop calls, and per-entry injection attribution.
 
 Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a relevance-ordered directory index (`[memory:type:id] title` hooks, capped at 15 lines with a fold counter) — full text via `evolve_list`. Empty store = zero injected tokens.
 
@@ -96,7 +98,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `reviewModel` | agent's own | optional cheaper model for the gate (`"provider/model"`) |
 | `plannerPrefixCache` | `auto` | Route A session-prefix input when cache evidence exists (`session` always, `off` legacy flat text) |
 | `plannerPrefixMaxChars` | `12000` | session-prefix budget for Route A planning inputs (chars) |
-| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500}` | storage hygiene: snapshots kept per store, tail lines per store history, tail lines of the shared `reviews.jsonl` audit trail |
+| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500, tokenUsage: 500}` | storage hygiene: snapshots per store, tail lines per store history, shared `reviews.jsonl` tail, and direct-call `token-usage.jsonl` tail |
 
 Example profile patch:
 
@@ -111,7 +113,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (645 tests)
+pnpm test                    # vitest (665 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -119,8 +121,8 @@ pnpm lint                    # oxlint src test
 Project layout:
 
 ```
-├── src/                   # engine, tools, commands, gate, fate, benchmark, usage…
-├── test/                  # vitest suites (37 files)
+├── src/                   # engine, tools, commands, gate, fate, benchmark, injection + token usage…
+├── test/                  # vitest suites (41 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)
