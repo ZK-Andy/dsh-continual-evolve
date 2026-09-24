@@ -6,8 +6,8 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
-import type { StreamChunk } from "@deepseek-ai/dsh-llm";
-import { streamText, type StreamTextObservation, type StreamTextOptions } from "../src/llm-text.js";
+import { ReasoningEffortId, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { selectLowestReasoningEffort, streamText, type StreamTextObservation, type StreamTextOptions } from "../src/llm-text.js";
 
 const BASE_OPTS: StreamTextOptions = {
 	provider: "test-provider",
@@ -17,9 +17,11 @@ const BASE_OPTS: StreamTextOptions = {
 };
 
 /** A fake llm.stream yielding a canned chunk list, verbatim. */
-function llmWith(chunks: StreamChunk[]): Context["llm"] {
+function llmWith(chunks: StreamChunk[], modelInfo?: LlmResolvedModelInfo, requests: GenerateOptions[] = []): Context["llm"] {
 	return {
-		stream: async function* () {
+		...(modelInfo === undefined ? {} : { resolveModelInfo: async () => modelInfo }),
+		stream: async function* (options: GenerateOptions) {
+			requests.push(options);
 			for (const chunk of chunks) {
 				yield chunk;
 			}
@@ -27,8 +29,24 @@ function llmWith(chunks: StreamChunk[]): Context["llm"] {
 	} as unknown as Context["llm"];
 }
 
-function ctxWith(chunks: StreamChunk[]): Context {
-	return { llm: llmWith(chunks) } as unknown as Context;
+function ctxWith(chunks: StreamChunk[], modelInfo?: LlmResolvedModelInfo, requests: GenerateOptions[] = []): Context {
+	return { llm: llmWith(chunks, modelInfo, requests) } as unknown as Context;
+}
+
+/** Exact-model metadata fixture for the capability-derived effort selector. */
+function resolvedModelInfo(efforts?: readonly string[]): LlmResolvedModelInfo {
+	return {
+		provider: BASE_OPTS.provider,
+		id: BASE_OPTS.model,
+		name: "Test model",
+		...(efforts === undefined
+			? {}
+			: {
+					reasoning: {
+						efforts: efforts.map((id) => ({ id: ReasoningEffortId(id), name: id })),
+					},
+				}),
+	};
 }
 
 /** A complete text block (block-start + deltas + block-end) as a chunk list. */
@@ -57,6 +75,86 @@ describe("streamText success path", () => {
 	it("returns text even when no explicit finish chunk arrives (defaults to stop)", async () => {
 		const ctx = ctxWith(textBlock("lone text"));
 		await expect(streamText(ctx, BASE_OPTS)).resolves.toBe("lone text");
+	});
+});
+
+describe("selectLowestReasoningEffort", () => {
+	it("omits absent or empty capability metadata", () => {
+		expect(selectLowestReasoningEffort(undefined)).toBeUndefined();
+		expect(selectLowestReasoningEffort(resolvedModelInfo([]))).toBeUndefined();
+	});
+
+	it("ignores provider default and chooses the first declared non-closing level", () => {
+		const info = resolvedModelInfo(["low", "high"]);
+		info.reasoning!.defaultEffort = ReasoningEffortId("high");
+		expect(selectLowestReasoningEffort(info)).toBe(ReasoningEffortId("low"));
+	});
+
+	it("prefers a closing level wherever it appears", () => {
+		expect(selectLowestReasoningEffort(resolvedModelInfo(["high", "none", "low"]))).toBe(ReasoningEffortId("none"));
+	});
+});
+
+describe("streamText reasoning effort", () => {
+	it("prefers a declared closing effort for the exact model", async () => {
+		const requests: GenerateOptions[] = [];
+		const observations: StreamTextObservation[] = [];
+		const ctx = ctxWith(
+			[...textBlock("done"), { type: "finish", reason: { kind: "stop" } }],
+			resolvedModelInfo(["low", "off", "high"]),
+			requests,
+		);
+		await streamText(ctx, { ...BASE_OPTS, onUsage: (value) => observations.push(value) });
+		expect(requests[0]).toMatchObject({ provider: BASE_OPTS.provider, model: BASE_OPTS.model, reasoningEffort: ReasoningEffortId("off") });
+		expect(observations[0]?.reasoningEffort).toBe(ReasoningEffortId("off"));
+	});
+
+	it("uses the first enabled level when the model declares no closing level", async () => {
+		const requests: GenerateOptions[] = [];
+		const ctx = ctxWith(
+			[...textBlock("done"), { type: "finish", reason: { kind: "stop" } }],
+			resolvedModelInfo(["low", "medium", "high"]),
+			requests,
+		);
+		await streamText(ctx, BASE_OPTS);
+		expect(requests[0]?.reasoningEffort).toBe(ReasoningEffortId("low"));
+	});
+
+	it("uses a sole advertised level, including xhigh", async () => {
+		const requests: GenerateOptions[] = [];
+		const ctx = ctxWith(
+			[...textBlock("done"), { type: "finish", reason: { kind: "stop" } }],
+			resolvedModelInfo(["xhigh"]),
+			requests,
+		);
+		await streamText(ctx, BASE_OPTS);
+		expect(requests[0]?.reasoningEffort).toBe(ReasoningEffortId("xhigh"));
+	});
+
+	it("omits reasoningEffort when exact model metadata has no reasoning capability", async () => {
+		const requests: GenerateOptions[] = [];
+		const ctx = ctxWith([...textBlock("done"), { type: "finish", reason: { kind: "stop" } }], resolvedModelInfo(), requests);
+		await streamText(ctx, BASE_OPTS);
+		expect(requests[0]).not.toHaveProperty("reasoningEffort");
+	});
+
+	it("does not stream or retry when capability resolution fails", async () => {
+		let streamCalls = 0;
+		const observations: StreamTextObservation[] = [];
+		const ctx = {
+			llm: {
+				resolveModelInfo: async () => {
+					throw new Error("capability lookup failed");
+				},
+				stream: async function* () {
+					streamCalls += 1;
+					yield* textBlock("unreachable");
+				},
+			},
+		} as unknown as Context;
+		await expect(streamText(ctx, { ...BASE_OPTS, onUsage: (value) => observations.push(value) })).rejects.toThrow("capability lookup failed");
+		expect(streamCalls).toBe(0);
+		expect(observations).toEqual([{ outcome: "error" }]);
 	});
 });
 

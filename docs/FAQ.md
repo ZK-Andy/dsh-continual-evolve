@@ -75,21 +75,23 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 **原因**：命令分词器不懂引号，`"Commit hygiene"` 被按空白拆成 `"Commit` 和 `hygiene"`。
 
 **修复**：shell 风格引号分词（见 #4）。注意帮助文本里的 `<任务文本>` 是占位符——真实使用要写实际内容。
-## 7. 门禁报 `gate error: review gate produced no text`
+## 7. 门禁报 `gate error: review gate produced no text` 或模型拒绝 `reasoningEffort: off`
 
-**症状**：`reviews.jsonl` 里出现 `failed (turn_snapshot): gate error: evolve: review gate produced no text`，但 `maxTokens` 预算充足。
+**症状**：`reviews.jsonl` 里出现 `failed (turn_snapshot): gate error: evolve: review gate produced no text`；或 provider 的精确模型能力校验拒绝 `reasoningEffort: "off"`，例如 `opencode-go-deepseek/space-bunny-free`。
 
-**原因**：DeepSeek 推理模型把输出预算烧在**可见思考**上，最终文本块为零——门禁/规划器拿到的是空 text。prime-agent 源码有同款处理："keep the refinement request non-reasoning so the model uses its output budget for the JSON object"。
+**原因**：共享的直属 LLM 调用过去把 `reasoningEffort` 固定为 `off`。这对支持关闭档的模型能避免可见思考耗尽 JSON 输出预算，但不能代表所有 provider/model 的合法 effort 集合；不同模型的 effort id 也不统一，不能固定改成 `low` 或继承主会话的 `xhigh`。
 
-**修复**：LLM 调用传 `reasoningEffort: ReasoningEffortId("off")`（DeepSeek 适配器支持 `"off"`），并显式处理 `max-tokens` 截断：
+**修复**：[`src/llm-text.ts`](../src/llm-text.ts) 在请求前用精确 provider/model 调用 `ctx.llm.resolveModelInfo()`：若模型公布 `disabled`/`off`/`none` 就选择关闭档，否则选择其公布的第一个 effort；没有 reasoning 元数据时省略字段，让 provider 使用自身默认。`reviewModel` 覆盖时按覆盖后的路由重新解析。能力解析失败会保留为 `error`，不会盲目重试；max-tokens、abort、usage 与审计语义不变。
 
 ```ts
-import { BlockAssembler, createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
-for await (const chunk of ctx.llm.stream({
+const modelInfo = await ctx.llm.resolveModelInfo(provider, model);
+const efforts = modelInfo.reasoning?.efforts ?? [];
+const reasoningEffort = efforts.find(({ id }) => id === "disabled" || id === "off" || id === "none")?.id ?? efforts[0]?.id;
+await ctx.llm.stream({
   provider, model, system, messages,
-  reasoningEffort: ReasoningEffortId("off"),   // ← 关键
+  ...(reasoningEffort ? { reasoningEffort } : {}),
   maxTokens: 8000,
-})) { assembler.push(chunk); }
+});
 ```
 
 ## 8. 验证 system-prompt 注入：子代理摘录 + 会话日志双法；local store 按会话 id 分目录

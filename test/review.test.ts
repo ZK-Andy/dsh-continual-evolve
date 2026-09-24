@@ -3,7 +3,10 @@
  * global-coverage rule in the gate's system prompt.
  */
 import { describe, expect, it } from "vitest";
-import { AUTO_REVIEW_SYSTEM_PROMPT, parseAutoRefineReview, serializeSurface } from "../src/review.js";
+import type { Context } from "@deepseek-ai/cordis";
+import { ReasoningEffortId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { emptyHarnessState } from "../src/types.js";
+import { AUTO_REVIEW_SYSTEM_PROMPT, parseAutoRefineReview, reviewAutoRefine, serializeSurface } from "../src/review.js";
 
 describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
 	it("tells the gate to decline local duplicates of globally covered topics", () => {
@@ -68,6 +71,52 @@ describe("parseAutoRefineReview", () => {
 
 	it("throws on non-object replies", () => {
 		expect(() => parseAutoRefineReview("not json at all")).toThrow();
+	});
+});
+
+describe("reviewAutoRefine model routing", () => {
+	it("resolves reasoning effort from the reviewModel override, not the agent route", async () => {
+		let resolvedRoute: { provider: string; model: string } | undefined;
+		let request: GenerateOptions | undefined;
+		const response = JSON.stringify({ shouldRefine: false, rationale: "one-off" });
+		const ctx = {
+			llm: {
+				resolveModelInfo: async (provider: string, model: string) => {
+					resolvedRoute = { provider, model };
+					return {
+						provider,
+						id: model,
+						name: model,
+						reasoning: { efforts: [{ id: ReasoningEffortId("low"), name: "low" }] },
+					};
+				},
+				stream: async function* (options: GenerateOptions) {
+					request = options;
+					const chunks: StreamChunk[] = [
+						{ type: "block-start", index: 0, blockType: "text" },
+						{ type: "text-delta", index: 0, text: response },
+						{ type: "block-end", index: 0, block: { type: "text", text: response } },
+						{ type: "finish", reason: { kind: "stop" } },
+					];
+					for (const chunk of chunks) yield chunk;
+				},
+			},
+		} as unknown as Context;
+		const agent = { id: "session-review", options: { provider: "main-provider", model: "main-model" } } as never;
+
+		await reviewAutoRefine(ctx, {
+			agent,
+			state: emptyHarnessState(),
+			history: [],
+			context: { reason: "turn_snapshot", turnsSinceLastReview: 1 },
+			trajectory: "user: one-off request",
+			trajectoryEvents: [],
+			overrideProvider: "review-provider",
+			overrideModel: "review-model",
+		});
+
+		expect(resolvedRoute).toEqual({ provider: "review-provider", model: "review-model" });
+		expect(request?.reasoningEffort).toBe(ReasoningEffortId("low"));
 	});
 });
 

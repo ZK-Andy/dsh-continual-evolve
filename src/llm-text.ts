@@ -9,7 +9,14 @@
  * and JSON parsing.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { BlockAssembler, createUserMessage, ReasoningEffortId, type Message, type TokenUsage } from "@deepseek-ai/dsh-llm";
+import {
+	BlockAssembler,
+	createUserMessage,
+	type LlmResolvedModelInfo,
+	type Message,
+	type ReasoningEffortId,
+	type TokenUsage,
+} from "@deepseek-ai/dsh-llm";
 import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 
 /** Terminal outcome of one shared direct LLM call. */
@@ -19,6 +26,8 @@ export type StreamTextOutcome = "success" | "max-tokens" | "error" | "aborted" |
 export interface StreamTextObservation {
 	usage?: TokenUsage;
 	outcome: StreamTextOutcome;
+	/** Exact capability-derived effort used for this call; absent when no metadata was exposed. */
+	reasoningEffort?: ReasoningEffortId;
 }
 
 /** Diagnostic observer invoked before streamText returns or throws. */
@@ -46,11 +55,45 @@ export interface StreamTextOptions {
 	onUsage?: StreamTextUsageObserver;
 }
 
+const CLOSED_REASONING_EFFORTS = new Set(["disabled", "off", "none"]);
+
 /**
- * Stream a single-turn text completion through `ctx.llm`. Forces
- * `reasoningEffort: off` so the model spends its budget on the answer,
- * not visible thinking (reasoning models otherwise produce zero text
- * blocks — the exact failure recorded in FAQ #7).
+ * Select the lowest reasoning effort an exact model advertises.
+ *
+ * A declared closing effort wins even when the adapter lists it after enabled
+ * levels. Otherwise the adapter-preferred first effort is the lowest level it
+ * exposes; no capability list means no caller-supplied effort.
+ *
+ * @param modelInfo - exact resolved-model metadata, when the provider exposes it.
+ * @returns The selected provider-owned effort id, or `undefined` when unknown.
+ */
+export function selectLowestReasoningEffort(modelInfo: Pick<LlmResolvedModelInfo, "reasoning"> | undefined): ReasoningEffortId | undefined {
+	const efforts = modelInfo?.reasoning?.efforts;
+	if (efforts !== undefined && !Array.isArray(efforts)) {
+		throw new Error("evolve: invalid model reasoning metadata");
+	}
+	if (!efforts || efforts.length === 0) return undefined;
+	for (const effort of efforts) {
+		if (typeof effort?.id !== "string") {
+			throw new Error("evolve: invalid model reasoning metadata");
+		}
+		if (CLOSED_REASONING_EFFORTS.has(effort.id)) return effort.id;
+	}
+	return efforts[0]?.id;
+}
+
+async function resolveReasoningEffort(ctx: Context, opts: StreamTextOptions): Promise<ReasoningEffortId | undefined> {
+	// The current DSH host exposes this method. Keep a capability-less test or
+	// older host usable by treating the absent query as unknown metadata.
+	if (typeof ctx.llm.resolveModelInfo !== "function") return undefined;
+	const modelInfo = await ctx.llm.resolveModelInfo(opts.provider, opts.model);
+	return selectLowestReasoningEffort(modelInfo);
+}
+
+/**
+ * Stream a single-turn text completion through `ctx.llm`. The request uses the
+ * exact provider/model's lowest advertised reasoning effort, omitting the field
+ * when the model exposes no reasoning metadata.
  *
  * @returns The concatenated text blocks from the response.
  * @throws On provider error, abort, max-token truncation, or empty output.
@@ -58,7 +101,9 @@ export interface StreamTextOptions {
 export async function streamText(ctx: Context, opts: StreamTextOptions): Promise<string> {
 	const assembler = new BlockAssembler();
 	let outcome: StreamTextOutcome = "error";
+	let reasoningEffort: ReasoningEffortId | undefined;
 	try {
+		reasoningEffort = await resolveReasoningEffort(ctx, opts);
 		for await (const chunk of ctx.llm.stream({
 			provider: opts.provider,
 			model: opts.model,
@@ -70,7 +115,7 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 					source: EVOLVE_MESSAGE_SOURCE,
 				}),
 			],
-			reasoningEffort: ReasoningEffortId("off"),
+			...(reasoningEffort === undefined ? {} : { reasoningEffort }),
 			maxTokens: opts.maxTokens ?? 8000,
 			...(opts.signal ? { signal: opts.signal } : {}),
 		})) {
@@ -102,7 +147,11 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 		return text;
 	} finally {
 		try {
-			opts.onUsage?.({ ...(assembler.usage ? { usage: assembler.usage } : {}), outcome });
+			opts.onUsage?.({
+				...(assembler.usage ? { usage: assembler.usage } : {}),
+				outcome,
+				...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+			});
 		} catch {
 			// Usage observation is diagnostic; its failure must not alter the model call.
 		}
