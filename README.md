@@ -62,7 +62,7 @@ Commands (in-session):
 | `/evolve goal [objective · done · block]` | round-driven auto-review goal |
 | `/evolve benchmark …` | case lifecycle, runs, acceptance |
 
-Model tools: `evolve_list / add / update / delete / rollback`.
+Model tools: `evolve_list / add / update / delete / rollback` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval).
 
 For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
 
@@ -94,6 +94,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `reviewModel` | agent's own | optional cheaper model for the gate (`"provider/model"`) |
 | `plannerPrefixCache` | `auto` | Route A session-prefix input when cache evidence exists (`session` always, `off` legacy flat text) |
 | `plannerPrefixMaxChars` | `12000` | session-prefix budget for Route A planning inputs (chars) |
+| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500}` | storage hygiene: snapshots kept per store, tail lines per store history, tail lines of the shared `reviews.jsonl` audit trail |
 
 Example profile patch:
 
@@ -108,7 +109,7 @@ Example profile patch:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (600 tests)
+pnpm test                    # vitest (635 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```

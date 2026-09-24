@@ -32,6 +32,7 @@ import { mergeHarnessStates } from "./state.js";
 import { projectKeyOf } from "./project.js";
 import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
+import { DEFAULT_REVIEWS_RETAIN, pruneJsonlFile } from "./store.js";
 import { captureAutoCase } from "./autocase.js";
 import type { PromotionPolicy } from "./promotion.js";
 import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
@@ -90,6 +91,12 @@ export interface AutoReviewConfig {
 	autoCase: boolean;
 	/** Resolved rubric key for the capture's encrypted scaffold rubric. */
 	rubricKey?: Buffer;
+	/**
+	 * Storage hygiene (#20): tail lines kept in the shared reviews.jsonl
+	 * audit trail. Absent → the store default (readers need a recent
+	 * window, not the full past).
+	 */
+	reviewsRetain?: number;
 }
 
 export interface GateState {
@@ -142,6 +149,13 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 			appendFileSync(reviewsPath, `${JSON.stringify({ ...entry, timestamp: new Date().toISOString() })}\n`, "utf8");
 		} catch (cause) {
 			logger.warn(`failed to record auto-review: ${cause instanceof Error ? cause.message : String(cause)}`);
+			return;
+		}
+		// Storage hygiene (#20): bound the audit trail at write time.
+		try {
+			pruneJsonlFile(reviewsPath, config.reviewsRetain ?? DEFAULT_REVIEWS_RETAIN);
+		} catch {
+			// ignored — the next record retries
 		}
 	};
 
@@ -202,6 +216,11 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		);
 	} catch (cause) {
 		logger.warn(`failed to write armed marker: ${cause instanceof Error ? cause.message : String(cause)}`);
+	}
+	try {
+		pruneJsonlFile(reviewsPath, config.reviewsRetain ?? DEFAULT_REVIEWS_RETAIN);
+	} catch {
+		// ignored — the next record retries
 	}
 
 	ctx.on("session/event", (session: { id: string }, event: { type: string }) => {
@@ -472,7 +491,7 @@ async function runReviewPhase(
 	);
 	record({ sessionId, reason, turnsSinceLastReview, outcome: "approved", rationale: review.rationale, refinementId: result.id });
 	// Gap C4: emit structured evolve_complete event for third-party consumers.
-	emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, `auto_review:${reason}`, sessionId));
+	emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, `auto_review:${reason}`, sessionId), config.reviewsRetain ?? DEFAULT_REVIEWS_RETAIN);
 	// Visibility: tell the user what the gate just persisted. Only the
 	// turn-interval path notifies — a compaction-triggered gate must not wake
 	// the agent mid-compaction — and only when something was actually applied

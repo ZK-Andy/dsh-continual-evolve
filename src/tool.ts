@@ -15,6 +15,7 @@ import { CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry } from "./pr
 import { entrySourceOf } from "./source.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
+import { DEFAULT_REVIEWS_RETAIN } from "./store.js";
 
 const SCOPES: HarnessScope[] = ["local", "project", "global"];
 
@@ -35,6 +36,30 @@ export function scopeOf(value: unknown, fallback: HarnessScope): HarnessScope {
 /** The calling agent's session id; tools always run inside an agent scope. */
 function sessionIdOf(exec: ToolRunContext): string | undefined {
 	return exec.agent?.id;
+}
+
+/**
+ * Collect the target ids for an evolve_delete call: legacy single `id`
+ * plus the batch `ids` array, de-duplicated in first-seen order. Throws
+ * loudly when neither carries an id — a silent no-op delete would look
+ * like success while deleting nothing.
+ *
+ * @throws when both `id` and `ids` are absent or empty.
+ */
+export function collectDeleteIds(id: unknown, ids: unknown): string[] {
+	const collected: string[] = [];
+	if (typeof id === "string" && id.length > 0) collected.push(id);
+	if (Array.isArray(ids)) {
+		for (const item of ids) {
+			if (typeof item === "string" && item.length > 0 && !collected.includes(item)) {
+				collected.push(item);
+			}
+		}
+	}
+	if (collected.length === 0) {
+		throw new Error("evolve_delete requires id or a non-empty ids array");
+	}
+	return collected;
 }
 
 /**
@@ -202,10 +227,16 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 	ctx.tools.register(
 		defineTool({
 			name: "evolve_delete",
-			description: "Delete one harness entry by id.",
+			description:
+				"Delete harness entries by id. Pass `id` for one entry or `ids` for several — a batch lands as one refinement behind one approval. Literal ids win: entries whose stored id itself carries a scope-like prefix (e.g. a legacy `local:…` id) are addressed verbatim.",
 			parameters: {
 				kind: { type: "string", enum: ["prompt", "memory", "skill", "subagent"], required: true },
-				id: { type: "string", required: true },
+				id: { type: "string", description: "Existing entry id (single delete; combine with ids or use ids for a batch)." },
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					description: "Existing entry ids for one batch delete (one refinement, one approval).",
+				},
 				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
 				global: { type: "boolean", description: "Set true to edit the cross-session store (requires human approval)." },
 			},
@@ -216,11 +247,17 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 			execute: async (args, exec) => {
 				const scope = scopeOf(args.scope ?? args.global, "local");
 				const storeId = storeIdFor(scope, exec);
+				const ids = collectDeleteIds(args.id, args.ids);
 				if (needsApproval(scope) && opts.requireGlobalApproval) {
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_delete ${args.kind}:${args.id} → ${storeLabel(scope)}`);
+					await requireGlobalApproval(
+						ctx,
+						exec.agent,
+						exec.signal,
+						`evolve_delete ${args.kind}:${ids.length > 1 ? `${ids.length} entries (${ids.join(", ")})` : ids[0]} → ${storeLabel(scope)}`,
+					);
 				}
-				const edit: RefinementEdit = { action: "delete", kind: args.kind as RefinementKind, id: args.id };
-				return textResult(applyEditsText(engine, scope, storeId, [edit], exec.agent, sessionIdOf(exec)));
+				const edits: RefinementEdit[] = ids.map((id) => ({ action: "delete", kind: args.kind as RefinementKind, id }));
+				return textResult(applyEditsText(engine, scope, storeId, edits, exec.agent, sessionIdOf(exec)));
 			},
 		}),
 	);
@@ -279,7 +316,7 @@ function applyEditsText(
 	// The event keys on the live session (not the project store key).
 	const eventSession = eventSessionId ?? storeId;
 	if (applied.length > 0 && eventSession) {
-		emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, "manual_tool", eventSession));
+		emitEvolveComplete(engine.baseDir, buildEvolveCompleteEvent(result, "manual_tool", eventSession), engine.retention?.reviews ?? DEFAULT_REVIEWS_RETAIN);
 	}
 	const lines = [`refinement ${result.id}: ${applied.length} applied, ${failed.length} failed`];
 	for (const e of applied) {

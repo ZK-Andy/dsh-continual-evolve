@@ -62,7 +62,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve goal [objective · done · block]` | 回合驱动的自进化目标 |
 | `/evolve benchmark …` | 用例生命周期、运行、接受决策 |
 
-模型工具：`evolve_list / add / update / delete / rollback`。
+模型工具：`evolve_list / add / update / delete / rollback`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批）。
 
 第三方消费：每次进化落地（门禁或手动）都会向 `reviews.jsonl` 追加结构化 `evolve_complete` 事件（shape 见 `src/evolve-event.ts`），与人类可读的审计记录并存。
 
@@ -94,6 +94,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `reviewModel` | agent 自身 | 门禁可选更便宜的模型（`"provider/model"`） |
 | `plannerPrefixCache` | `auto` | 有缓存证据时用会话前缀输入（`session` 总是前缀，`off` 保持旧扁平文本） |
 | `plannerPrefixMaxChars` | `12000` | Route A 会话前缀预算（字符） |
+| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500}` | 存储卫生：每 store 保留的快照数、每 store 历史尾行数、共享 `reviews.jsonl` 审计尾行数 |
 
 profile patch 示例：
 
@@ -108,7 +109,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（600 例）
+pnpm test                    # vitest（635 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

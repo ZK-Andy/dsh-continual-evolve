@@ -107,6 +107,18 @@ export const Config = z.object({
 	promotionMinChars: z.natural().default(100),
 	/** Entry-directory lines injected per build before folding into a counter. */
 	injectionDirectoryLines: z.natural().default(15),
+	/**
+	 * Storage hygiene (#20): how much append-only past each write keeps.
+	 * `snapshots` = full-state copies per store, `refinements` = tail lines
+	 * per store history, `reviews` = tail lines of the shared audit trail.
+	 * Absent fields fall back to the store defaults (20 / 500 / 500) —
+	 * rollback needs recent snapshots, readers need a recent window.
+	 */
+	historyRetain: z.object({
+		snapshots: z.natural(),
+		refinements: z.natural(),
+		reviews: z.natural(),
+	}),
 });
 
 /**
@@ -136,7 +148,9 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 					.warn(`skill materialization failed for ${result.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
 			}
 		},
-	});
+	},
+	config.historyRetain ? { historyRetain: { ...config.historyRetain } } : {},
+	);
 
 	ctx.provide(EVOLUTION_SERVICE, { engine, baseDir });
 
@@ -197,6 +211,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 			promotionPolicy,
 			autoCase: config.autoCase ?? true,
 			rubricKey,
+			...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
 			...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
 			...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
 			...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),

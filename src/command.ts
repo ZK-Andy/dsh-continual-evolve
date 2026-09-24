@@ -13,7 +13,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { requireGlobalApproval } from "./approval.js";
 import { saveHarnessState } from "./state.js";
-import { appendResult, storePaths } from "./store.js";
+import { appendResult, pruneJsonlFile, storePaths } from "./store.js";
+import { DEFAULT_REFINEMENTS_RETAIN } from "./store.js";
 import { entrySourceOf } from "./source.js";
 import { filterLogBySession, formatLogLine, pluginLogFilePath } from "./logfile.js";
 import { collectFailureSummary, formatFailureSummary } from "./failures.js";
@@ -369,6 +370,13 @@ async function executeEvolveCommand(
 						if (isResultRecord(result)) {
 							appendResult(paths, result);
 						}
+					}
+					// Storage hygiene (#20): an imported history obeys the
+					// same tail budget as a live one.
+					try {
+						pruneJsonlFile(paths.resultsPath, engine.retention?.refinements ?? DEFAULT_REFINEMENTS_RETAIN);
+					} catch {
+						// ignored — the next apply retries
 					}
 				}
 				return success(`imported ${scope} store from ${path}`);

@@ -42,15 +42,24 @@ export function applyRefinementProposal(
 
 	for (const edit of proposal.edits) {
 		// Store-prefix hygiene: planner edits are written against the MERGED
-		// view, where colliding local ids carry a `local:` / `global:` prefix.
-		// A CREATE must never bake that view prefix into a permanent id
-		// (observed: global entries literally named "local:handoff_todo_…").
-		// Updates/deletes keep the raw id — they address existing entries.
-		// (Review audit 2026-08-28 S7: planner update/delete edits against
-		// the merged view carry the same prefix — strip it there too, they
-		// address the same underlying entry.)
-		const prefixlessId = edit.id?.replace(/^(?:local|global):/, "");
-		const requestedId = edit.action === "create" ? prefixlessId : edit.id && prefixlessId;
+		// view, where colliding project/local ids carry a `project:` /
+		// `local:` / `global:` prefix. A CREATE must never bake that view
+		// prefix into a permanent id (observed: global entries literally
+		// named "local:handoff_todo_…").
+		// Non-create edits address existing entries: the literal id wins —
+		// legacy stores contain entries whose literal id carries a colon
+		// prefix, and stripping unconditionally would resolve them to a
+		// sibling that does not exist ("entry not found", forcing file-level
+		// surgery). Only when the literal id is absent does the stripped
+		// form serve as the merged-view fallback.
+		// (Review audit 2026-08-28 S7 origin; literal-first fix 2026-09-24.)
+		const strippedId = edit.id?.replace(/^(?:local|project|global):/, "");
+		const requestedId =
+			edit.action === "create"
+				? strippedId
+				: edit.id !== undefined && state.entries[edit.kind]?.[edit.id] !== undefined
+					? edit.id
+					: edit.id && strippedId;
 		const computedId = requestedId ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
 		const id = computedId ?? "";
 		// Unknown kinds fail per-edit — a malformed proposal must never crash

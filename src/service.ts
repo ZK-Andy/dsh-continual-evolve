@@ -9,7 +9,8 @@ import { applyRefinementProposal } from "./apply.js";
 import { randomUUID } from "node:crypto";
 import { rollbackProposal } from "./rollback.js";
 import { loadHarnessState, saveHarnessState } from "./state.js";
-import { appendResult, loadResults, snapshotBefore, storePaths } from "./store.js";
+import { appendResult, loadResults, pruneJsonlFile, pruneSnapshots, resolveHistoryRetention, snapshotBefore, storePaths } from "./store.js";
+import type { HistoryRetention } from "./store.js";
 import { CONFLICT_BLOCK_SCORE, CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry, secretLeakReason, type SimilarEntryHit } from "./promotion.js";
 
 export interface ApplyContext {
@@ -28,7 +29,17 @@ export interface EvolutionHooks {
 	onApplied?: (result: RefinementResult) => void;
 }
 
-export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {}) {
+export interface EvolutionEngineOptions {
+	/**
+	 * Storage-hygiene retention (#20): how many snapshots / JSONL tail
+	 * lines each apply keeps. Resolved with generous defaults — rollback
+	 * only needs recent snapshots and readers need a working window.
+	 */
+	historyRetain?: Partial<HistoryRetention>;
+}
+
+export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {}, opts: EvolutionEngineOptions = {}) {
+	const retention = resolveHistoryRetention(opts.historyRetain);
 	/**
 	 * Load a scope's state. For `project` the `sessionId` parameter carries
 	 * the project key (see `resolveProjectKey` in project.ts); callers
@@ -120,6 +131,19 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		}
 		saveHarnessState(paths.stateDir, state);
 		appendResult(paths, result);
+		// Storage hygiene (#20): bound the append-only past at write time —
+		// snapshots keep the newest N, the per-store history keeps its tail.
+		// Best-effort (never throws): a prune failure must not fail the apply.
+		try {
+			pruneSnapshots(paths.snapshotsDir, retention.snapshots);
+		} catch {
+			// ignored — the next apply retries
+		}
+		try {
+			pruneJsonlFile(paths.resultsPath, retention.refinements);
+		} catch {
+			// ignored — the next apply retries
+		}
 		hooks.onApplied?.(result);
 		return result;
 	}
@@ -142,7 +166,7 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		return loadResults(storePaths(baseDir, scope, sessionId));
 	}
 
-	return { load, apply, rollback, history, baseDir };
+	return { load, apply, rollback, history, baseDir, retention };
 }
 
 export type EvolutionEngine = ReturnType<typeof createEvolutionEngine>;

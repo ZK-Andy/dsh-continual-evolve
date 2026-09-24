@@ -579,3 +579,92 @@ describe("skill update/rollback policy (review B3/B4)", () => {
 		}
 	});
 });
+
+describe("non-create id literal-first resolution (#19, 2026-09-24)", () => {
+	function seedLiteral(dir: string, id: string): void {
+		const engine = createEvolutionEngine(dir);
+		const state = engine.load("global", undefined);
+		state.entries.memory[id] = {
+			id,
+			kind: "memory",
+			title: "legacy colon entry",
+			content: PREFIX_BODY,
+			path: "general",
+			scope: "global",
+			reference: {},
+			arguments: {},
+			metadata: { memoryType: "reference" },
+			source: "evolve",
+			created_at: "2026-01-01T00:00:00.000Z",
+			updated_at: "2026-01-01T00:00:00.000Z",
+			version: 1,
+		};
+		saveHarnessState(join(dir, "evolve", "global"), state);
+	}
+
+	it("deletes a legacy literal local:-prefixed id verbatim instead of reporting entry not found", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-literal-"));
+		try {
+			seedLiteral(dir, "local:legacy_note");
+			const engine = createEvolutionEngine(dir);
+			const result = engine.apply("global", undefined, {
+				summary: "delete legacy colon id",
+				rationale: "regression: literal local: ids were stripped to a nonexistent sibling",
+				expectedOutcome: "legacy entry deleted",
+				edits: [{ action: "delete", kind: "memory", id: "local:legacy_note" }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+			expect(engine.load("global").entries.memory["local:legacy_note"]).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("prefers the literal id when both the literal and the stripped sibling exist", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-literal-both-"));
+		try {
+			seedLiteral(dir, "local:note");
+			const engine = createEvolutionEngine(dir);
+			engine.apply("global", undefined, {
+				summary: "seed stripped sibling",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", id: "note", title: "sibling", content: "A deliberately unrelated durable fact about release trains. Why: keeps the seed distinct. How to apply: board the release train.", metadata: { memoryType: "feedback" } }],
+			}, { scope: "global" });
+			const result = engine.apply("global", undefined, {
+				summary: "delete literal",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "delete", kind: "memory", id: "local:note" }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+			expect(engine.load("global").entries.memory["local:note"]).toBeUndefined();
+			expect(engine.load("global").entries.memory["note"]?.title).toBe("sibling");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to the stripped id for merged-view project:-prefixed updates", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-literal-project-"));
+		try {
+			const engine = createEvolutionEngine(dir);
+			engine.apply("global", undefined, {
+				summary: "seed",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", id: "proj_note", title: "t", content: PREFIX_BODY, metadata: { memoryType: "reference" } }],
+			}, { scope: "global" });
+			const result = engine.apply("global", undefined, {
+				summary: "merged-view project update",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "update", kind: "memory", id: "project:proj_note", title: "updated", content: PREFIX_BODY }],
+			}, { scope: "global" });
+			expect(result.appliedEdits[0]?.applied).toBe(true);
+			expect(engine.load("global").entries.memory["proj_note"]?.title).toBe("updated");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

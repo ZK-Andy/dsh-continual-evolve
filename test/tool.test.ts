@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Context } from "@deepseek-ai/cordis";
-import { registerEvolveTools, scopeOf } from "../src/tool.js";
+import { registerEvolveTools, collectDeleteIds, scopeOf } from "../src/tool.js";
 import { createEvolutionEngine } from "../src/service.js";
 
 describe("scopeOf", () => {
@@ -211,6 +211,80 @@ describe("evolve_update / evolve_delete", () => {
 		} finally {
 			rmSync(harness.dir, { recursive: true, force: true });
 		}
+	});
+
+	it("deletes several entries in one batch as one refinement (ids array)", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await addMemory(harness, "batch one");
+			await addMemory(harness, "batch two");
+			await addMemory(harness, "batch three");
+			const result = await harness.byName("evolve_delete").execute({ kind: "memory", ids: ["batch_one", "batch_two", "batch_three"] }, agentExec);
+			expect(result.text).toMatch(/refinement \S+: 3 applied, 0 failed/);
+			expect(Object.keys(harness.engine.load("local", "session-tool").entries.memory)).toHaveLength(0);
+			// One refinement for the whole batch — the audit history grows by one, not three.
+			expect(harness.engine.history("local", "session-tool")).toHaveLength(4);
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("combines id and ids and reports per-edit failures inside a batch", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await addMemory(harness, "batch keeper");
+			const result = await harness
+				.byName("evolve_delete")
+				.execute({ kind: "memory", id: "batch_keeper", ids: ["batch_keeper", "ghost"] }, agentExec);
+			expect(result.text).toContain("1 applied, 1 failed");
+			expect(result.text).toContain("- failed delete memory:ghost");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("asks once for a global batch delete (one approval, one refinement)", async () => {
+		let approvals = 0;
+		const dir = mkdtempSync(join(tmpdir(), "evolve-tool-batch-"));
+		const engine = createEvolutionEngine(dir);
+		const registered: RegisteredTool[] = [];
+		const ctx = {
+			tools: { register: (tool: unknown) => registered.push(tool as RegisteredTool) },
+			userQuestions: {
+				ask: async () => {
+					approvals += 1;
+					return { answers: [{ id: "approve-global-evolve", selected: ["批准"] }] };
+				},
+			},
+		} as unknown as Context;
+		registerEvolveTools(ctx, engine, { requireGlobalApproval: true });
+		try {
+			const byName = (name: string) => registered.find((t) => t.name === name) as RegisteredTool;
+			await byName("evolve_add").execute({ kind: "memory", title: "global batch alpha", content: "First durable cross-session fact about deploy freezes.", memoryType: "reference", global: true }, agentExec);
+			await byName("evolve_add").execute({ kind: "memory", title: "global batch beta", content: "Second durable cross-session fact about on-call rotations.", memoryType: "reference", global: true }, agentExec);
+			const before = approvals;
+			const result = await byName("evolve_delete").execute({ kind: "memory", ids: ["global_batch_alpha", "global_batch_beta"], global: true }, agentExec);
+			expect(result.text).toContain("2 applied, 0 failed");
+			expect(approvals - before).toBe(1);
+			expect(Object.keys(engine.load("global").entries.memory)).toHaveLength(0);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("collectDeleteIds (#19)", () => {
+	it("accepts a lone id for backward compatibility", () => {
+		expect(collectDeleteIds("a", undefined)).toEqual(["a"]);
+	});
+
+	it("merges id and ids, de-duplicated in first-seen order", () => {
+		expect(collectDeleteIds("a", ["a", "b", "", 42, "c"])).toEqual(["a", "b", "c"]);
+	});
+
+	it("throws loudly when no id is given (never a silent no-op)", () => {
+		expect(() => collectDeleteIds(undefined, undefined)).toThrow(/requires id or a non-empty ids array/);
+		expect(() => collectDeleteIds("", [])).toThrow(/requires id or a non-empty ids array/);
 	});
 });
 

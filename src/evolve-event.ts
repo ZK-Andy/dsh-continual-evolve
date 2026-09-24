@@ -12,6 +12,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { RefinementResult } from "./types.js";
+import { DEFAULT_REVIEWS_RETAIN, pruneJsonlFile, reviewsPath } from "./store.js";
 
 /** The structured event payload emitted after every successful refinement. */
 export interface EvolveCompleteEvent {
@@ -65,14 +66,22 @@ export function buildEvolveCompleteEvent(
 /**
  * Emit an evolve_complete event to the reviews.jsonl audit trail. The event
  * is JSONL-formatted (one line) so consumers can tail and parse it. This is
- * a best-effort write — failure never blocks the refinement path.
+ * a best-effort write — failure never blocks the refinement path. Storage
+ * hygiene (#20): the trail is truncated to its tail after the append so the
+ * audit file cannot grow without bound; readers only need a recent window.
  */
-export function emitEvolveComplete(baseDir: string, event: EvolveCompleteEvent): void {
+export function emitEvolveComplete(baseDir: string, event: EvolveCompleteEvent, reviewsRetain: number = DEFAULT_REVIEWS_RETAIN): void {
 	try {
 		const dir = join(baseDir, "evolve");
 		mkdirSync(dir, { recursive: true });
 		appendFileSync(join(dir, "reviews.jsonl"), `${JSON.stringify(event)}\n`, "utf8");
 	} catch {
 		// Event emission is diagnostic; never interrupt the refinement path.
+		return;
+	}
+	try {
+		pruneJsonlFile(reviewsPath(baseDir), reviewsRetain);
+	} catch {
+		// ignored — the next emission retries
 	}
 }
