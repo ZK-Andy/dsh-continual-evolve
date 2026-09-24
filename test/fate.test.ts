@@ -72,6 +72,9 @@ function candidateOf(entry: HarnessEntry, coveredGlobally = false): WrapupCandid
 function gateWith(overrides: Partial<GateState> = {}): GateState {
 	return {
 		turns: 6,
+		completedTurn: 6,
+		lastSnapshotTurn: 6,
+		memoryDecisions: {},
 		lastReviewAt: 0,
 		running: false,
 		skillRejects: new Map(),

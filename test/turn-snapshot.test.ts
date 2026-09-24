@@ -4,6 +4,7 @@ import {
 	containsDirectMemoryWrite,
 	evaluateSnapshotEligibility,
 	isInternalAgent,
+	sliceTurnSnapshot,
 } from "../src/turn-snapshot.js";
 import type { Context } from "@deepseek-ai/cordis";
 
@@ -81,5 +82,38 @@ describe("captureTurnSnapshot", () => {
 			maxChars: 2000,
 		});
 		expect(snapshot.cursor).toBe("index:2");
+	});
+
+	it("slices a full retry snapshot to only evidence after a phase checkpoint", async () => {
+		const full = await captureTurnSnapshot(ctxWithEvents([
+			user(1, "第一条已由 memory agent 处理"),
+			assistant(2, "收到"),
+			user(3, "第二条在 review 失败后新增"),
+		]), agent, { turn: 2, reason: "turn_snapshot", maxChars: 2000 });
+		const sliced = sliceTurnSnapshot(full, "seq:2");
+		expect(sliced.cursor).toBe("seq:3");
+		expect(sliced.events).toEqual([user(3, "第二条在 review 失败后新增")]);
+		expect(sliced.trajectory).toBe("user: 第二条在 review 失败后新增");
+	});
+
+	it("does not double-slice a no-sequence snapshot captured after the shared index cursor", async () => {
+		const noSeqUser = (text: string): Record<string, unknown> => ({
+			type: "user/message",
+			data: { content: [{ type: "text", text }], source: { kind: "user" } },
+		});
+		const first = await captureTurnSnapshot(ctxWithEvents([noSeqUser("第一条无 seq 约定")]), agent, {
+			turn: 1,
+			reason: "turn_snapshot",
+			maxChars: 2000,
+		});
+		const second = await captureTurnSnapshot(ctxWithEvents([noSeqUser("第一条无 seq 约定"), noSeqUser("第二条无 seq 新证据")]), agent, {
+			turn: 2,
+			reason: "turn_snapshot",
+			cursor: first.cursor,
+			maxChars: 2000,
+		});
+		const sliced = sliceTurnSnapshot(second, first.cursor);
+		expect(sliced.events).toEqual([noSeqUser("第二条无 seq 新证据")]);
+		expect(sliced.trajectory).toBe("user: 第二条无 seq 新证据");
 	});
 });

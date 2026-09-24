@@ -13,6 +13,19 @@ import { appendResult, loadResults, pruneJsonlFile, pruneSnapshots, resolveHisto
 import type { HistoryRetention } from "./store.js";
 import { CONFLICT_BLOCK_SCORE, CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry, secretLeakReason, type SimilarEntryHit } from "./promotion.js";
 
+/** A post-commit apply failure that still carries the durable applied result. */
+export class EvolutionApplyPostCommitError extends Error {
+	constructor(
+		message: string,
+		readonly result: RefinementResult,
+		readonly scope: HarnessScope,
+		readonly storeId: string | undefined,
+		override readonly cause: unknown,
+	) {
+		super(message);
+	}
+}
+
 export interface ApplyContext {
 	scope: HarnessScope;
 	sessionId?: string;
@@ -60,27 +73,29 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		// 2026-08-28 B1: the two roles were previously folded into one object,
 		// which made the advertised guard unreachable).
 		const state = load(scope, sessionId);
-		// Write-time conflict guard (R2): global creates are checked against
-		// the existing same-kind entries BEFORE any side effect — a
-		// near-duplicate is rejected with an actionable error (evolve_update
-		// instead), a moderate overlap proceeds stamped with
+		// Write-time conflict guard (R2): persistent-scope creates are
+		// checked against the existing same-kind entries BEFORE any side
+		// effect — a near-duplicate is rejected with an actionable error
+		// (evolve_update instead), a moderate overlap proceeds stamped with
 		// CONFLICT_HINT_KEY. Rollbacks bypass the guard: re-creating an entry
 		// that resembles its successor is the point of rollback. Local scope
 		// is never blocked (scratch space); the wrapup/fate promotion path
 		// already enforces its own overlap policy there.
 		//
-		// Secret-leak guard (P0, same throat): global creates AND updates are
-		// screened for credential-shaped literals before any side effect — a
-		// secret reaching the cross-session store is a leak even when the
-		// entry itself is legitimate. The screen covers every field the edit
-		// can plant: title, content, and the JSON forms of reference,
-		// arguments, and metadata (mount embeds reference verbatim into the
-		// generated plugin file). Fixed patterns, not policy-configurable.
+		// Secret-leak guard (P0, same throat): every persistent-scope create
+		// and update is screened before any side effect. Project and global
+		// stores both outlive the current session, so approval never turns a
+		// credential-shaped literal into an allowed write. The screen covers
+		// every field the edit can plant: title, content, and the JSON forms
+		// of reference, arguments, and metadata. Fixed patterns, not policy-
+		// configurable.
 		const warnHits = new Map<number, SimilarEntryHit>();
-		if (scope === "global" && !context?.rollbackOf) {
+		if ((scope === "project" || scope === "global") && !context?.rollbackOf) {
 			for (const [index, edit] of proposal.edits.entries()) {
 				if (edit.action === "create" || edit.action === "update") {
 					const screenable = [
+						typeof edit.id === "string" ? edit.id : "",
+						typeof edit.path === "string" ? edit.path : "",
 						typeof edit.title === "string" ? edit.title : "",
 						typeof edit.content === "string" ? edit.content : "",
 						edit.reference !== undefined ? JSON.stringify(edit.reference) : "",
@@ -130,7 +145,17 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 			}
 		}
 		saveHarnessState(paths.stateDir, state);
-		appendResult(paths, result);
+		try {
+			appendResult(paths, result);
+		} catch (cause) {
+			throw new EvolutionApplyPostCommitError(
+				`Refinement ${result.id} persisted state but failed to append history: ${cause instanceof Error ? cause.message : String(cause)}`,
+				result,
+				scope,
+				sessionId,
+				cause,
+			);
+		}
 		// Storage hygiene (#20): bound the append-only past at write time —
 		// snapshots keep the newest N, the per-store history keeps its tail.
 		// Best-effort (never throws): a prune failure must not fail the apply.
@@ -144,8 +169,23 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		} catch {
 			// ignored — the next apply retries
 		}
-		hooks.onApplied?.(result);
+		try {
+			hooks.onApplied?.(result);
+		} catch (cause) {
+			throw new EvolutionApplyPostCommitError(
+				`Refinement ${result.id} persisted state but a post-commit hook failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+				result,
+				scope,
+				sessionId,
+				cause,
+			);
+		}
 		return result;
+	}
+
+	/** Roll back an already-observed result without consulting history. */
+	function rollbackResult(scope: HarnessScope, sessionId: string | undefined, target: RefinementResult): RefinementResult {
+		return apply(scope, sessionId, rollbackProposal(target), { scope, rollbackOf: target.id });
 	}
 
 	function rollback(scope: HarnessScope, sessionId: string | undefined, refinementId: string): RefinementResult {
@@ -155,18 +195,14 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		if (!target) {
 			throw new Error(`Refinement ${refinementId} not found in ${scope} history`);
 		}
-		const proposal = rollbackProposal(target);
-		// The rollback refinement carries rollbackOf so the audit chain links
-		// the inverse operation back to its origin (previously the rollback
-		// record only echoed "Rollback refinement <id>" in its summary text).
-		return apply(scope, sessionId, proposal, { scope, rollbackOf: refinementId });
+		return rollbackResult(scope, sessionId, target);
 	}
 
 	function history(scope: HarnessScope, sessionId: string | undefined): RefinementResult[] {
 		return loadResults(storePaths(baseDir, scope, sessionId));
 	}
 
-	return { load, apply, rollback, history, baseDir, retention };
+	return { load, apply, rollback, rollbackResult, history, baseDir, retention };
 }
 
 export type EvolutionEngine = ReturnType<typeof createEvolutionEngine>;

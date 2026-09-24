@@ -131,6 +131,15 @@ describe("token-usage aggregation and report", () => {
 		expect(report).toContain("host benchmark subagents");
 	});
 
+	it("reports the dedicated memory phase in totals and scope", () => {
+		const report = renderTokenUsageReport({
+			records: [record({ phase: "memory", usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 }, totalSource: "provider" })],
+			corruptLines: 0,
+		}, 10).join("\n");
+		expect(report).toContain("memory  1 calls · 5 tokens");
+		expect(report).toContain("review/memory/planner/wrapup/fate only");
+	});
+
 	it("reports an empty retained window with explicit scope", () => {
 		const report = renderTokenUsageReport({ records: [], corruptLines: 0 }, 50).join("\n");
 		expect(report).toContain("no valid calls in the retained tail");

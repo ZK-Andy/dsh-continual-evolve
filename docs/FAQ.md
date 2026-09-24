@@ -64,10 +64,11 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 
 **原因**：
 1. `autoReview` 现在只是没有 `evolve/runtime.json` 时的初始默认，运行时开关是 v2 `{enabled, paused}`。旧版把静态配置同时当作注册开关，导致默认关闭安装无法通过 `/evolve resume` 开启。
-2. 自动 review 的正常触发不再是固定 `reviewIntervalTurns`。`agent/turn-stopping` 记录成功回合边界，`agent/status=idle` 捕获增量 snapshot；eligibility 会把空增量、内部 agent、直接 evolve memory mutation、synthetic/model-only 或过短用户文本记录为 `skipped`。
-3. 每个 session 的 scheduler 串行运行；运行中的新 snapshot 只保留最新 pending，失败/abort 不推进 cursor，下一份 snapshot 才能重试。
+2. 自动管线的正常触发不再是固定 `reviewIntervalTurns`。`agent/turn-stopping` 记录成功回合边界，`agent/status=idle` 捕获增量 snapshot；eligibility 会把空增量、内部 agent、直接 evolve memory mutation、synthetic/model-only 或过短用户文本记录为 `skipped`，不调用模型。
+3. eligible snapshot 先进入专用 memory loop：最多 5 个内部 turn，只能使用冻结 manifest 的 `memory_search` 与结构化 `memory_propose`；成功/no-op 后才进入通用 review/planner，且通用 planner 的 memory 编辑会被机械剥离。
+4. 每个 session 的 scheduler 串行运行；运行中的新 snapshot 只保留最新 pending，任一 phase 失败/abort 都不推进共享 cursor，下一份 snapshot 从原边界重试。
 
-**修复与观察**：用 `/evolve status` 区分“listener 已注册但 runtime off/paused”和“确实没有成功回合”；用 `/evolve resume` 即时开启，不需要改 profile 或重启。用 `/evolve pause` 停止新 snapshot、fate 和模型调用。每次判断或机械 skip 都追加到 `<dshHome>/evolve/reviews.jsonl`；`agent/disposed` 会 abort scheduler。
+**修复与观察**：用 `/evolve status` 区分“listener 已注册但 runtime off/paused”和“确实没有成功回合”；用 `/evolve resume` 即时开启，不需要改 profile 或重启。用 `/evolve pause` 停止新 snapshot、memory/review/fate 模型调用。每次判断或机械 skip 都追加到 `<dshHome>/evolve/reviews.jsonl`；`agent/disposed` 会 abort scheduler。
 ## 6. `/evolve benchmark add-case` 的参数被拆烂（statement 变成 `hygiene"`）
 
 **症状**：case 的 statement/rubric 落盘后内容残缺。
@@ -81,7 +82,7 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 
 **原因**：共享的直属 LLM 调用过去把 `reasoningEffort` 固定为 `off`。这对支持关闭档的模型能避免可见思考耗尽 JSON 输出预算，但不能代表所有 provider/model 的合法 effort 集合；不同模型的 effort id 也不统一，不能固定改成 `low` 或继承主会话的 `xhigh`。
 
-**修复**：[`src/llm-text.ts`](../src/llm-text.ts) 在请求前用精确 provider/model 调用 `ctx.llm.resolveModelInfo()`：优先选择模型公布的第一个开启档（跳过 `disabled`/`off`/`none`），只有完全没有开启档时才回退到第一个关闭档；没有 reasoning 元数据时省略字段，让 provider 使用自身默认。`reviewModel` 覆盖时按覆盖后的路由重新解析。能力解析失败会保留为 `error`，不会盲目重试；max-tokens、abort、usage 与审计语义不变。
+**修复**：[`src/llm-text.ts`](../src/llm-text.ts) 在请求前用精确 provider/model 调用 `ctx.llm.resolveModelInfo()`：优先选择模型公布的第一个开启档（跳过 `disabled`/`off`/`none`），只有完全没有开启档时才回退到第一个关闭档；没有 reasoning 元数据时省略字段，让 provider 使用自身默认。共享入口同时承载纯文本调用与专用 memory 工具 loop；`reviewModel` 覆盖时按覆盖后的路由重新解析。能力解析失败会保留为 `error`，不会盲目重试；max-tokens、abort、usage 与审计语义不变。
 
 ```ts
 const modelInfo = await ctx.llm.resolveModelInfo(provider, model);
@@ -152,3 +153,11 @@ await ctx.llm.stream({
 **原因**：未配置 `reviewModel` 时门禁走 agent 自身 provider；该 provider 间歇不可用，门禁每次都失败。
 
 **修复与要点**：失败被完全遏制（记录 + 回退 lastReviewAt，不干扰 agent 循环），但会浪费一次调用并污染审计。两个选项：① 在 profile patch 里给 `continual-evolve` 配 `reviewModel: "<稳定provider>/<model>"` 把门禁路由到便宜且稳定的模型；② 接受遏制行为，用 `/evolve failures` 观察频率。判断数据源：`/evolve failures` 的按类计数。
+
+## 13. 专用 memory agent 的审批弹窗消失或跨 scope 批次只写了一半
+
+**症状**：project/global memory 提案没有写入，审计显示 memory phase `failed`；或者 local 已出现新记忆，但同一 proposal 的 project/global 写入失败，cursor 仍停留在旧边界。
+
+**原因**：审批对话框关闭、丢失 `answers`、没有 `selected` 或返回未知选项，都不是用户明确拒绝；若把它们折叠成 `false`，scheduler 会把失败当 no-op 并推进边界。另一方面，local/project/global 是三个独立 store，逐 scope 写入时若后续 `engine.apply()` 抛错或出现 per-edit failure，先前 scope 已落盘，简单重试会造成重复版本或重复询问。
+
+**修复**：`requestScopeApproval()` 只接受唯一明确的 `批准` / `拒绝`，缺失、重复、未知或畸形响应抛错并保留 cursor。memory apply 先完成所有持久化审批，再在每次写前检查 abort；任一 scope 失败、per-edit failure 或 history/post-commit hook 失败时，用带 refinement result 的 `EvolutionApplyPostCommitError` 携带当前批次并调用 `engine.rollback()` 补偿本批次已写 scope。审批文案先列每个 action/scope/id（id 用 JSON 转义）再放有界 title/path/content/memoryType 与冲突提示，不能只展示模型自写 summary。memory agent 另有 phase checkpoint：memory 成功/no-op/显式拒绝后即推进，后续 review/fate 失败不会重放旧 memory 决策；memory 自身失败/abort 不推进。

@@ -15,6 +15,11 @@ describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/decline/i);
 	});
 
+	it("assigns memory-only evidence to the dedicated extractor", () => {
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/dedicated memory extraction agent/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/do NOT approve solely.*memory/is);
+	});
+
 	it("tells the gate stale entries are a valid refine target (archive, not delete)", () => {
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/stale/i);
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/archive/i);

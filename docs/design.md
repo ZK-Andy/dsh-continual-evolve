@@ -41,8 +41,9 @@
 └─────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────────┐
 │ 执行层（DSH 现成基建，本插件的硬化来源）                           │
-│  · agent/settled 事件 → 回合末串行应用（prime-agent 同款时机）     │
-│  · dsh-subagent 结构化输出 → 提案 JSON schema 强校验              │
+│  · 成功回合 snapshot → 专用 memory agent → 通用 review/planner      │
+│  · 直属 ctx.llm 工具 loop：memory_search + memory_propose 闭集       │
+│  · dsh-subagent 结构化输出 → 提案 JSON schema 强校验               │
 │  · 沙箱 → global 条目写入前权限门禁                              │
 │  · 会话事件日志 → 轨迹即 evidence，天然可审计                     │
 └─────────────────────────────────────────────────────────────┘
@@ -98,20 +99,24 @@ interface HarnessRefinementEvent {
 |---|---|---|
 | **手动命令** | `/evolve [instructions] [--global]` | 用户显式要求，最优先 |
 | **模型自觉** | `evolve` 工具（`refine.run` 同款 API） | 发现重复失败/可复用战术时主动调度 |
-| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 每个成功回合产生候选增量 snapshot；先做 eligibility，再由每会话串行 latest-pending scheduler 处理；每次 skip/判断写 `reviews.jsonl` |
+| **成功回合** | `agent/turn-stopping`（边界）+ `agent/status`（idle 捕获） | 每个成功回合产生候选增量 snapshot；先做 eligibility，再由每会话串行 latest-pending scheduler 先运行专用 memory agent、再运行通用 review/planner；每次 skip/判断写 `reviews.jsonl` |
 | **压缩时** | `session/event`（`compaction/start`） | 压缩前强制捕获 snapshot，把会被丢掉的经验先沉淀；scheduler 仍保持串行 |
 
 ### 关键纪律（照抄 prime-agent）
 - **绝不在 step 中途打断 agent**：手动路径（`/evolve plan`、evolve 工具）在显式调用点同步 apply（带 baseline 比对，天然串行）；自动路径在 `agent/status` idle 后捕获 snapshot，再由后台串行 scheduler 执行——两种路径都不会打断进行中的 step
 - **plan 与 apply 分离**：LLM 规划可能耗时数十秒，期间共享文件可能被别的会话写——apply 前必须重读 + baseline 比对
 - **成功回合一次调度**：eligible snapshot 进入 scheduler；运行期间的新 snapshot 只保留最新一份，失败/abort 不推进 cursor，下一份 snapshot 可重试
-- **review 门禁是独立廉价 LLM 调用**（4k token 预算、只读当前增量 snapshot），决定“该不该进化”，而非直接进化
+- **memory extractor 先于通用 review**：专用 loop 最多 5 个内部 turn，只能注册 `memory_search` / `memory_propose`，不能调用 Agent、MCP、网络或源码工具；通用 planner 产生的 memory 编辑会被机械剥离，避免双 owner
+- **memory cursor 独立于共享 review cursor**：memory no-op/应用/显式拒绝成功后推进 phase checkpoint；后续 review/fate 失败不会重放旧 memory 决策或重复询问，memory 自身失败/abort 则保留 checkpoint
+- **boundary 永不回退**：snapshot capture 按 session 串行；pending acquisition 按已结算的最高 seq/index boundary 合并，迟到旧边界不会覆盖新边界或把 checkpoint 写回旧位置
+- **review 门禁是独立廉价 LLM 调用**（4k token 预算、只读当前增量 snapshot），决定“该不该继续做非 memory 进化”，而非重复提取 memory
 
 ## 5. 验证层接线（DSH 相对两个参照物的结构性优势）
 
 ### 5.1 提案校验 —— 比 prime-agent 更硬
 prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己产出**的（LLM 调 LLM，自产自审）。DSH 方案：
-- 提案生成走 [`src/llm-text.ts`](../src/llm-text.ts) 的 **`ctx.llm` 流式调用**（与主 agent 同 provider/model；由共享入口按精确 provider/model 能力选择最低开启 reasoning effort，无开启档时回退关闭档，无元数据时省略该字段，见 FAQ #7）+ `plan.ts` 的截断感知 JSON 恢复（`extractJsonObject`/`isIncompleteJson`），非法输出即判失败——而不是让模型自产自审
+- 提案生成走 [`src/llm-text.ts`](../src/llm-text.ts) 的 **`ctx.llm` 流式调用**（memory loop、review、planner 与主 agent 默认同 provider/model；由共享入口按精确 provider/model 能力选择最低开启 reasoning effort，无开启档时回退关闭档，无元数据时省略该字段，见 FAQ #7）+ 截断感知 JSON 恢复，非法输出即判失败——而不是让模型自产自审
+- 专用 memory loop 另走 `streamModelTurn`：provider 请求只携带冻结 manifest 和两个闭集工具 schema；`memory_propose` 仅返回结构化编辑，不直接写状态
 - 应用前仍跑一遍 `validateEdit`（双保险）
 - 评估单元格走 **`dsh-subagent` `outputSchema` 结构化输出**（schema 校验是 DSH 内建能力）：provider 校验子代理回复，宿主从不解析模型文本（见 FAQ #3）
 
@@ -122,7 +127,9 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 
 ### 5.3 范围隔离 —— 沙箱强制而非自觉
 - **local 条目**：只写当前会话目录，无风险，直接应用
-- **global 条目**：写入 `$DSH_HOME/evolve/` 前必须过**人工审批门禁**（复用 `dsh-plan-mode` 的评审机制或 `ask_user`），v1 不放开纯自动 global
+- **project / global 条目**：写入跨会话 store 前必须过**人工审批门禁**（复用 `userQuestions`）。弹窗展示 action/scope/id/title/content preview/memoryType 与相似冲突提示，模型摘要只标为不可信；只有唯一明确的“批准/拒绝”才算决策，弹窗丢失或响应畸形按失败重试
+- **memory agent**：只产生 `kind=memory` proposal，metadata 仅允许 `memoryType`，update 时与已有 engine-owned provenance/lifecycle metadata 合并；update/archive/delete 必须命中冻结 manifest 中同 scope 的 id；所有持久化 scope 的 id/path/title/content/structured metadata 都经过凭据筛查
+- **跨 scope 补偿**：memory proposal 先完成全部审批，再逐 scope 写前检查 abort；任一 scope 抛错或出现 per-edit 失败时，用 `EvolutionEngine.rollback()` 反转本批次已写 scope，再把错误交回 scheduler 保留 cursor
 - **skill 条目**：只允许创建到 `$DSH_HOME/skills/`（`dsh-skill-filesystem` 已有发现机制），路径规范化校验防穿越（penguin 唯一有的硬保障，DSH 原生就有）
 
 ### 5.4 快照与回滚 —— 钩子化而非指令
@@ -134,8 +141,8 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 
 | DSH 现有插件/服务 | 本插件如何用（实现状态） |
 |---|---|
-| `agent/turn-stopping`、`agent/status`、`session/event` | 成功回合边界 + idle 增量 snapshot + eligibility + 每会话串行 latest-pending scheduler + `compaction/start` 强制 flush（已实现，见 §4） |
-| `ctx.llm`（流式）+ `dsh-subagent` | 提案生成走 `ctx.llm` 流 + JSON 恢复；评估单元格走 `outputSchema` 结构化输出（均已实现） |
+| `agent/turn-stopping`、`agent/status`、`session/event` | 成功回合边界 + idle 增量 snapshot + eligibility + 每会话串行 latest-pending scheduler + 专用 memory loop + 通用 review/fate + `compaction/start` 强制 flush（已实现，见 §4） |
+| `ctx.llm`（流式）+ `dsh-subagent` | memory agent / review / planner / wrapup / fate 走共享能力感知 LLM 入口；memory 另用闭集工具 loop；评估单元格走 `outputSchema` 结构化输出（均已实现） |
 | `dsh-skill-filesystem` | skill 条目落盘 `$DSH_HOME/skills/<kebab>/SKILL.md`（插件自写，发现机制复用 DSH 的） |
 | `userQuestions` | global 进化的人工评审门禁（`approval.ts`，等价替代 dsh-plan-mode） |
 | 插件自带 `store.ts` | local/global 变更历史 JSONL + 快照 + 回滚源（不依赖 dsh-session-persistence-jsonl） |
@@ -153,7 +160,7 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 - **验收**：真实会话中长出跨会话可复用的 memory/skill 条目，可回滚，坏 JSON/非法编辑全部代码级拒绝（已达成并有运行证据）
 
 ### Phase 2 —— 门禁与自动化
-- [x] 成功回合增量 snapshot + eligibility + 串行 latest-pending scheduler（廉价 review/planner 调用）
+- [x] 成功回合增量 snapshot + eligibility + 串行 latest-pending scheduler（专用 memory loop + 廉价 review/planner 调用）
 - [x] global scope 开启，带人工审批门禁
 - [x] skill 条目可执行化（对齐 prime-agent 的 python reference 契约，物化 `$DSH_HOME/skills/<kebab>/SKILL.md`）
 - [x] **prompt 条目真正注入系统提示词**（additive section，封顶 6 条/类）——`src/inject.ts` 的 `entriesSectionText` 在 `index.ts` 注册为 `tool:continual-evolve:entries` 动态 section（order 118+1）：text 是 provider，每次 assembly 用 `context.agent` 定位会话，读 global + 沿 `SessionHeader.parentSession` 链最近非空 local store 合并渲染；空 store 渲染为 "" 被 prompt renderer 丢弃，零 token 成本；全量仍由 `evolve_list` 提供
@@ -169,7 +176,7 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 
 | 风险 | 缓解 |
 |---|---|
-| **token 成本**：review 门禁 + 规划都是 LLM 调用 | 门禁预算 4k token；渲染封顶；可配置关闭自动 review |
+| **token 成本**：每个 eligible 成功回合先跑 memory loop，再可能跑 review/planner | 每 turn 4k token 默认预算、最多 5 turn；`reviewModel` 覆盖；`/evolve pause` 即时停；`/evolve usage` 独立 memory phase 明账 |
 | **反馈回路漂移**：进化条目互相强化，偏离基线 | 版本化 + evidence 可证伪 + 定期人工抽查 global 条目 |
 | **污染扩散**：global 条目影响所有未来会话 | v1 人工门禁；skill 只落 `$DSH_HOME/skills` |
 | **多会话写冲突** | 乐观并发（baseline 比对），冲突即拒绝该 edit 不整体失败 |

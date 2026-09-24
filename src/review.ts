@@ -56,11 +56,12 @@ export interface ReviewOptions {
 
 export const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
 
-Decide whether this checkpoint should run /evolve. Auto /evolve writes local
-harness state by default, so approve when the trajectory contains evidence
-useful to this session's future turns: a repeated failure, a reusable tactic,
-a repeated delegation role, a durable fact or preference, a user correction
-that should persist, or a narrow behavioral policy.
+Decide whether this checkpoint should continue the non-memory /evolve path.
+A dedicated memory extraction agent has already processed the same snapshot
+with a frozen memory manifest, so do NOT approve solely to create, update,
+archive, or delete a memory entry. Decline with a rationale that the memory
+phase owns that evidence. For the remaining kinds, approve repeated failures,
+reusable tactics, repeated delegation roles, or narrow behavioral policies.
 
 The current harness state below includes GLOBAL entries (scope=global) plus
 this session's local entries (scope=local). When a topic is already covered

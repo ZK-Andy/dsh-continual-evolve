@@ -35,6 +35,44 @@ describe("createReviewScheduler", () => {
 		expect(scheduler.hasPendingWork()).toBe(false);
 	});
 
+	it("selects the highest pending boundary when acquisitions settle out of order", async () => {
+		const started: string[] = [];
+		let releaseFirst: (() => void) | undefined;
+		let resolveThird: ((item: Item) => void) | undefined;
+		let resolveSecond: ((item: Item) => void) | undefined;
+		const scheduler = createReviewScheduler<Item>(
+			async ({ snapshot }) => {
+				started.push(snapshot.cursor);
+				if (snapshot.cursor === "seq:1") {
+					await new Promise<void>((resolve) => {
+						releaseFirst = resolve;
+					});
+				}
+				return "success";
+			},
+			(snapshot) => snapshot.cursor,
+		);
+
+		scheduler.schedule({ cursor: "seq:1" });
+		await vi.waitFor(() => expect(started).toEqual(["seq:1"]));
+		const third = new Promise<Item>((resolve) => {
+			resolveThird = resolve;
+		});
+		const second = new Promise<Item>((resolve) => {
+			resolveSecond = resolve;
+		});
+		scheduler.schedule(third);
+		scheduler.schedule(second);
+		resolveThird?.({ cursor: "seq:3" });
+		await Promise.resolve();
+		resolveSecond?.({ cursor: "seq:2" });
+		releaseFirst?.();
+		await scheduler.drain();
+
+		expect(started).toEqual(["seq:1", "seq:3"]);
+		expect(scheduler.getCursor()).toBe("seq:3");
+	});
+
 	it("does not advance the cursor after an error and retries a later snapshot", async () => {
 		let attempt = 0;
 		const scheduler = createReviewScheduler<Item>(

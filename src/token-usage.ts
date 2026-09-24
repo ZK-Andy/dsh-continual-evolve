@@ -1,11 +1,11 @@
 /**
  * Provider-reported token accounting for plugin-owned direct LLM calls.
  *
- * The review gate, planner, wrap-up command, and local-fate classifier all use
- * the shared `streamText` helper. These calls do not belong to an Agent turn
- * (they pass no sessionId), so the host session token-meter cannot attribute
- * them. This ledger records the exact `TokenUsage` emitted by the adapter at
- * the one shared stream boundary instead.
+ * The review gate, planner, dedicated memory agent, wrap-up command, and
+ * local-fate classifier all use the shared model-call boundary. These calls do
+ * not belong to an Agent turn (they pass no sessionId), so the host session
+ * token-meter cannot attribute them. This ledger records the exact
+ * `TokenUsage` emitted by the adapter at the one shared stream boundary.
  *
  * Storage: `<baseDir>/evolve/token-usage.jsonl`. The file contains route and
  * count metadata only — never prompts, responses, or tool arguments — and is
@@ -21,7 +21,7 @@ const TOKEN_USAGE_FILE = "token-usage.jsonl";
 export const TOKEN_USAGE_LEDGER_VERSION = 1;
 
 /** Plugin-owned direct call paths represented in the ledger. */
-export const TOKEN_USAGE_PHASES = ["review", "planner", "wrapup", "fate"] as const;
+export const TOKEN_USAGE_PHASES = ["review", "memory", "planner", "wrapup", "fate"] as const;
 export type TokenUsagePhase = (typeof TOKEN_USAGE_PHASES)[number];
 
 /** Whether the provider supplied a usage sample; missing is never treated as zero. */
@@ -196,7 +196,7 @@ export function renderTokenUsageReport(ledger: LoadedTokenUsage, retain: number)
 		return [
 			`direct LLM token usage: no valid calls in the retained tail.${corrupt}`,
 			`window: last ${retain} call(s), not a lifetime total.`,
-			"scope: review/planner/wrapup/fate only; host benchmark subagents, their agent-loop calls, and per-entry injection cost are excluded.",
+			"scope: review/memory/planner/wrapup/fate only; host benchmark subagents, their agent-loop calls, and per-entry injection cost are excluded.",
 		];
 	}
 	const totals = aggregateTokenUsage(records);
@@ -224,7 +224,7 @@ export function renderTokenUsageReport(ledger: LoadedTokenUsage, retain: number)
 			`last: ${last.phase} ${last.provider}/${last.model} · ${last.outcome} · ${lastTotal} tokens · ${last.timestamp}`,
 		);
 	}
-	lines.push("scope: review/planner/wrapup/fate only; host benchmark subagents, their agent-loop calls, and per-entry injection cost are excluded.");
+	lines.push("scope: review/memory/planner/wrapup/fate only; host benchmark subagents, their agent-loop calls, and per-entry injection cost are excluded.");
 	return lines;
 }
 

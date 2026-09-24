@@ -3,9 +3,10 @@
  *
  * Mounts the evolution engine, registers the model-facing evolve_* tools,
  * the human-facing /evolve command, the system-prompt guidance section, and
- * the automatic review gate. The listener is always registered, while its
- * effective state is controlled by the runtime switch. Successful turns feed
- * incremental snapshots through a per-session serial scheduler.
+ * the automatic memory+review pipeline. The listener is always registered,
+ * while its effective state is controlled by the runtime switch. Successful
+ * turns feed a dedicated memory agent and general review through one
+ * per-session serial scheduler.
  */
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
@@ -219,12 +220,13 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		rubricKey,
 		...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
 		...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
+		requireGlobalApproval: config.requireGlobalApproval ?? true,
 		...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
 		...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
 	});
 	const runtimeDefault = config.autoReview ?? false;
 	ctx.logger("continual-evolve").info(
-		`continual-evolve auto-review registered (default ${runtimeDefault ? "on" : "off"}; successful-turn snapshots; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
+		`continual-evolve auto-review registered (default ${runtimeDefault ? "on" : "off"}; successful-turn memory agent + general review; local-fate ${config.localFate ?? true ? "on" : "off"} every ${config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6} turns)`,
 	);
 
 	ctx.logger("continual-evolve").info(`continual-evolve mounted (baseDir=${baseDir})`);

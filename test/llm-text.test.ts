@@ -219,6 +219,19 @@ describe("streamText usage settlement", () => {
 		});
 	}
 
+	it("observes a reasoning-only completion as empty, not success", async () => {
+		const seen: StreamTextObservation[] = [];
+		const reasoningOnly: StreamChunk[] = [
+			{ type: "block-start", index: 0, blockType: "reasoning" },
+			{ type: "reasoning-delta", index: 0, text: "private reasoning" },
+			{ type: "block-end", index: 0, block: { type: "reasoning", text: "private reasoning" } },
+			usageChunk(),
+			{ type: "finish", reason: { kind: "stop" } },
+		];
+		await expect(streamText(ctxWith(reasoningOnly), { ...BASE_OPTS, onUsage: (value) => seen.push(value) })).rejects.toThrow("no text output");
+		expect(seen[0]).toMatchObject({ outcome: "empty", usage: { totalTokens: 18 } });
+	});
+
 	it("records missing usage without inventing zero", async () => {
 		const seen: StreamTextObservation[] = [];
 		await streamText(ctxWith([...textBlock("done"), { type: "finish", reason: { kind: "stop" } }]), {

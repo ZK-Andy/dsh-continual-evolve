@@ -11,11 +11,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import {
 	consultSkillEdits,
 	loadGateHarnessView,
+	isDedicatedMemoryOnlyProposal,
 	parseReviewModel,
 	registerAutoReview,
 	runGoalBlockedFate,
 	SKILL_CONSULT_COOLDOWN_TURNS,
 	splitSkillEdits,
+	stripDedicatedMemoryEdits,
 	type AutoReviewConfig,
 	type GateState,
 } from "../src/auto.js";
@@ -24,11 +26,11 @@ import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
 import { emptyHarnessState, type HarnessEntry, type RefinementProposal } from "../src/types.js";
 import type { Context } from "@deepseek-ai/cordis";
-import type { StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions, StreamChunk } from "@deepseek-ai/dsh-llm";
 import { loadTokenUsage } from "../src/token-usage.js";
 
 function fresh(): GateState {
-	return { turns: 0, completedTurn: 0, lastSnapshotTurn: 0, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
+	return { turns: 0, completedTurn: 0, lastSnapshotTurn: 0, memoryDecisions: {}, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
 }
 
 function baseConfig(overrides: Partial<AutoReviewConfig> = {}): AutoReviewConfig {
@@ -139,6 +141,26 @@ describe("splitSkillEdits", () => {
 	});
 });
 
+describe("stripDedicatedMemoryEdits", () => {
+	it("distinguishes memory-only plans from genuine no-consent plans", () => {
+		expect(isDedicatedMemoryOnlyProposal(proposalWith([memoryEdit]))).toBe(true);
+		expect(isDedicatedMemoryOnlyProposal(proposalWith([memoryEdit, skillEdit]))).toBe(false);
+		expect(isDedicatedMemoryOnlyProposal(proposalWith([skillEdit]))).toBe(false);
+		expect(isDedicatedMemoryOnlyProposal(proposalWith([]))).toBe(false);
+	});
+
+	it("leaves non-memory proposals unchanged", () => {
+		const proposal = proposalWith([skillEdit]);
+		expect(stripDedicatedMemoryEdits(proposal)).toBe(proposal);
+	});
+
+	it("removes memory edits already owned by the dedicated extractor", () => {
+		const stripped = stripDedicatedMemoryEdits(proposalWith([memoryEdit, skillEdit]));
+		expect(stripped.edits).toEqual([skillEdit]);
+		expect(stripped.summary).toContain("dedicated extractor");
+	});
+});
+
 function fakeCtx(answer: "固化" | "不固化" | "throw" | "missing"): {
 	ctx: Context;
 	askCount: () => number;
@@ -230,6 +252,7 @@ function wiringHarness(options: {
 	goals?: { get(agent: unknown): unknown };
 	agents?: Map<string, unknown>;
 	llm?: Context["llm"];
+	userQuestions?: { ask(request: { questions: { id: string; question: string }[] }): Promise<unknown> };
 	sessionQuery?: { readSurface(sessionId: string): Promise<{ events: unknown[] }> };
 	config?: Partial<AutoReviewConfig>;
 } = {}): {
@@ -256,6 +279,7 @@ function wiringHarness(options: {
 		}),
 		get: (name: string) => (name === "goals" ? options.goals : undefined),
 		...(options.llm ? { llm: options.llm } : {}),
+		...(options.userQuestions ? { userQuestions: options.userQuestions } : {}),
 		...(options.sessionQuery ? { sessionQuery: options.sessionQuery } : {}),
 		...(options.agents ? { agents: { get: (id: string) => options.agents?.get(id) } } : {}),
 	} as unknown as Context;
@@ -349,14 +373,16 @@ describe("registerAutoReview wiring", () => {
 		}
 	});
 
-	it("records exact provider usage for automatic review and planner calls", async () => {
+	it("records exact provider usage for memory, review, and planner calls", async () => {
 		let call = 0;
 		const llm = {
 			stream: async function* () {
 				call += 1;
 				const text = call === 1
-					? JSON.stringify({ shouldRefine: true, rationale: "useful evidence", instructions: "plan nothing" })
-					: JSON.stringify({ summary: "no edits", rationale: "already covered", expectedOutcome: "none", edits: [] });
+					? JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] })
+					: call === 2
+						? JSON.stringify({ shouldRefine: true, rationale: "useful evidence", instructions: "plan nothing" })
+						: JSON.stringify({ summary: "no edits", rationale: "already covered", expectedOutcome: "none", edits: [] });
 				const chunks: StreamChunk[] = [
 					{ type: "block-start", index: 0, blockType: "text" },
 					{ type: "text-delta", index: 0, text },
@@ -378,11 +404,486 @@ describe("registerAutoReview wiring", () => {
 		try {
 			for (let i = 0; i < 3; i += 1) h.emit("agent/turn-stopping", { agent, turn: i + 1 });
 			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(2));
+			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(3));
 			expect(loadTokenUsage(h.dir).records).toEqual([
-				expect.objectContaining({ phase: "review", usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }),
-				expect.objectContaining({ phase: "planner", usage: { inputTokens: 20, outputTokens: 2, totalTokens: 22 } }),
+				expect.objectContaining({ phase: "memory", usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }),
+				expect.objectContaining({ phase: "review", usage: { inputTokens: 20, outputTokens: 2, totalTokens: 22 } }),
+				expect.objectContaining({ phase: "planner", usage: { inputTokens: 30, outputTokens: 2, totalTokens: 32 } }),
 			]);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not apply or auto-case a memory-only proposal returned by the general planner", async () => {
+		let call = 0;
+		const llm = {
+			stream: async function* () {
+				call += 1;
+				const text = call === 1
+					? JSON.stringify({ summary: "no memory", rationale: "dedicated phase found none", expectedOutcome: "none", edits: [] })
+					: call === 2
+						? JSON.stringify({ shouldRefine: true, rationale: "planner test", instructions: "only memory" })
+						: JSON.stringify({
+								summary: "memory-only general plan",
+								rationale: "should already be covered",
+								expectedOutcome: "none",
+								edits: [{
+									action: "create",
+									kind: "memory",
+									targetScope: "local",
+									blastRadius: "session",
+									title: "不应由通用 planner 写入",
+									content: "这条 memory 归专用 extractor 所有。",
+									metadata: { memoryType: "user" },
+								}],
+							});
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "触发通用 planner memory-only 输出" }], source: { kind: "user" } } }];
+		const agent = {
+			id: "session-memory-only-plan",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) }, config: { autoCase: true, prefixCacheMode: "off" } });
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(call).toBe(3));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "declined" });
+			const statePath = join(h.dir, "evolve", "local", agent.id, "harness_state.json");
+			const stateText = existsSync(statePath) ? readFileSync(statePath, "utf8") : "";
+			expect(stateText).not.toContain("不应由通用 planner 写入");
+			expect(existsSync(join(h.dir, "evolve", "benchmarks", "auto_regression"))).toBe(false);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a failed memory extraction retryable and advances the shared cursor only after recovery", async () => {
+		let call = 0;
+		const requests: GenerateOptions[] = [];
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				requests.push(request);
+				call += 1;
+				if (call === 1) throw new Error("memory provider unavailable");
+				const text = call % 2 === 0
+					? JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] })
+					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution either" });
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events: unknown[] = [{
+			type: "user/message",
+			seq: 1,
+			data: { content: [{ type: "text", text: "第一条需要重试的长期约定" }], source: { kind: "user" } },
+		}];
+		const agent = {
+			id: "session-memory-retry",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async () => ({ events }) },
+			config: { prefixCacheMode: "off" },
+		});
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
+
+			events.push({
+				type: "user/message",
+				seq: 2,
+				data: { content: [{ type: "text", text: "第二条恢复后处理的约定" }], source: { kind: "user" } },
+			});
+			h.emit("agent/turn-stopping", { agent, turn: 2 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(call).toBe(3));
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
+
+			events.push({
+				type: "user/message",
+				seq: 3,
+				data: { content: [{ type: "text", text: "第三条只应出现在已推进游标之后" }], source: { kind: "user" } },
+			});
+			h.emit("agent/turn-stopping", { agent, turn: 3 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(call).toBe(5));
+
+			const retriedMemoryInput = JSON.stringify(requests[1]?.messages);
+			const incrementalMemoryInput = JSON.stringify(requests[3]?.messages);
+			expect(retriedMemoryInput).toContain("第一条需要重试的长期约定");
+			expect(retriedMemoryInput).toContain("第二条恢复后处理的约定");
+			expect(incrementalMemoryInput).toContain("第三条只应出现在已推进游标之后");
+			expect(incrementalMemoryInput).not.toContain("第一条需要重试的长期约定");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the memory checkpoint independent when a later review attempt fails", async () => {
+		const requests: GenerateOptions[] = [];
+		let call = 0;
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				requests.push(request);
+				call += 1;
+				if (call === 2) throw new Error("review provider unavailable");
+				const text = call % 2 === 1
+					? JSON.stringify({ summary: "no memory", rationale: "nothing new", expectedOutcome: "none", edits: [] })
+					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution" });
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events: unknown[] = [{
+			type: "user/message",
+			data: { content: [{ type: "text", text: "A1 已由 memory 成功处理" }], source: { kind: "user" } },
+		}];
+		const agent = {
+			id: "session-memory-checkpoint",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) }, config: { prefixCacheMode: "off" } });
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(call).toBe(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
+
+			events.push({
+				type: "user/message",
+				data: { content: [{ type: "text", text: "A2 是 review 失败后新增的证据" }], source: { kind: "user" } },
+			});
+			h.emit("agent/turn-stopping", { agent, turn: 2 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(call).toBe(4));
+
+			const retriedMemoryInput = JSON.stringify(requests[2]?.messages);
+			expect(retriedMemoryInput).toContain("A2 是 review 失败后新增的证据");
+			expect(retriedMemoryInput).not.toContain("A1 已由 memory 成功处理");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("isolates memory checkpoints and shutdown across interleaved sessions", async () => {
+		const memoryInputs: string[] = [];
+		let aReviews = 0;
+		let bReviews = 0;
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				const body = JSON.stringify(request.messages);
+				const memory = request.system?.includes("dedicated background memory extraction agent") === true;
+				let text: string;
+				if (memory) {
+					memoryInputs.push(body);
+					text = JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] });
+				} else if (body.includes("A1") || body.includes("A2")) {
+					aReviews += 1;
+					if (aReviews === 1) throw new Error("A review failed");
+					text = JSON.stringify({ shouldRefine: false, rationale: "A recovered" });
+				} else {
+					bReviews += 1;
+					text = JSON.stringify({ shouldRefine: false, rationale: "B complete" });
+				}
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const aEvents: unknown[] = [{
+			type: "user/message",
+			seq: 1,
+			data: { content: [{ type: "text", text: "A1 第一会话证据" }], source: { kind: "user" } },
+		}];
+		const bEvents: unknown[] = [{
+			type: "user/message",
+			seq: 1,
+			data: { content: [{ type: "text", text: "B1 第二会话证据" }], source: { kind: "user" } },
+		}];
+		const agentA = {
+			id: "session-a",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events: aEvents },
+			followup: () => undefined,
+		};
+		const agentB = {
+			id: "session-b",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events: bEvents },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async (sessionId) => ({ events: sessionId === agentA.id ? aEvents : bEvents }) },
+			config: { prefixCacheMode: "off" },
+		});
+		try {
+			h.emit("agent/turn-stopping", { agent: agentA, turn: 1 });
+			h.emit("agent/turn-stopping", { agent: agentB, turn: 1 });
+			h.emit("agent/status", { agent: agentA, status: "idle" });
+			h.emit("agent/status", { agent: agentB, status: "idle" });
+			await vi.waitFor(() => expect(aReviews).toBe(1));
+			await vi.waitFor(() => expect(bReviews).toBe(1));
+
+			aEvents.push({
+				type: "user/message",
+				seq: 2,
+				data: { content: [{ type: "text", text: "A2 第一会话新增证据" }], source: { kind: "user" } },
+			});
+			h.emit("agent/turn-stopping", { agent: agentA, turn: 2 });
+			h.emit("agent/status", { agent: agentA, status: "idle" });
+			await vi.waitFor(() => expect(aReviews).toBe(2));
+			const aRetry = memoryInputs.find((input) => input.includes("A2"));
+			expect(aRetry).toContain("A2 第一会话新增证据");
+			expect(aRetry).not.toContain("A1 第一会话证据");
+
+			h.emit("agent/disposed", { agent: agentA });
+			bEvents.push({
+				type: "user/message",
+				seq: 2,
+				data: { content: [{ type: "text", text: "B2 第二会话在 A dispose 后继续" }], source: { kind: "user" } },
+			});
+			h.emit("agent/turn-stopping", { agent: agentB, turn: 2 });
+			h.emit("agent/status", { agent: agentB, status: "idle" });
+			await vi.waitFor(() => expect(bReviews).toBe(2));
+			const bNext = memoryInputs.find((input) => input.includes("B2"));
+			expect(bNext).toContain("B2 第二会话在 A dispose 后继续");
+			expect(bNext).not.toContain("B1 第二会话证据");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps malformed approval retryable and does not re-ask after an explicit decline", async () => {
+		let call = 0;
+		let asks = 0;
+		const userQuestions = {
+			ask: async () => {
+				asks += 1;
+				return asks === 1 ? {} : { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
+			},
+		};
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				call += 1;
+				const isMemory = request.system?.includes("dedicated background memory extraction agent") === true;
+				const text = isMemory
+					? JSON.stringify({ summary: "尝试全局记忆", rationale: "用户确认了长期偏好", expectedOutcome: "跨会话召回", edits: [{
+						action: "create",
+						kind: "memory",
+						targetScope: "global",
+						blastRadius: "general",
+						title: "长期偏好",
+						content: "用户明确要求所有项目都使用 pnpm。",
+						metadata: { memoryType: "user" },
+					}] })
+					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution" });
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events: unknown[] = [{
+			type: "user/message",
+			seq: 1,
+			data: { content: [{ type: "text", text: "请记住这个长期偏好" }], source: { kind: "user" } },
+		}];
+		const agent = { id: "session-approval-cursor", options: { provider: "test-provider", model: "test-model" }, session: { header: {} } };
+		const h = wiringHarness({ llm, userQuestions, sessionQuery: { readSurface: async () => ({ events }) } });
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(asks).toBe(1));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
+
+			events.push({
+				type: "user/message",
+				seq: 2,
+				data: { content: [{ type: "text", text: "补充一次但不改变偏好" }], source: { kind: "user" } },
+			});
+			h.emit("agent/turn-stopping", { agent, turn: 2 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(asks).toBe(2));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
+			expect(asks).toBe(2);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reuses a project decline when a later global approval failed on the same boundary", async () => {
+		let call = 0;
+		let projectAsks = 0;
+		let globalAsks = 0;
+		const userQuestions = {
+			ask: async (request: { questions: { question: string }[] }) => {
+				const question = request.questions[0]?.question ?? "";
+				if (question.includes("本项目")) {
+					projectAsks += 1;
+					return { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
+				}
+				globalAsks += 1;
+				return globalAsks === 1 ? {} : { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
+			},
+		};
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				call += 1;
+				const isMemory = request.system?.includes("dedicated background memory extraction agent") === true;
+				const text = isMemory
+					? JSON.stringify({
+							summary: "跨 scope 提案",
+							rationale: "需要两个作用域审批",
+							expectedOutcome: "完整落地",
+							edits: [
+								{
+									action: "create",
+									kind: "memory",
+									targetScope: "project",
+									blastRadius: "project",
+									title: "项目事实",
+									content: "Why: 项目有特殊约束。 How to apply: 发布前执行项目门禁。",
+									metadata: { memoryType: "project" },
+								},
+								{
+									action: "create",
+									kind: "memory",
+									targetScope: "global",
+									blastRadius: "general",
+									title: "全局事实",
+									content: "用户确认了跨项目长期偏好。",
+									metadata: { memoryType: "user" },
+								},
+							],
+						})
+					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution" });
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events: unknown[] = [{
+			type: "user/message",
+			seq: 1,
+			data: { content: [{ type: "text", text: "请记住项目和全局两个事实" }], source: { kind: "user" } },
+		}];
+		const agent = { id: "session-multi-approval", options: { provider: "test-provider", model: "test-model" }, session: { header: { cwd: "/workspace/memory-project" } } };
+		const h = wiringHarness({ llm, userQuestions, agents: new Map([[agent.id, agent]]), sessionQuery: { readSurface: async () => ({ events }) } });
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(globalAsks).toBe(1));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
+
+			h.emit("session/event", { id: agent.id }, { type: "compaction/start" });
+			await vi.waitFor(() => expect(globalAsks).toBe(2));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
+			expect(projectAsks).toBe(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("aborts an in-flight memory session on dispose without stopping another session", async () => {
+		let aStarted = 0;
+		let aAborted = 0;
+		let bReviews = 0;
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				const body = JSON.stringify(request.messages);
+				const isMemory = request.system?.includes("dedicated background memory extraction agent") === true;
+				if (isMemory && body.includes("A 的挂起记忆任务")) {
+					aStarted += 1;
+					await new Promise<void>((resolve) => {
+						if (request.signal?.aborted) {
+							aAborted += 1;
+							resolve();
+							return;
+						}
+						request.signal?.addEventListener("abort", () => {
+							aAborted += 1;
+							resolve();
+						}, { once: true });
+					});
+					yield { type: "finish", reason: { kind: "aborted", failure: { message: "disposed", code: "aborted" } } } as StreamChunk;
+					return;
+				}
+				const text = isMemory
+					? JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] })
+					: (bReviews += 1, JSON.stringify({ shouldRefine: false, rationale: "B complete" }));
+				yield { type: "block-start", index: 0, blockType: "text" } as StreamChunk;
+				yield { type: "text-delta", index: 0, text } as StreamChunk;
+				yield { type: "block-end", index: 0, block: { type: "text", text } } as StreamChunk;
+				yield { type: "finish", reason: { kind: "stop" } } as StreamChunk;
+			},
+		} as unknown as Context["llm"];
+		const aEvents = [{ type: "user/message", data: { content: [{ type: "text", text: "A 的挂起记忆任务" }], source: { kind: "user" } } }];
+		const bEvents = [{ type: "user/message", data: { content: [{ type: "text", text: "B 的独立记忆任务" }], source: { kind: "user" } } }];
+		const agentA = { id: "session-a-abort", options: { provider: "test-provider", model: "test-model" }, session: { header: {} } };
+		const agentB = { id: "session-b-abort", options: { provider: "test-provider", model: "test-model" }, session: { header: {} } };
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async (sessionId) => ({ events: sessionId === agentA.id ? aEvents : bEvents }) },
+			config: { prefixCacheMode: "off" },
+		});
+		try {
+			h.emit("agent/turn-stopping", { agent: agentA, turn: 1 });
+			h.emit("agent/status", { agent: agentA, status: "idle" });
+			await vi.waitFor(() => expect(aStarted).toBe(1));
+			h.emit("agent/disposed", { agent: agentA });
+			await vi.waitFor(() => expect(aAborted).toBe(1));
+			await vi.waitFor(() => expect(h.reviewsLines().some((line) => JSON.parse(line).sessionId === agentA.id && JSON.parse(line).outcome === "failed")).toBe(true));
+
+			h.emit("agent/turn-stopping", { agent: agentB, turn: 1 });
+			h.emit("agent/status", { agent: agentB, status: "idle" });
+			await vi.waitFor(() => expect(bReviews).toBe(1));
+			expect(h.reviewsLines().some((line) => JSON.parse(line).sessionId === agentB.id && JSON.parse(line).outcome === "declined")).toBe(true);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}

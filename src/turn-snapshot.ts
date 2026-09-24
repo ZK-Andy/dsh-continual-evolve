@@ -32,6 +32,9 @@ export interface TurnSnapshot {
 	readonly trajectory: string;
 	readonly userText: string;
 	readonly sourceSeqs: readonly number[];
+	readonly maxChars: number;
+	/** Cursor supplied by the shared scheduler before this snapshot selected events. */
+	readonly capturedAfterCursor?: string;
 	readonly eligible: boolean;
 	readonly skipReason?: SnapshotSkipReason;
 }
@@ -76,6 +79,28 @@ export async function captureTurnSnapshot(
 		cursor,
 		events,
 		trajectory: eligibility.eligible ? serializeSnapshotEvents(events, opts.maxChars) : "",
+		userText: eligibility.userText,
+		sourceSeqs: directUserSeqs(events),
+		maxChars: opts.maxChars,
+		...(opts.cursor === undefined ? {} : { capturedAfterCursor: opts.cursor }),
+		eligible: eligibility.eligible,
+		...(eligibility.reason ? { skipReason: eligibility.reason } : {}),
+	};
+}
+
+/**
+ * Rebase one captured snapshot onto a phase-specific cursor while preserving
+ * its outer boundary. The memory phase uses this after a downstream review or
+ * fate failure: already-processed evidence is removed, but newly captured rows
+ * remain available without moving the shared scheduler cursor backwards.
+ */
+export function sliceTurnSnapshot(snapshot: TurnSnapshot, cursor: string): TurnSnapshot {
+	const events = sliceSnapshotEvents(snapshot, cursor);
+	const eligibility = evaluateSnapshotEligibility(events, false);
+	return {
+		...snapshot,
+		events,
+		trajectory: eligibility.eligible ? serializeSnapshotEvents(events, snapshot.maxChars) : "",
 		userText: eligibility.userText,
 		sourceSeqs: directUserSeqs(events),
 		eligible: eligibility.eligible,
@@ -144,6 +169,18 @@ async function readSurface(ctx: Context, agent: Agent): Promise<readonly unknown
 function boundaryCursor(events: readonly unknown[]): string {
 	const seqs = events.map(eventSeq).filter((seq): seq is number => seq !== undefined);
 	return seqs.length > 0 ? `seq:${Math.max(...seqs)}` : `index:${events.length}`;
+}
+
+function sliceSnapshotEvents(snapshot: TurnSnapshot, cursor: string): readonly unknown[] {
+	if (snapshot.cursor.startsWith("index:") && cursor.startsWith("index:") && snapshot.capturedAfterCursor?.startsWith("index:")) {
+		const start = Number(snapshot.capturedAfterCursor.slice("index:".length));
+		const phaseBoundary = Number(cursor.slice("index:".length));
+		if (!Number.isInteger(start) || !Number.isInteger(phaseBoundary)) return snapshot.events;
+		const relative = phaseBoundary - start;
+		if (relative <= 0) return snapshot.events;
+		return relative >= snapshot.events.length ? [] : snapshot.events.slice(relative);
+	}
+	return eventsAfterCursor(snapshot.events, cursor);
 }
 
 function eventsAfterCursor(events: readonly unknown[], cursor: string | undefined): readonly unknown[] {

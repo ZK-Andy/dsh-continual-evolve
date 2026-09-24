@@ -12,10 +12,13 @@ import type { Context } from "@deepseek-ai/cordis";
 import {
 	BlockAssembler,
 	createUserMessage,
+	type ContentBlock,
 	type LlmResolvedModelInfo,
 	type Message,
 	type ReasoningEffortId,
+	type RequestMessage,
 	type TokenUsage,
+	type ToolSchema,
 } from "@deepseek-ai/dsh-llm";
 import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 
@@ -55,6 +58,25 @@ export interface StreamTextOptions {
 	onUsage?: StreamTextUsageObserver;
 }
 
+/** One provider request for a bounded internal agent/tool loop. */
+export interface StreamModelTurnOptions {
+	provider: string;
+	model: string;
+	messages: readonly RequestMessage[];
+	/** One-shot system slot. Omit when messages already carry the system prompt. */
+	system?: string;
+	/** Closed tool schemas for this request; omitted means no tools. */
+	tools?: readonly ToolSchema[];
+	maxTokens?: number;
+	signal?: AbortSignal | undefined;
+	/** Require at least one text block; tool-only turns must leave this false. */
+	requireText?: boolean;
+	/** Require visible text or a tool call; reasoning-only agent turns are empty. */
+	requireTextOrToolCall?: boolean;
+	/** Same diagnostic observer contract as {@link StreamTextOptions.onUsage}. */
+	onUsage?: StreamTextUsageObserver;
+}
+
 const CLOSED_REASONING_EFFORTS = new Set(["disabled", "off", "none"]);
 
 /**
@@ -82,7 +104,10 @@ export function selectLowestReasoningEffort(modelInfo: Pick<LlmResolvedModelInfo
 	return efforts.find((effort) => !CLOSED_REASONING_EFFORTS.has(effort.id))?.id ?? efforts[0]?.id;
 }
 
-async function resolveReasoningEffort(ctx: Context, opts: StreamTextOptions): Promise<ReasoningEffortId | undefined> {
+async function resolveReasoningEffort(
+	ctx: Context,
+	opts: Pick<StreamModelTurnOptions, "provider" | "model">,
+): Promise<ReasoningEffortId | undefined> {
 	// The current DSH host exposes this method. Keep a capability-less test or
 	// older host usable by treating the absent query as unknown metadata.
 	if (typeof ctx.llm.resolveModelInfo !== "function") return undefined;
@@ -98,7 +123,18 @@ async function resolveReasoningEffort(ctx: Context, opts: StreamTextOptions): Pr
  * @returns The concatenated text blocks from the response.
  * @throws On provider error, abort, max-token truncation, or empty output.
  */
-export async function streamText(ctx: Context, opts: StreamTextOptions): Promise<string> {
+/**
+ * Stream one provider/model turn and return its assembled content blocks.
+ * This is the shared primitive for text callers and bounded tool loops; finish
+ * state, capability-derived effort, cancellation, and usage observation stay
+ * inside this boundary.
+ *
+ * @param ctx - DSH context providing the LLM runtime.
+ * @param opts - Exact route, messages, optional tools, and output requirements.
+ * @returns The assembled content blocks; caller decides how to interpret them.
+ * @throws On provider error, abort, max-token truncation, or capability lookup failure.
+ */
+export async function streamModelTurn(ctx: Context, opts: StreamModelTurnOptions): Promise<ContentBlock[]> {
 	const assembler = new BlockAssembler();
 	let outcome: StreamTextOutcome = "error";
 	let reasoningEffort: ReasoningEffortId | undefined;
@@ -107,14 +143,9 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 		for await (const chunk of ctx.llm.stream({
 			provider: opts.provider,
 			model: opts.model,
-			system: opts.system,
-			messages: [
-				...(opts.prefixMessages ?? []),
-				createUserMessage({
-					content: [{ type: "text", text: opts.prompt }],
-					source: EVOLVE_MESSAGE_SOURCE,
-				}),
-			],
+			messages: [...opts.messages],
+			...(opts.system === undefined ? {} : { system: opts.system }),
+			...(opts.tools === undefined ? {} : { tools: [...opts.tools] }),
 			...(reasoningEffort === undefined ? {} : { reasoningEffort }),
 			maxTokens: opts.maxTokens ?? 8000,
 			...(opts.signal ? { signal: opts.signal } : {}),
@@ -134,17 +165,13 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 			outcome = "max-tokens";
 			throw new Error("evolve: LLM output budget exhausted (max-tokens)");
 		}
-		const text = assembler
-			.blocks()
-			.filter((block) => block.type === "text")
-			.map((block) => block.text)
-			.join("\n");
-		if (text.length === 0) {
-			outcome = "empty";
-			throw new Error("evolve: LLM produced no text output");
-		}
-		outcome = "success";
-		return text;
+		const blocks = assembler.blocks();
+		const hasText = blocks.some((block) => block.type === "text" && block.text.length > 0);
+		const hasToolCall = blocks.some((block) => block.type === "tool-call");
+		const missingRequiredOutput = (opts.requireText === true && !hasText)
+			|| (opts.requireTextOrToolCall === true && !hasText && !hasToolCall);
+		outcome = blocks.length === 0 || missingRequiredOutput ? "empty" : "success";
+		return blocks;
 	} finally {
 		try {
 			opts.onUsage?.({
@@ -156,4 +183,31 @@ export async function streamText(ctx: Context, opts: StreamTextOptions): Promise
 			// Usage observation is diagnostic; its failure must not alter the model call.
 		}
 	}
+}
+
+export async function streamText(ctx: Context, opts: StreamTextOptions): Promise<string> {
+	const blocks = await streamModelTurn(ctx, {
+		provider: opts.provider,
+		model: opts.model,
+		system: opts.system,
+		messages: [
+			...(opts.prefixMessages ?? []),
+			createUserMessage({
+				content: [{ type: "text", text: opts.prompt }],
+				source: EVOLVE_MESSAGE_SOURCE,
+			}),
+		],
+		requireText: true,
+		...(opts.maxTokens === undefined ? {} : { maxTokens: opts.maxTokens }),
+		...(opts.signal ? { signal: opts.signal } : {}),
+		...(opts.onUsage ? { onUsage: opts.onUsage } : {}),
+	});
+	const text = blocks
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
+	if (text.length === 0) {
+		throw new Error("evolve: LLM produced no text output");
+	}
+	return text;
 }

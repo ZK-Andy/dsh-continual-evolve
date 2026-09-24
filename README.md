@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-685%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-737%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -19,17 +19,18 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 
 - **Three scopes** with merge semantics (global < project < local): **local** per-session staging, **project** per-workspace cross-session store, **global** cross-project — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
 - **Typed one-fact memories**: every memory entry carries a recall type (`user | feedback | project | reference`); pitfalls (`feedback`) must include Why + How to apply
+- **Dedicated background memory agent**: after eligible successful turns, a bounded ZCode-style loop searches the frozen memory manifest and proposes memory-only edits through a closed tool set; it cannot call agents, MCP, the network, or write source files
 - **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
 - **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
 - **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives — with `merge`, near-duplicate content folds into the surviving original
 
 ## How it works
 
-1. **Sediment** — the model creates entries via `evolve_add`, or the automatic review gate proposes them from incremental snapshots captured after successful turns (plus compaction checkpoints).
-2. **Capability-aware auxiliary calls** — review, planner, wrapup, and fate resolve the exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts) and use the lowest advertised enabled reasoning effort (falling back to a closing effort only when no enabled level exists); models without reasoning metadata use their provider default.
+1. **Sediment** — the model creates entries via `evolve_add`, or the automatic pipeline consumes incremental snapshots captured after successful turns (plus compaction checkpoints): a dedicated memory agent runs first, then the general review/planner proposes non-memory refinements.
+2. **Capability-aware auxiliary calls** — the memory loop, review, planner, wrapup, and fate resolve exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts) and use the lowest advertised enabled reasoning effort (falling back to a closing effort only when no enabled level exists); models without reasoning metadata use their provider default.
 3. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
-4. **Approve** — global and project writes require explicit human approval; local-fate proposals are consulted before they land.
-5. **Apply & inject** — atomic apply with snapshot + audit event. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a relevance-ordered capped directory index (`- [memory:type:id] title` hooks, full text one `evolve_list` away).
+4. **Approve** — global and project writes require explicit human approval; the dialog shows the bounded structured edit diff and conflict warnings, while malformed/lost responses remain retryable rather than counting as rejection.
+5. **Apply & inject** — memory batches preflight every persistent approval, recheck abort before writes, and compensate earlier scope writes if a later batch fails; every successful scope still passes through snapshot + audit. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a relevance-ordered capped directory index (`- [memory:type:id] title` hooks, full text one `evolve_list` away).
 6. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically and are captured as draft regression cases (`auto_regression` benchmark).
 
 ## Install
@@ -63,13 +64,13 @@ Commands (in-session):
 | `/evolve goal [objective · done · block]` | round-driven auto-review goal |
 | `/evolve benchmark …` | case lifecycle, runs, acceptance |
 | `/evolve pause · resume · status` | pause/resume the auto-review gate (manual tools keep working), gate state |
-| `/evolve usage` | per-entry injection counts + exact provider-reported tokens for direct review/planner/wrapup/fate calls (benchmark host subagents excluded) |
+| `/evolve usage` | per-entry injection counts + exact provider-reported tokens for direct memory/review/planner/wrapup/fate calls (benchmark host subagents excluded) |
 
 Model tools: `evolve_list / add / update / delete / rollback` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval).
 
 For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
 
-`/evolve usage` also reads `evolve/token-usage.jsonl`: exact provider-reported input/cache/output/total tokens for the plugin's direct review, planner, manual-wrapup, and automatic-fate calls. The report covers a retained tail rather than lifetime usage, distinguishes missing provider samples, and explicitly excludes host benchmark subagents, their agent-loop calls, and per-entry injection attribution.
+`/evolve usage` also reads `evolve/token-usage.jsonl`: exact provider-reported input/cache/output/total tokens for the plugin's direct memory-agent, review, planner, manual-wrapup, and automatic-fate calls. The report covers a retained tail rather than lifetime usage, distinguishes missing provider samples, and explicitly excludes host benchmark subagents, their agent-loop calls, and per-entry injection attribution.
 
 Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a relevance-ordered directory index (`[memory:type:id] title` hooks, capped at 15 lines with a fold counter) — full text via `evolve_list`. Empty store = zero injected tokens.
 
@@ -78,7 +79,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | Key | Default | Meaning |
 |---|---|---|
 | `baseDir` | resolved DSH home | root for the `evolve/` stores |
-| `autoReview` | `false` | initial automatic-review default when no runtime switch exists; the listener is always registered |
+| `autoReview` | `false` | initial memory+review pipeline default when no runtime switch exists; the listener is always registered |
 | `reviewIntervalTurns` | `6` | legacy local-fate cadence fallback; successful-turn review no longer waits for this interval |
 | `maxReviewInputChars` | `40000` | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
@@ -96,7 +97,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | plugin-owned JSONL file log with rotation |
 | `autoRollbackOnReject` | `true` | deterministic rollback after a benchmark rejection |
 | `autoCase` | `true` | failed evolution attempts are captured as draft regression cases (`auto_regression` benchmark) |
-| `reviewModel` | agent's own | optional cheaper model for the gate (`"provider/model"`) |
+| `reviewModel` | agent's own | optional cheaper model for the dedicated memory agent and review gate (`"provider/model"`) |
 | `plannerPrefixCache` | `auto` | Route A session-prefix input when cache evidence exists (`session` always, `off` legacy flat text) |
 | `plannerPrefixMaxChars` | `12000` | session-prefix budget for Route A planning inputs (chars) |
 | `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500, tokenUsage: 500}` | storage hygiene: snapshots per store, tail lines per store history, shared `reviews.jsonl` tail, and direct-call `token-usage.jsonl` tail |
@@ -121,7 +122,7 @@ paused.
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (685 tests)
+pnpm test                    # vitest (737 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -129,8 +130,8 @@ pnpm lint                    # oxlint src test
 Project layout:
 
 ```
-├── src/                   # engine, tools, commands, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (43 files)
+├── src/                   # engine, tools, commands, memory agent, gate, fate, benchmark, injection + token usage…
+├── test/                  # vitest suites (44 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)

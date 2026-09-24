@@ -18,6 +18,7 @@
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { ScopeApprovalDecision } from "./approval.js";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { HarnessState, RefinementEdit, RefinementProposal } from "./types.js";
@@ -34,9 +35,15 @@ import { questionServiceOf } from "./approval.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 import { DEFAULT_REVIEWS_RETAIN, pruneJsonlFile } from "./store.js";
 import { isGateEnabled } from "./runtime.js";
-import { createReviewScheduler, type ReviewScheduler } from "./review-scheduler.js";
-import { captureTurnSnapshot, type TurnSnapshot } from "./turn-snapshot.js";
+import { compareReviewCursors, createReviewScheduler, type ReviewScheduler } from "./review-scheduler.js";
+import { captureTurnSnapshot, sliceTurnSnapshot, type TurnSnapshot } from "./turn-snapshot.js";
 import { captureAutoCase } from "./autocase.js";
+import {
+	applyMemoryExtractionProposal,
+	buildMemoryManifest,
+	runMemoryAgent,
+	type MemoryScopeBaselines,
+} from "./memory-agent.js";
 import type { PromotionPolicy } from "./promotion.js";
 import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
 
@@ -67,6 +74,8 @@ export interface AutoReviewConfig {
 	 * When absent, the review gate uses the agent's own provider/model.
 	 */
 	reviewModel?: string;
+	/** Dedicated memory-agent writes to project/global require the normal human approval boundary. */
+	requireGlobalApproval?: boolean;
 	/**
 	 * Prefix-cache routing for the gate input (see reviewAutoRefine).
 	 * Absent mode → auto-detect; absent budget → the default prefix budget.
@@ -110,6 +119,10 @@ export interface GateState {
 	completedTurn: number;
 	/** Latest turn whose snapshot acquisition was reserved. */
 	lastSnapshotTurn: number;
+	/** Latest successful/no-op memory boundary, independent of later review/fate completion. */
+	memoryCheckpoint?: string;
+	/** Per-boundary/scope approval decisions retained until the memory phase settles. */
+	memoryDecisions: Record<string, ScopeApprovalDecision>;
 	lastReviewAt: number;
 	running: boolean;
 	/**
@@ -150,6 +163,8 @@ export interface ReviewRecord {
 export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config: AutoReviewConfig): void {
 	const perSession = new Map<string, GateState>();
 	const schedulers = new Map<string, ReviewScheduler<TurnSnapshot>>();
+	const captureTails = new Map<string, Promise<void>>();
+	const disposedSessions = new Set<string>();
 	const logger = ctx.logger("continual-evolve");
 	const reviewsPath = join(engine.baseDir, "evolve", "reviews.jsonl");
 	const defaultEnabled = config.enabledByDefault ?? true;
@@ -209,33 +224,37 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 	};
 
 	const captureAndSchedule = (agent: Agent, state: GateState, reason: TurnSnapshot["reason"]): void => {
-		if (!isGateEnabled(engine.baseDir, defaultEnabled)) return;
+		if (disposedSessions.has(agent.id) || !isGateEnabled(engine.baseDir, defaultEnabled)) return;
 		const turn = state.completedTurn;
 		const previousSnapshotTurn = state.lastSnapshotTurn;
 		if (reason === "turn_snapshot" && turn <= previousSnapshotTurn) return;
 		if (reason === "turn_snapshot") state.lastSnapshotTurn = turn;
-		const cursor = schedulerFor(agent, state).getCursor();
-		void captureTurnSnapshot(ctx, agent, {
-			turn,
-			reason,
-			...(cursor !== undefined ? { cursor } : {}),
-			maxChars: config.maxInputChars,
-		})
-			.then((snapshot) => schedulerFor(agent, state).schedule(snapshot))
-			.catch((cause) => {
-				const message = cause instanceof Error ? cause.message : String(cause);
-				logger.warn(`auto-review snapshot failed for ${agent.id}: ${message}`);
-				record({
-					sessionId: agent.id,
-					reason,
-					turnsSinceLastReview: state.turns - state.lastReviewAt,
-					outcome: "failed",
-					rationale: `snapshot error: ${message}`,
-				});
-				if (reason === "turn_snapshot" && state.lastSnapshotTurn === turn) {
-					state.lastSnapshotTurn = previousSnapshotTurn;
-				}
+		const previousCapture = captureTails.get(agent.id) ?? Promise.resolve();
+		const captureTask = previousCapture.then(async () => {
+			if (disposedSessions.has(agent.id) || !isGateEnabled(engine.baseDir, defaultEnabled)) return;
+			const cursor = schedulerFor(agent, state).getCursor();
+			const snapshot = await captureTurnSnapshot(ctx, agent, {
+				turn,
+				reason,
+				...(cursor !== undefined ? { cursor } : {}),
+				maxChars: config.maxInputChars,
 			});
+			if (!disposedSessions.has(agent.id)) schedulerFor(agent, state).schedule(snapshot);
+		}).catch((cause) => {
+			const message = cause instanceof Error ? cause.message : String(cause);
+			logger.warn(`auto-review snapshot failed for ${agent.id}: ${message}`);
+			record({
+				sessionId: agent.id,
+				reason,
+				turnsSinceLastReview: state.turns - state.lastReviewAt,
+				outcome: "failed",
+				rationale: `snapshot error: ${message}`,
+			});
+			if (reason === "turn_snapshot" && state.lastSnapshotTurn === turn) {
+				state.lastSnapshotTurn = previousSnapshotTurn;
+			}
+		});
+		captureTails.set(agent.id, captureTask);
 	};
 
 	// DSH emits this awaited boundary when a turn is about to close. The idle
@@ -287,8 +306,10 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 	ctx.on("agent/disposed", (payload: { agent?: Agent }) => {
 		const agent = payload.agent;
 		if (!agent) return;
+		disposedSessions.add(agent.id);
 		schedulers.get(agent.id)?.shutdown();
 		schedulers.delete(agent.id);
+		captureTails.delete(agent.id);
 		perSession.delete(agent.id);
 	});
 
@@ -328,6 +349,7 @@ function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 			turns: 0,
 			completedTurn: 0,
 			lastSnapshotTurn: 0,
+			memoryDecisions: {},
 			lastReviewAt: 0,
 			running: false,
 			skillRejects: new Map(),
@@ -338,6 +360,21 @@ function stateFor(map: Map<string, GateState>, sessionId: string): GateState {
 		map.set(sessionId, state);
 	}
 	return state;
+}
+
+function advanceMemoryCheckpoint(state: GateState, next: string): void {
+	if (state.memoryCheckpoint === undefined) {
+		state.memoryCheckpoint = next;
+		return;
+	}
+	const order = compareReviewCursors(next, state.memoryCheckpoint);
+	if (order === undefined || order > 0) state.memoryCheckpoint = next;
+}
+
+function rememberMemoryDecision(state: GateState, key: string, decision: ScopeApprovalDecision): void {
+	state.memoryDecisions[key] = decision;
+	const keys = Object.keys(state.memoryDecisions);
+	while (keys.length > 128) delete state.memoryDecisions[keys.shift() ?? ""];
 }
 
 /**
@@ -381,6 +418,7 @@ async function runGate(
 	}
 	state.running = true;
 	try {
+		await runMemoryExtractionPhase(ctx, engine, agent, config, state, snapshot, signal);
 		await runReviewPhase(ctx, engine, agent, config, state, snapshot, record, signal);
 		// D3: a goal stuck in "blocked" for consecutive gate runs gets one
 		// local-fate assessment (the pipeline below), so whatever led the
@@ -427,6 +465,98 @@ export async function runGoalBlockedFate(
 	const logger = ctx.logger("continual-evolve");
 	logger.info(`auto-review goal-blocked trigger [${agent.id}]: ${config.goalBlockedWrapupTurns} consecutive blocked gate runs → local-fate assessment`);
 	await runLocalFatePhase(ctx, engine, agent, config, state, "goal_blocked", record);
+}
+
+/**
+ * Dedicated ZCode-style memory phase. It shares the scheduler snapshot and
+ * snapshot with the general review, but owns its request loop, manifest and
+ * memory-only tool policy. Its phase-specific checkpoint advances after a
+ * successful/no-op memory outcome; later review/fate failures do not replay
+ * old memory decisions, while memory failures leave the boundary retryable.
+ */
+export async function runMemoryExtractionPhase(
+	ctx: Context,
+	engine: EvolutionEngine,
+	agent: Agent,
+	config: AutoReviewConfig,
+	state: GateState,
+	snapshot: TurnSnapshot,
+	signal?: AbortSignal,
+): Promise<void> {
+	const memorySnapshot = state.memoryCheckpoint ? sliceTurnSnapshot(snapshot, state.memoryCheckpoint) : snapshot;
+	if (!memorySnapshot.eligible || !memorySnapshot.trajectory) {
+		advanceMemoryCheckpoint(state, snapshot.cursor);
+		ctx.logger("continual-evolve").info(`memory agent no-op (${snapshot.reason}) [${agent.id}]: no new eligible evidence after checkpoint`);
+		return;
+	}
+	const sessionId = agent.id;
+	const projectKey = snapshot.projectKey ?? projectKeyOf(agent);
+	const baselines: MemoryScopeBaselines = {
+		local: engine.load("local", sessionId),
+		global: engine.load("global", undefined),
+		...(projectKey ? { project: engine.load("project", projectKey) } : {}),
+	};
+	const manifest = buildMemoryManifest(loadGateHarnessView(engine, sessionId, projectKey ? { projectKey } : undefined));
+	const overrideRoute = parseReviewModel(config.reviewModel, agent.options.provider);
+	const provider = overrideRoute?.provider ?? agent.options.provider;
+	const model = overrideRoute?.model ?? agent.options.model;
+	if (!provider || !model) throw new Error("evolve: no provider/model route for the memory extraction agent");
+	const tokenUsage = {
+		baseDir: engine.baseDir,
+		sessionId,
+		retain: engine.retention.tokenUsage,
+		onError: (cause: unknown) => ctx
+			.logger("continual-evolve")
+			.warn(`token-usage ledger failed for ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`),
+	};
+	const run = await runMemoryAgent(ctx, {
+		provider,
+		model,
+		manifest,
+		trajectory: memorySnapshot.trajectory,
+		trajectoryEvents: memorySnapshot.events,
+		maxOutputTokens: config.budgetTokens,
+		...(signal ? { signal } : {}),
+		tokenUsage,
+		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
+			? {
+					prefixCache: {
+						...(config.prefixCacheMode !== undefined ? { mode: config.prefixCacheMode } : {}),
+						...(config.prefixMaxChars !== undefined ? { maxChars: config.prefixMaxChars } : {}),
+					},
+				}
+			: {})),
+	});
+	if (run.proposal.edits.length === 0) {
+		advanceMemoryCheckpoint(state, memorySnapshot.cursor);
+		ctx.logger("continual-evolve").info(`memory agent no-op (${snapshot.reason}) [${sessionId}] after ${run.turns} turn(s): ${run.proposal.rationale}`);
+		return;
+	}
+	const source = { sessionId, ...(memorySnapshot.sourceSeqs.length > 0 ? { seqs: [...memorySnapshot.sourceSeqs] } : {}) };
+	const application = await applyMemoryExtractionProposal(ctx, engine, run.proposal, {
+		agent,
+		baselines,
+		...(projectKey ? { projectKey } : {}),
+		requireApproval: config.requireGlobalApproval ?? true,
+		source,
+		decisionCursor: memorySnapshot.cursor,
+		scopeDecisions: state.memoryDecisions,
+		onScopeDecision: (key, decision) => rememberMemoryDecision(state, key, decision),
+		...(signal ? { signal } : {}),
+	});
+	for (const result of application.results) {
+		emitEvolveComplete(
+			engine.baseDir,
+			buildEvolveCompleteEvent(result, `memory_agent:${snapshot.reason}`, sessionId),
+			config.reviewsRetain ?? DEFAULT_REVIEWS_RETAIN,
+		);
+	}
+	state.memoryCheckpoint = memorySnapshot.cursor;
+	const applied = application.results.reduce((count, result) => count + result.appliedEdits.filter((edit) => edit.applied).length, 0);
+	const declined = application.declinedScopes.length > 0 ? `; declined scopes=${application.declinedScopes.join(",")}` : "";
+	ctx.logger("continual-evolve").info(
+		`memory agent applied ${applied} edit(s) across ${application.results.length} scope batch(es) [${sessionId}] after ${run.turns} turn(s)${declined}: ${run.proposal.rationale}`,
+	);
 }
 
 async function runReviewPhase(
@@ -492,7 +622,7 @@ async function runReviewPhase(
 		return;
 	}
 
-	const proposal = await planWithLlm(ctx, {
+	const plannedProposal = await planWithLlm(ctx, {
 		agent,
 		state: harnessState,
 		history,
@@ -514,6 +644,8 @@ async function runReviewPhase(
 				}
 			: {})),
 	});
+	const proposal = stripDedicatedMemoryEdits(plannedProposal);
+	const memoryOnlyPlan = isDedicatedMemoryOnlyProposal(plannedProposal);
 	// Skills are governed resources: an auto-created skill is OFFERED to the
 	// user for a decision (固化/不固化) before it lands — the gate never
 	// writes a skill silently. Without consent the skill edits are withheld
@@ -533,7 +665,7 @@ async function runReviewPhase(
 		logger.info(`auto-review declined (${reason}) [${sessionId}]: no consented edits${withheld} — ${review.rationale}`);
 		// P1 auto-case capture: an attempted evolution that never landed is a
 		// regression asset. Contained — capture failure must not disturb the gate.
-		if (config.autoCase) {
+		if (config.autoCase && !memoryOnlyPlan) {
 			try {
 				const captured = captureAutoCase({
 					baseDir: engine.baseDir,
@@ -570,6 +702,26 @@ async function runReviewPhase(
 	if (config.notifyOnAutoReview && reason === "turn_snapshot" && result.appliedEdits.some((e) => e.applied)) {
 		notifyAutoReview(ctx, agent, result, turnsSinceLastReview);
 	}
+}
+
+/** True when the general planner returned only edits owned by the memory phase. */
+export function isDedicatedMemoryOnlyProposal(proposal: RefinementProposal): boolean {
+	return proposal.edits.length > 0 && proposal.edits.every((edit) => edit.kind === "memory");
+}
+
+/**
+ * Remove memory edits from the general auto-review planner. The dedicated
+ * memory phase owns this responsibility and has already run against the same
+ * snapshot; accepting a second memory proposal would reintroduce duplicates.
+ */
+export function stripDedicatedMemoryEdits(proposal: RefinementProposal): RefinementProposal {
+	const edits = proposal.edits.filter((edit) => edit.kind !== "memory");
+	if (edits.length === proposal.edits.length) return proposal;
+	return {
+		...proposal,
+		edits,
+		summary: `${proposal.summary} (memory edits owned by dedicated extractor)`,
+	};
 }
 
 /**

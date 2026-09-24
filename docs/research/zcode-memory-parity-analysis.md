@@ -1,6 +1,8 @@
 # ZCode Memory 对标与 DSH 持续进化记忆闭环分析
 
-> 调研日期：2026-09-24。本文是当前“自动 review 运行时开关与 ZCode 节奏对齐”待办的实现基线。进行相关实现前必须先读本文；以本文的 P0 验收条件为准，不要只把固定轮数从 6 改成 1。
+> 调研日期：2026-09-24。本文是自动记忆提取、存储、召回与运行时控制的实现基线。
+>
+> **实施状态（2026-09-24）**：P0 运行时闭环已完成——成功回合增量 snapshot、eligibility、每会话 latest-pending scheduler、失败/abort 不推进 cursor、运行时 pause/resume，以及专用 memory loop + manifest + 闭集 proposal 工具 + `EvolutionEngine.apply()` 均已接线。可读 Markdown 投影、定向 recall、专用 benchmark 与统一提取回执仍属 P1。实施细节见 [`src/memory-agent.ts`](../../src/memory-agent.ts) 与 [`implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md`](../../.agents/notes/implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md)。
 >
 > 范围：`dsh-continual-evolve` 的自动记忆提取、存储、召回、质量评估与运行时控制；不涉及替换 DSH 已有的版本化、回滚、审计和作用域能力。
 
@@ -190,19 +192,19 @@ ZCode 的项目记忆目录形态为：
 
 | 能力 | DSH 当前状态 | 优先级 |
 |---|---|---|
-| 每轮增量 snapshot 调度 | 仍以固定回合门禁为主 | P0 |
-| 提取 cursor/checkpoint | 只有来源 seq，不是提取完成边界 | P0 |
-| eligibility 过滤 | 有部分轨迹/门禁判断，但不是 ZCode 式 turn snapshot 过滤 | P0 |
-| 专用 Memory Agent | 通用 review/planner 管线 | P0 |
-| 已有记忆 manifest | Planner 能看到状态，但没有专用 manifest 提取协议 | P0 |
-| pending snapshot 合并 | 有 running 防重入，但没有 ZCode 式 latest-pending scheduler | P0 |
-| 动态 enable/disable | 目前是静态 `autoReview` + runtime pause | P0 |
+| 每轮增量 snapshot 调度 | 已完成：成功 turn idle 增量 snapshot + compaction flush | P0 |
+| 提取 cursor/checkpoint | 已完成：success/no-op 推进，error/abort 保留并重试 | P0 |
+| eligibility 过滤 | 已完成：空增量、内部 agent、直接 memory 写入、synthetic/model-only/过短文本 | P0 |
+| 专用 Memory Agent | 已完成：最多 5 turn 的独立 memory-only loop | P0 |
+| 已有记忆 manifest | 已完成：冻结、有界索引 + `memory_search` + update-first | P0 |
+| pending snapshot 合并 | 已完成：每会话串行 latest-pending scheduler | P0 |
+| 动态 enable/disable | 已完成：listener 常驻，v2 runtime 即时 pause/resume/status | P0 |
 | 定向召回 | 目录 + 完整 `evolve_list`，缺少 query/filter/limit 的精确读取工具 | P1 |
 | 可读 Markdown 投影 | JSON store 为主，没有 ZCode 式 `MEMORY.md` + fact files 投影 | P1 |
 | 提取质量 benchmark | 有 harness benchmark，但缺少 memory precision/recall/noise 评估 | P1 |
-| 生命周期 drain/cancel | gate 有 fire-and-forget，缺少提取 scheduler 的完整 drain/abort | P0 |
-| 提取回执 | 有成功应用后的 gate notice，但缺少 no-op/skip/更新的统一回执 | P1 |
-| 事实类型与 prompt | Planner 有规则，缺少独立 Memory Extraction Prompt | P0 |
+| 生命周期 drain/cancel | scheduler 有 drain/abort；session close 尚无 ZCode 式有界 drain 编排 | P1 |
+| 提取回执 | 有 failure/skip/evolve_complete 审计，但缺少 no-op/update/create 的统一前台回执 | P1 |
+| 事实类型与 prompt | 已完成：独立 memory system prompt + 核心 memoryType/Why/How 校验 | P0 |
 
 ## 4. DSH 对标后的目标架构
 
@@ -341,14 +343,14 @@ ZCode 的 Markdown 文件布局可以作为可读投影和用户信任层，不�
 
 ## 8. 推荐实施顺序
 
-1. 先抽离并测试 snapshot/cursor/eligibility 数据模型。
-2. 实现串行 latest-pending scheduler，覆盖并发、失败、abort、drain。
-3. 将 `/evolve pause|resume|status` 改成真正的运行时 enable/disable。
-4. 增加 Memory 专用 extraction prompt 和受限执行上下文。
-5. 将 memory manifest、update-first 和 no-op 语义接入提取器。
-6. 增加定向 recall，再增加 Markdown 投影。
-7. 建立 memory 专用 benchmark 和真实会话回放样本。
-8. 最后再决定是否把通用 planner 的 memory 分支复用或完全独立。
+1. **已完成**：snapshot/cursor/eligibility 数据模型与回归测试。
+2. **已完成**：串行 latest-pending scheduler，覆盖并发、失败、abort、drain。
+3. **已完成**：`/evolve pause|resume|status` 运行时 enable/disable。
+4. **已完成**：Memory 专用 extraction prompt 和受限工具上下文。
+5. **已完成**：memory manifest、update-first、no-op 与 `EvolutionEngine.apply()` 闭环。
+6. **下一步**：增加定向 recall，再增加 Markdown 投影。
+7. **后续**：建立 memory 专用 benchmark 和真实会话回放样本。
+8. **后续**：补统一提取回执与 session-close 有界 drain。
 
 ## 9. 来源
 

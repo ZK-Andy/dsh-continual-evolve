@@ -1,6 +1,8 @@
 # ZCode 推理档位与独立 Memory Agent 方案调研
 
-> 调研日期：2026-09-24。本文记录 ZCode 的模型调用语义、DSH 当前失败根因，以及两条分层实施建议。
+> 调研日期：2026-09-24。本文记录 ZCode 的模型调用语义、DSH 当时的失败根因，以及两条分层实施建议。
+>
+> **实施状态（2026-09-24）**：两条建议均已落地。能力感知最低 effort 见 [`src/llm-text.ts`](../../src/llm-text.ts)；专用后台 memory loop、冻结 manifest、闭集 `memory_search` / `memory_propose`、作用域审批与 `EvolutionEngine.apply()` 接线见 [`src/memory-agent.ts`](../../src/memory-agent.ts) 和 [`src/auto.ts`](../../src/auto.ts)。ADR：[`implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md`](../../.agents/notes/implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md)。下文保留实施前问题与取舍证据。
 >
 > **实现门槛：实现本方案任一代码任务前，必须先完整阅读本文，并以本文的证据、边界和验收条件为准；实现时还需按项目规则补齐 ADR 与回归测试。**
 

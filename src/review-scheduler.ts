@@ -1,12 +1,20 @@
 /**
- * Serial latest-pending scheduler for automatic review snapshots.
+ * Serial latest-boundary scheduler for automatic memory+review snapshots.
  *
- * This is the DSH equivalent of ZCode's memory extraction scheduler: one
- * runner per session, at most one running snapshot, and one replaceable
- * pending snapshot while the runner is busy. A cursor advances only after a
- * successful or no-op execution; errors and aborts leave it untouched so the
- * next snapshot retries the same durable boundary.
+ * One runner exists per session. A burst is coalesced by durable cursor rather
+ * than promise arrival: once multiple pending captures settle, the highest
+ * comparable boundary runs first. A cursor advances only after success/no-op;
+ * errors, aborts, and stale boundaries leave it unchanged.
  */
+
+/** Compare two scheduler cursors; undefined means the cursor families differ. */
+export function compareReviewCursors(left: string, right: string): number | undefined {
+	if (left === right) return 0;
+	const leftMatch = /^(seq|index):(\d+)$/.exec(left);
+	const rightMatch = /^(seq|index):(\d+)$/.exec(right);
+	if (!leftMatch || !rightMatch || leftMatch[1] !== rightMatch[1]) return undefined;
+	return Number(leftMatch[2]) - Number(rightMatch[2]);
+}
 
 /** Terminal state of one scheduled snapshot. */
 export type ReviewSchedulerStatus = "success" | "no-op" | "error" | "aborted";
@@ -23,7 +31,7 @@ export interface ReviewScheduler<TSnapshot> {
 	drain(): Promise<void>;
 	/** Last successfully processed or skipped snapshot boundary. */
 	getCursor(): string | undefined;
-	/** Whether a run or a replaceable pending snapshot exists. */
+	/** Whether a run or a pending acquisition exists. */
 	hasPendingWork(): boolean;
 	/** Submit a snapshot (or an async acquisition) without blocking the caller. */
 	schedule(snapshot: TSnapshot | Promise<TSnapshot>): void;
@@ -35,8 +43,16 @@ type SnapshotAcquisition<TSnapshot> =
 	| { readonly status: "acquired"; readonly snapshot: TSnapshot }
 	| { readonly status: "error" };
 
+interface PendingEntry<TSnapshot> {
+	promise: Promise<SnapshotAcquisition<TSnapshot>>;
+	result?: SnapshotAcquisition<TSnapshot>;
+}
+
+/** Bound unresolved acquisitions; actual auto capture is serialized per session. */
+const MAX_PENDING_ACQUISITIONS = 16;
+
 /**
- * Create a scheduler with ZCode-compatible coalescing and cursor semantics.
+ * Create a scheduler with ZCode-compatible serial/coalescing semantics.
  *
  * @param execute - one serial extraction/review operation
  * @param cursorOf - extracts the durable boundary from a snapshot
@@ -46,72 +62,135 @@ export function createReviewScheduler<TSnapshot>(
 	cursorOf: (snapshot: TSnapshot) => string | undefined,
 ): ReviewScheduler<TSnapshot> {
 	let cursor: string | undefined;
-	let latestPending: Promise<SnapshotAcquisition<TSnapshot>> | undefined;
 	let running: Promise<void> | undefined;
 	let shuttingDown = false;
+	let wakePending: (() => void) | undefined;
+	const pending: Array<PendingEntry<TSnapshot>> = [];
 	const shutdownController = new AbortController();
+	const signal = shutdownController.signal;
+
+	const trackPending = (acquisition: Promise<SnapshotAcquisition<TSnapshot>>): void => {
+		const entry = {} as PendingEntry<TSnapshot>;
+		entry.promise = acquisition.then((result) => {
+			entry.result = result;
+			wakePending?.();
+			return result;
+		});
+		pending.push(entry);
+		while (pending.length > MAX_PENDING_ACQUISITIONS) pending.shift();
+	};
+
+	const takeHighestPending = async (): Promise<SnapshotAcquisition<TSnapshot> | undefined> => {
+		while (!signal.aborted) {
+			for (let index = pending.length - 1; index >= 0; index -= 1) {
+				if (pending[index]?.result?.status === "error") pending.splice(index, 1);
+			}
+			if (pending.length === 0) return undefined;
+			const settled = pending.filter((entry) => entry.result !== undefined);
+			if (settled.length > 0) {
+				let bestIndex = -1;
+				let bestCursor: string | undefined;
+				for (let index = 0; index < settled.length; index += 1) {
+					const entry = settled[index];
+					if (!entry || entry.result?.status !== "acquired") continue;
+					const candidate = cursorOf(entry.result.snapshot);
+					const order = bestCursor === undefined || candidate === undefined
+						? 1
+						: compareReviewCursors(candidate, bestCursor);
+					if (bestIndex < 0 || order === undefined || order > 0) {
+						bestIndex = pending.indexOf(entry);
+						bestCursor = candidate;
+					}
+				}
+				if (bestIndex < 0) {
+					pending.length = 0;
+					return undefined;
+				}
+				const chosen = pending[bestIndex];
+				pending.splice(bestIndex, 1);
+				for (let index = pending.length - 1; index >= 0; index -= 1) {
+					if (pending[index]?.result !== undefined) pending.splice(index, 1);
+				}
+				return chosen?.result;
+			}
+			await new Promise<void>((resolve) => {
+				const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+				const onAbort = (): void => {
+					cleanup();
+					resolve();
+				};
+				wakePending = () => {
+					cleanup();
+					wakePending = undefined;
+					resolve();
+				};
+				signal.addEventListener("abort", onAbort, { once: true });
+			});
+		}
+		return undefined;
+	};
 
 	const processSnapshot = async (snapshot: TSnapshot): Promise<void> => {
-		if (shuttingDown || shutdownController.signal.aborted) return;
+		if (shuttingDown || signal.aborted) return;
+		const nextCursor = cursorOf(snapshot);
+		if (cursor !== undefined && nextCursor !== undefined) {
+			const order = compareReviewCursors(nextCursor, cursor);
+			if (order !== undefined && order <= 0) return;
+		}
 		let status: ReviewSchedulerStatus;
 		try {
-			status = await execute({ snapshot, signal: shutdownController.signal });
+			status = await execute({ snapshot, signal });
 		} catch {
-			// A failed acquisition/extraction is deliberately contained. The
-			// cursor remains unchanged and the next snapshot retries it.
 			return;
 		}
-		if (!shuttingDown && (status === "success" || status === "no-op")) {
-			cursor = cursorOf(snapshot);
+		if (!shuttingDown && (status === "success" || status === "no-op") && nextCursor !== undefined) {
+			const order = cursor === undefined ? 1 : compareReviewCursors(nextCursor, cursor);
+			if (order === undefined || order > 0) cursor = nextCursor;
 		}
 	};
 
 	const run = async (first: Promise<SnapshotAcquisition<TSnapshot>>): Promise<void> => {
 		try {
-			let current: Promise<SnapshotAcquisition<TSnapshot>> | undefined = first;
-			while (current && !shuttingDown) {
-				const acquisition = await waitForSnapshotAcquisitionOrShutdown(current, shutdownController.signal);
-				if (acquisition.status === "shutdown" || shuttingDown) break;
-				if (acquisition.status === "acquired") {
-					await processSnapshot(acquisition.snapshot);
-				}
-				current = shuttingDown ? undefined : latestPending;
-				latestPending = undefined;
+			let acquisition = await waitForSnapshotAcquisitionOrShutdown(first, signal);
+			while (acquisition.status !== "shutdown" && !shuttingDown) {
+				if (acquisition.status === "acquired") await processSnapshot(acquisition.snapshot);
+				const next = await takeHighestPending();
+				if (!next) break;
+				acquisition = next;
 			}
 		} finally {
-			if (shuttingDown) latestPending = undefined;
+			if (shuttingDown) {
+				pending.length = 0;
+				wakePending?.();
+				wakePending = undefined;
+			}
 			running = undefined;
 		}
 	};
 
 	return {
 		async drain() {
-			while (running) {
-				await running;
-			}
+			while (running) await running;
 		},
 		getCursor() {
 			return cursor;
 		},
 		hasPendingWork() {
-			return running !== undefined || latestPending !== undefined;
+			return running !== undefined || pending.length > 0;
 		},
 		schedule(snapshot) {
 			if (shuttingDown) return;
 			const acquisition = acquireSnapshot(snapshot);
-			if (running) {
-				// Replace, never queue: a burst of turns contributes one latest
-				// boundary and the next extraction consumes all intervening rows.
-				latestPending = acquisition;
-				return;
-			}
-			running = run(acquisition);
+			if (running) trackPending(acquisition);
+			else running = run(acquisition);
 		},
 		shutdown() {
 			if (shuttingDown) return;
 			shuttingDown = true;
-			latestPending = undefined;
+			pending.length = 0;
 			shutdownController.abort();
+			wakePending?.();
+			wakePending = undefined;
 		},
 	};
 }
