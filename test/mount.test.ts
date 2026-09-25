@@ -134,6 +134,20 @@ describe("mountSkill / unmountSkill", () => {
 		}
 	});
 
+	it("refuses to mount an entry with an empty reference contract", async () => {
+		const base = makeBase();
+		try {
+			const ctx = { get: () => undefined } as never;
+			await expect(mountSkill(ctx, base, skillEntry({ reference: {}, arguments: {} }))).rejects.toThrow(/has no python reference/);
+			const bare = skillEntry();
+			delete bare.reference;
+			await expect(mountSkill(ctx, base, bare)).rejects.toThrow(/has no python reference/);
+			expect(loadLedger(base).mounted).toHaveLength(0);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
 	it("writes the package and ledger without a loader service", async () => {
 		const base = makeBase();
 		try {
@@ -276,6 +290,89 @@ describe("restoreMounted", () => {
 			} as never;
 			await restoreMounted(ctx, base);
 			expect(warnings.some((w) => w.includes("mount restore failed for code_reviewer"))).toBe(true);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("renders a string-valued restore failure without throwing", async () => {
+		const base = makeBase();
+		try {
+			const noLoader = { get: () => undefined } as never;
+			await mountSkill(noLoader, base, skillEntry());
+			const warnings: string[] = [];
+			const ctx = {
+				get: () => ({ create: async () => { throw "boot-string"; } }),
+				logger: () => ({ info: () => {}, warn: (msg: string) => warnings.push(msg), error: () => {} }),
+			} as never;
+			await restoreMounted(ctx, base);
+			expect(warnings.some((w) => w.includes("mount restore failed for code_reviewer: boot-string"))).toBe(true);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("mount edge shapes (round 8)", () => {
+	it("falls back to an empty ledger for a non-array mounted field", () => {
+		const base = makeBase();
+		try {
+			mkdirSync(join(base, "evolve", "mounted"), { recursive: true });
+			writeFileSync(join(base, "evolve", "mounted", "index.json"), '{"mounted":"nope"}', "utf8");
+			expect(loadLedger(base)).toEqual({ mounted: [] });
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("renders a guidance entry without a reference or arguments contract", () => {
+		const base = makeBase();
+		try {
+			const entry = skillEntry({ skill_kind: "guidance" });
+			delete entry.reference;
+			delete entry.arguments;
+			const dir = renderMountPackage(base, entry);
+			expect(existsSync(join(dir, "index.js"))).toBe(true);
+			const source = renderPluginSource("skill_code_reviewer", entry);
+			expect(source).toContain("code-reviewer");
+			const parameters = renderParameters(entry);
+			expect(parameters["properties"]).toEqual({});
+			expect(parameters["required"]).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("coerces non-object contract specs to plain string properties", () => {
+		const parameters = renderParameters(
+			skillEntry({
+				arguments: {
+					a: "str",
+					b: null,
+					c: [1],
+					d: { type: 42 },
+					e: { description: 7 },
+					f: { type: "number", description: "ok", required: true },
+				},
+			}),
+		);
+		const props = parameters["properties"] as Record<string, Record<string, unknown>>;
+		expect(props["a"]).toEqual({ type: "string", description: "a" });
+		expect(props["b"]).toEqual({ type: "string", description: "b" });
+		expect(props["d"]).toEqual({ type: "string", description: "d" });
+		expect(props["e"]).toEqual({ type: "string", description: "e" });
+		expect(parameters["required"]).toEqual(["f"]);
+	});
+
+	it("wraps string-valued loader failures without throwing", async () => {
+		const base = makeBase();
+		try {
+			const noLoader = { get: () => undefined } as never;
+			await mountSkill(noLoader, base, skillEntry());
+			const failingCreate = { get: () => ({ create: async () => { throw "boom-string"; } }) } as never;
+			await expect(mountSkill(failingCreate, base, skillEntry())).rejects.toThrow(/hot mount failed: boom-string/);
+			const failingRemove = { get: () => ({ remove: async () => { throw "gone-string"; } }) } as never;
+			await expect(unmountSkill(failingRemove, base, "code_reviewer")).rejects.toThrow(/hot unmount failed: gone-string/);
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}

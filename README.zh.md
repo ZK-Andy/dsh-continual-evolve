@@ -7,9 +7,9 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-950%20passing-brightgreen)]()
-[![Coverage · statements](https://img.shields.io/badge/coverage_statements-97%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-88%25-green)]()
+[![Tests](https://img.shields.io/badge/tests-983%20passing-brightgreen)]()
+[![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
+[![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
@@ -126,7 +126,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（950 例）
+pnpm test                    # vitest（983 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm coverage:gaps           # 定位各文件未覆盖行（只读）
 pnpm lint                    # oxlint src test

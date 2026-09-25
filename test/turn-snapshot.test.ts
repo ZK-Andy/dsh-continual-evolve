@@ -4,6 +4,7 @@ import {
 	containsDirectMemoryWrite,
 	evaluateSnapshotEligibility,
 	isInternalAgent,
+	serializeSnapshotEvents,
 	sliceTurnSnapshot,
 } from "../src/turn-snapshot.js";
 import type { Context } from "@deepseek-ai/cordis";
@@ -122,5 +123,116 @@ describe("captureTurnSnapshot", () => {
 		const sliced = sliceTurnSnapshot(second, first.cursor);
 		expect(sliced.events).toEqual([noSeqUser("第二条无 seq 新证据")]);
 		expect(sliced.trajectory).toBe("user: 第二条无 seq 新证据");
+	});
+});
+
+describe("snapshot edge shapes (round 8)", () => {
+	it("carries the project key and an ineligible reason", async () => {
+		const withCwd = { id: "s", session: { header: { cwd: "/mnt/work/work" } } } as never;
+		const snap = await captureTurnSnapshot(ctxWithEvents([{ type: "turn/start", data: {} }]), withCwd, {
+			turn: 1,
+			reason: "turn_snapshot",
+			maxChars: 2000,
+		});
+		expect(snap.projectKey).toBeTruthy();
+		expect(snap.eligible).toBe(false);
+		expect(snap.trajectory).toBe("");
+		expect(snap.skipReason).toBe("no-user-prose");
+	});
+
+	it("detects memory writes in odd shapes", () => {
+		expect(containsDirectMemoryWrite([null, "str", 42])).toBe(false);
+		expect(containsDirectMemoryWrite([{ type: "assistant/message", data: "evolve_add" }])).toBe(true);
+		expect(containsDirectMemoryWrite([{ type: "assistant/message", data: 42 }])).toBe(false);
+		expect(containsDirectMemoryWrite([{ type: "tool/call", data: null }])).toBe(false);
+		expect(containsDirectMemoryWrite([{ type: "tool/call", data: {} }])).toBe(false);
+	});
+
+	it("serializes mixed and hostile rows", () => {
+		const out = serializeSnapshotEvents(
+			[
+				null,
+				"just-a-string",
+				{ type: "user/message", data: { visibility: "model-only", content: [{ type: "text", text: "hidden" }] } },
+				{ type: "user/message", data: { content: [{ type: "text", text: "synthetic" }], source: { kind: "user", synthetic: true } } },
+				{ type: "user/message", data: { content: [{ type: "text", text: "agent" }], source: { kind: "agent" } } },
+				{ type: "carrier/pigeon", data: {} },
+				{ type: "user/message", data: { content: 42, source: { kind: "user" } } },
+				{
+					type: "assistant/message",
+					data: { content: ["raw", 42, { type: "text" }, { type: "text", text: "hi", synthetic: true }, { type: "text", text: 7 }] },
+				},
+			],
+			1000,
+		);
+		expect(out).toBe("assistant: raw");
+	});
+
+	it("truncates to the bounded tail", () => {
+		const out = serializeSnapshotEvents([user(1, "第一条约定内容很长"), assistant(2, "收到，我记住了")], 10);
+		expect(out.length).toBeLessThanOrEqual(10);
+	});
+
+	it("serializes scalar string content", () => {
+		const out = serializeSnapshotEvents(
+			[{ type: "user/message", data: { content: "scalar words here", source: { kind: "user" } } }],
+			1000,
+		);
+		expect(out).toBe("user: scalar words here");
+	});
+
+	it("falls back to the host session events without a reader", async () => {
+		const snap = await captureTurnSnapshot({} as unknown as Context, agent, { turn: 1, reason: "turn_snapshot", maxChars: 2000 });
+		expect(snap.events).toEqual([]);
+		expect(snap.eligible).toBe(false);
+	});
+
+	it("treats a garbage reader payload as empty", async () => {
+		const bad = { sessionQuery: { readSurface: async () => ({ events: 42 }) } } as unknown as Context;
+		const snap = await captureTurnSnapshot(bad, agent, { turn: 1, reason: "turn_snapshot", maxChars: 2000 });
+		expect(snap.events).toEqual([]);
+	});
+
+	it("keeps everything on non-numeric or unknown phase cursors", async () => {
+		const full = await captureTurnSnapshot(ctxWithEvents([user(1, "第一条约定"), user(2, "第二条约定"), user(3, "第三条约定")]), agent, {
+			turn: 1,
+			reason: "turn_snapshot",
+			maxChars: 2000,
+		});
+		expect(sliceTurnSnapshot(full, "seq:oops").events).toHaveLength(3);
+		expect(sliceTurnSnapshot(full, "index:oops").events).toHaveLength(3);
+		expect(sliceTurnSnapshot(full, "index:-1").events).toHaveLength(3);
+		expect(sliceTurnSnapshot(full, "bogus").events).toHaveLength(3);
+		const emptied = sliceTurnSnapshot(full, "seq:99");
+		expect(emptied.events).toHaveLength(0);
+		expect(emptied.trajectory).toBe("");
+		expect(emptied.skipReason).toBe("no-new-events");
+	});
+
+	it("slices index cursors on every boundary shape", async () => {
+		const noSeqUser = (text: string): Record<string, unknown> => ({
+			type: "user/message",
+			data: { content: [{ type: "text", text }], source: { kind: "user" } },
+		});
+		const full = await captureTurnSnapshot(
+			ctxWithEvents([noSeqUser("一"), noSeqUser("二"), noSeqUser("三"), noSeqUser("四"), noSeqUser("五")]),
+			agent,
+			{ turn: 1, reason: "turn_snapshot", maxChars: 2000 },
+		);
+		const indexed = { ...full, cursor: "index:5", capturedAfterCursor: "index:2" };
+		expect(sliceTurnSnapshot(indexed, "index:oops").events).toHaveLength(5);
+		expect(sliceTurnSnapshot(indexed, "index:1").events).toHaveLength(5);
+		expect(sliceTurnSnapshot(indexed, "index:9").events).toHaveLength(0);
+		expect(sliceTurnSnapshot(indexed, "index:4").events).toHaveLength(3);
+	});
+
+	it("resolves seq event boundaries past junk rows", async () => {
+		const snap = await captureTurnSnapshot(ctxWithEvents([null, "x", user(1, "第一条约定内容")]), agent, {
+			turn: 1,
+			reason: "turn_snapshot",
+			maxChars: 2000,
+		});
+		expect(snap.sourceSeqs).toEqual([1]);
+		expect(snap.cursor).toBe("seq:1");
 	});
 });

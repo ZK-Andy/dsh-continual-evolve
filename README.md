@@ -7,9 +7,9 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-950%20passing-brightgreen)]()
-[![Coverage · statements](https://img.shields.io/badge/coverage_statements-97%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-88%25-green)]()
+[![Tests](https://img.shields.io/badge/tests-983%20passing-brightgreen)]()
+[![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
+[![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
@@ -142,7 +142,7 @@ before aborting.
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (950 tests)
+pnpm test                    # vitest (983 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm coverage:gaps           # locate uncovered lines per file (read-only)
 pnpm lint                    # oxlint src test

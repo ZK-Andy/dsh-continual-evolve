@@ -150,4 +150,53 @@ describe("serializeSurface", () => {
 		expect(out.length).toBeLessThanOrEqual(20);
 		expect(out).toContain("assistant");
 	});
+
+	it("skips non-object rows and non-array content", () => {
+		const out = serializeSurface([null, 42, { type: "user/message", data: { content: "not-an-array" } }], 1000);
+		expect(out).toBe("");
+	});
+
+	it("renders a text block without text as empty", () => {
+		const out = serializeSurface([{ type: "user/message", data: { content: [{ type: "text" }, { type: "text", text: "hi" }] } }], 1000);
+		expect(out).toBe("user: hi");
+	});
+});
+
+describe("review gate edge shapes (round 8)", () => {
+	it("throws on valid-JSON non-object replies", () => {
+		expect(() => parseAutoRefineReview("```json\n[1,2]\n```")).toThrow(/must be an object/);
+		expect(() => parseAutoRefineReview("```json\n42\n```")).toThrow(/must be an object/);
+	});
+
+	it("falls back to a default rationale", () => {
+		const review = parseAutoRefineReview(JSON.stringify({ shouldRefine: true }));
+		expect(review.shouldRefine).toBe(true);
+		expect(review.rationale).toBe("No rationale provided.");
+	});
+
+	it("throws without a provider/model route", async () => {
+		const agent = { id: "s", options: {} };
+		await expect(
+			reviewAutoRefine({} as never, {
+				agent: agent as never,
+				state: emptyHarnessState(),
+				history: [],
+				context: { reason: "turn_snapshot", turnsSinceLastReview: 6 },
+				trajectory: "user did things",
+			}),
+		).rejects.toThrow(/no provider\/model route/);
+	});
+
+	it("throws without a trajectory to judge", async () => {
+		const agent = { id: "s", options: { provider: "p", model: "m" } };
+		await expect(
+			reviewAutoRefine({} as never, {
+				agent: agent as never,
+				state: emptyHarnessState(),
+				history: [],
+				context: { reason: "turn_snapshot", turnsSinceLastReview: 6 },
+				trajectory: "",
+			}),
+		).rejects.toThrow(/no trajectory/);
+	});
 });

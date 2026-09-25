@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import {
 	DEFAULT_LOG_MAX_BYTES,
 	PLUGIN_LOG_FILE_NAME,
@@ -179,5 +179,82 @@ describe("sessionIdsInLine / filterLogBySession", () => {
 	it("filters nothing for an empty session id and passes unparseable lines through a raw scan", () => {
 		expect(filterLogBySession([lineA], "  ")).toEqual([]);
 		expect(sessionIdsInLine("raw line session-00ff99")).toEqual(["session-00ff99"]);
+	});
+});
+
+describe("logfile edge shapes (round 8)", () => {
+	it("renders a stackless Error trailing arg via its message", () => {
+		const stackless = new Error("bare failure");
+		stackless.stack = undefined;
+		const record = JSON.parse(logRecord(message({ args: ["done", stackless] }))) as Record<string, unknown>;
+		expect(record["message"]).toContain("done bare failure");
+		const withStack = JSON.parse(logRecord(message({ args: ["done", new Error("with stack")] }))) as Record<string, unknown>;
+		expect(withStack["message"]).toContain("done");
+		expect(withStack["message"]).toContain("with stack");
+		const plain = JSON.parse(logRecord(message({ args: ["done", { a: 1 }] }))) as Record<string, unknown>;
+		expect(plain["message"]).toContain('done {"a":1}');
+	});
+
+	it("renders sparse records with empty fields", () => {
+		expect(formatLogLine("{}")).toBe(" [?]");
+		expect(formatLogLine(JSON.stringify({ message: "hello" }))).toContain("hello");
+		expect(formatLogLine(JSON.stringify({ args: [1, { a: 1 }] }))).toContain('{"a":1}');
+	});
+
+	it("honors an explicit log level", () => {
+		const dir = makeDir();
+		try {
+			const seen: unknown[] = [];
+			const ctx = {
+				logger: {
+					exporter(exporter: { levels?: Record<string, number> }) {
+						seen.push(exporter.levels);
+					},
+				},
+			};
+			registerFileLogger(ctx as never, dir, { logLevel: 3 });
+			expect(seen).toEqual([{ default: 3 }]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("falls through to append when rotation rename fails", () => {
+		const dir = makeDir();
+		try {
+			const path = pluginLogFilePath(dir);
+			mkdirSync(join(dir, "evolve"), { recursive: true });
+			writeFileSync(path, "x".repeat(100), "utf8");
+			// A non-empty directory at the .1 slot: rename fails, the line
+			// still lands in the live file.
+			mkdirSync(`${path}.1`);
+			writeFileSync(join(`${path}.1`, "child"), "x", "utf8");
+			appendOrRotate(path, 10, "newline");
+			expect(readFileSync(path, "utf8")).toContain("newline");
+			expect(statSync(`${path}.1`).isDirectory()).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("swallows exporter write failures without disturbing the caller", () => {
+		const dir = makeDir();
+		try {
+			// A directory where the log file belongs: every append throws.
+			const path = pluginLogFilePath(dir);
+			mkdirSync(path, { recursive: true });
+			let captured: { export(message: Parameters<typeof logRecord>[0]): void } | undefined;
+			const ctx = {
+				logger: {
+					exporter(exporter: typeof captured) {
+						captured = exporter;
+					},
+				},
+			};
+			const exporter = registerFileLogger(ctx as never, dir);
+			expect(() => exporter.export(message())).not.toThrow();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

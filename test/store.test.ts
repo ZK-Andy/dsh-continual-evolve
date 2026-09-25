@@ -6,13 +6,14 @@
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createEvolutionEngine } from "../src/service.js";
 import {
 	DEFAULT_REFINEMENTS_RETAIN,
 	DEFAULT_REVIEWS_RETAIN,
 	DEFAULT_SNAPSHOT_RETAIN,
 	DEFAULT_TOKEN_USAGE_RETAIN,
+	loadResults,
 	pruneJsonlFile,
 	pruneSnapshots,
 	resolveHistoryRetention,
@@ -179,5 +180,85 @@ describe("reviews trail retention (#20)", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("store unreadable-path containment (round 8)", () => {
+	it("leaves an unreadable snapshots dir alone (file in its place)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-store-"));
+		try {
+			const fake = join(dir, "snapshots");
+			writeFileSync(fake, "x", "utf8");
+			expect(() => pruneSnapshots(fake, 20)).not.toThrow();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps unstatable files rather than deleting blindly (dangling symlink)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-store-"));
+		try {
+			const snapshots = join(dir, "snapshots");
+			mkdirSync(snapshots, { recursive: true });
+			writeFileSync(join(snapshots, "a.json"), "{}", "utf8");
+			symlinkSync(join(snapshots, "no-such-target.json"), join(snapshots, "ghost.json"));
+			expect(() => pruneSnapshots(snapshots, 1)).not.toThrow();
+			expect(lstatSync(join(snapshots, "ghost.json")).isSymbolicLink()).toBe(true);
+			expect(existsSync(join(snapshots, "a.json"))).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("continues the sweep past an undeletable victim (directory)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-store-"));
+		try {
+			const snapshots = join(dir, "snapshots");
+			mkdirSync(join(snapshots, "b.json"), { recursive: true });
+			writeFileSync(join(snapshots, "a.json"), "{}", "utf8");
+			writeFileSync(join(snapshots, "c.json"), "{}", "utf8");
+			utimesSync(join(snapshots, "b.json"), new Date("2020-01-01"), new Date("2020-01-01"));
+			utimesSync(join(snapshots, "a.json"), new Date("2021-01-01"), new Date("2021-01-01"));
+			utimesSync(join(snapshots, "c.json"), new Date("2022-01-01"), new Date("2022-01-01"));
+			expect(() => pruneSnapshots(snapshots, 1)).not.toThrow();
+			// The directory victim survives (unlink rejects directories) but
+			// the sweep continues past it: the older real file is gone.
+			expect(existsSync(join(snapshots, "b.json"))).toBe(true);
+			expect(existsSync(join(snapshots, "a.json"))).toBe(false);
+			expect(existsSync(join(snapshots, "c.json"))).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves an unreadable JSONL file alone (directory in its place)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-store-"));
+		try {
+			const resultsPath = storePaths(dir, "local", "s").resultsPath;
+			mkdirSync(resultsPath, { recursive: true });
+			expect(() => pruneJsonlFile(resultsPath, 5)).not.toThrow();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("skips malformed and non-result lines when reading history", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-store-"));
+		try {
+			const paths = storePaths(dir, "local", "s");
+			mkdirSync(paths.stateDir, { recursive: true });
+			writeFileSync(paths.resultsPath, ['{"id":"r1","appliedEdits":[]}', "garbage{{{", '{"nope":1}', "", "   "].join("\n"), "utf8");
+			expect(loadResults(paths)).toEqual([{ id: "r1", appliedEdits: [] }]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves project/local path variants without traversal", () => {
+		expect(storePaths("/b", "project").stateDir).toBe(join("/b", "evolve", "projects", "project"));
+		expect(storePaths("/b", "project", "my-proj").stateDir).toBe(join("/b", "evolve", "projects", "my-proj"));
+		expect(storePaths("/b", "project", "../../evil").stateDir.split("/")).not.toContain("..");
+		expect(storePaths("/b", "local").stateDir).toBe(join("/b", "evolve", "local", "anonymous"));
+		expect(storePaths("/b", "local", "s1").stateDir).toBe(join("/b", "evolve", "local", "s1"));
 	});
 });
