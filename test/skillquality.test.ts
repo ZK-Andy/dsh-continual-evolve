@@ -161,6 +161,10 @@ describe("validateSkillEntryContent", () => {
 	it("accepts skill-local resource references", () => {
 		expect(validateSkillEntryContent("See `references/examples.md` and [scripts/run.mjs](scripts/run.mjs).")).toEqual([]);
 	});
+
+	it("accepts leading parent-relative cross-skill interlinks", () => {
+		expect(validateSkillEntryContent("See `../skill-creator/references/template.md` for the format.")).toEqual([]);
+	});
 });
 
 describe("validateRenderedSkillMarkdown", () => {

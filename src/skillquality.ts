@@ -249,8 +249,11 @@ export function validateRenderedSkillMarkdown(markdown: string): string[] {
  *   parsed instead of the generated one (the platform reads the FIRST
  *   closing `---`), so the file could be ignored or routed wrongly;
  * - resource references (`references/…`, `scripts/…`) must be skill-local
- *   relative paths — parent-relative (`../`) or absolute targets escape the
- *   skill directory and are rejected.
+ *   relative paths — an embedded `/../` after the category escapes the skill
+ *   directory and is rejected. A leading `../` instead addresses a sibling
+ *   skill (cross-skill interlink, e.g. `../skill-creator/…`) and is allowed:
+ *   it is not dangling-checked since cross-skill targets live outside this
+ *   entry's shipped files (see skillResourceRefs).
  * Returns human-readable problems; an empty array means the content is
  * mechanically acceptable.
  */
@@ -295,6 +298,8 @@ export function validateRenderedSkill(entry: HarnessEntry): string[] {
  * targets starting with the category, plus backticked/prose paths carrying
  * a filename extension. Used after materialization to warn about dangling
  * references (a body referencing a resource the entry never ships).
+ * Leading-`../` cross-skill interlinks are skipped, not warned: they resolve
+ * against sibling skill directories, never against shipped files.
  */
 export function skillResourceRefs(content: string): string[] {
 	const refs = new Set<string>();
