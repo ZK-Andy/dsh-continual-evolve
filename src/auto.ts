@@ -28,7 +28,7 @@ import type { EvolutionEngine } from "./service.js";
 import { planWithLlm } from "./planner.js";
 import { reviewAutoRefine, type AutoRefineReason } from "./review.js";
 import { goalServiceOf } from "./goal.js";
-import { notifyAutoReview } from "./notify.js";
+import { notifyAutoReview, notifyMemoryExtraction } from "./notify.js";
 import { runLocalFatePhase } from "./fate.js";
 import { mergeHarnessStates } from "./state.js";
 import { projectKeyOf } from "./project.js";
@@ -120,6 +120,12 @@ export interface AutoReviewConfig {
 	 * window, not the full past).
 	 */
 	reviewsRetain?: number;
+	/**
+	 * Session-close bounded drain (P1): how long a disposed session's
+	 * in-flight extraction may settle before its owner signal aborts.
+	 * Absent → 15s; 0 restores the legacy immediate abort.
+	 */
+	sessionCloseDrainMs?: number;
 }
 
 export interface GateState {
@@ -159,14 +165,65 @@ export interface GateState {
 /** Turns a rejected skill candidate stays silent before being offered again. */
 export const SKILL_CONSULT_COOLDOWN_TURNS = 10;
 
+/** Default session-close drain budget: an in-flight extraction gets 15s to settle. */
+export const SESSION_CLOSE_DRAIN_MS_DEFAULT = 15000;
+
+/**
+ * Resolve the session-close drain budget: absent/invalid → default, 0 →
+ * immediate abort (legacy). Negative or non-finite values fail back to the
+ * default rather than silently disabling the drain.
+ */
+export function resolveSessionCloseDrainMs(raw?: number): number {
+	if (raw === undefined) return SESSION_CLOSE_DRAIN_MS_DEFAULT;
+	if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return SESSION_CLOSE_DRAIN_MS_DEFAULT;
+	return Math.floor(raw);
+}
+
+/**
+ * Bounded session-close drain for one scheduler: wait for in-flight work up
+ * to drainMs, then abort the owner signal and drop pending captures. Never
+ * rejects — disposal must not hang the host on a stuck model call, and the
+ * abort below is idempotent when the drain already settled.
+ */
+export function drainSchedulerOnDispose(scheduler: Pick<ReviewScheduler<TurnSnapshot>, "drain" | "shutdown">, drainMs: number): Promise<void> {
+	if (drainMs <= 0) {
+		try {
+			scheduler.shutdown();
+		} catch {
+			// shutdown is flag-setting plus abort: nothing observable to do
+		}
+		return Promise.resolve();
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, drainMs);
+	});
+	const settle = (): void => {
+		if (timer !== undefined) clearTimeout(timer);
+		try {
+			scheduler.shutdown();
+		} catch {
+			// same as above — the abort is best-effort by design
+		}
+	};
+	return Promise.race([scheduler.drain(), timeout]).then(settle, settle);
+}
+
 export interface ReviewRecord {
 	timestamp: string;
 	sessionId: string;
 	reason: AutoRefineReason;
 	turnsSinceLastReview: number;
-	outcome: "approved" | "declined" | "failed" | "assessed" | "deferred" | "skipped" | "armed";
+	outcome: "approved" | "declined" | "failed" | "assessed" | "deferred" | "skipped" | "armed" | "applied" | "noop";
 	rationale?: string;
 	refinementId?: string;
+	/** P1 extraction stats (§6.7): wall time of the memory phase. */
+	durationMs?: number;
+	/** Extractor loop turns / manifest searches behind this row. */
+	memoryTurns?: number;
+	memorySearches?: number;
+	/** Applied edit count carried by an applied row. */
+	appliedEdits?: number;
 }
 
 export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config: AutoReviewConfig): void {
@@ -212,7 +269,7 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 				}
 				try {
 					if (config.memoryOnly) {
-						await runMemoryExtractionPhase(ctx, engine, agent, config, state, snapshot, signal);
+						await runMemoryExtractionPhase(ctx, engine, agent, config, state, snapshot, record, signal);
 					} else {
 						await runGate(ctx, engine, agent, config, state, snapshot, record, signal);
 					}
@@ -321,10 +378,17 @@ export function registerAutoReview(ctx: Context, engine: EvolutionEngine, config
 		const agent = payload.agent;
 		if (!agent) return;
 		disposedSessions.add(agent.id);
-		schedulers.get(agent.id)?.shutdown();
+		const scheduler = schedulers.get(agent.id);
 		schedulers.delete(agent.id);
 		captureTails.delete(agent.id);
 		perSession.delete(agent.id);
+		if (scheduler) {
+			// Bounded drain (P1): an in-flight extraction gets drainMs to
+			// settle so its result is not lost on session close; afterwards
+			// the owner signal aborts. Fire-and-forget — disposal must never
+			// hang the host, and the helper never rejects.
+			void drainSchedulerOnDispose(scheduler, resolveSessionCloseDrainMs(config.sessionCloseDrainMs));
+		}
 	});
 
 	ctx.on("session/event", (session: { id: string }, event: { type: string }) => {
@@ -436,7 +500,7 @@ async function runGate(
 	}
 	state.running = true;
 	try {
-		await runMemoryExtractionPhase(ctx, engine, agent, config, state, snapshot, signal);
+		await runMemoryExtractionPhase(ctx, engine, agent, config, state, snapshot, record, signal);
 		await runReviewPhase(ctx, engine, agent, config, state, snapshot, record, signal);
 		// D3: a goal stuck in "blocked" for consecutive gate runs gets one
 		// local-fate assessment (the pipeline below), so whatever led the
@@ -499,15 +563,29 @@ export async function runMemoryExtractionPhase(
 	config: AutoReviewConfig,
 	state: GateState,
 	snapshot: TurnSnapshot,
+	record: (entry: Omit<ReviewRecord, "timestamp">) => void,
 	signal?: AbortSignal,
 ): Promise<void> {
+	const sessionId = agent.id;
+	const turnsSinceLastReview = state.turns - state.lastReviewAt;
+	const startedAt = Date.now();
 	const memorySnapshot = state.memoryCheckpoint ? sliceTurnSnapshot(snapshot, state.memoryCheckpoint) : snapshot;
 	if (!memorySnapshot.eligible || !memorySnapshot.trajectory) {
 		advanceMemoryCheckpoint(state, snapshot.cursor);
 		ctx.logger("continual-evolve").info(`memory agent no-op (${snapshot.reason}) [${agent.id}]: no new eligible evidence after checkpoint`);
+		record({
+			sessionId,
+			reason: snapshot.reason,
+			turnsSinceLastReview,
+			outcome: "noop",
+			rationale: `memory no-op (${snapshot.reason}): no new eligible evidence after checkpoint`,
+			durationMs: Date.now() - startedAt,
+			memoryTurns: 0,
+			memorySearches: 0,
+			appliedEdits: 0,
+		});
 		return;
 	}
-	const sessionId = agent.id;
 	const projectKey = snapshot.projectKey ?? projectKeyOf(agent);
 	const baselines: MemoryScopeBaselines = {
 		local: engine.load("local", sessionId),
@@ -549,6 +627,17 @@ export async function runMemoryExtractionPhase(
 	if (run.proposal.edits.length === 0) {
 		advanceMemoryCheckpoint(state, memorySnapshot.cursor);
 		ctx.logger("continual-evolve").info(`memory agent no-op (${snapshot.reason}) [${sessionId}] after ${run.turns} turn(s): ${run.proposal.rationale}`);
+		record({
+			sessionId,
+			reason: snapshot.reason,
+			turnsSinceLastReview,
+			outcome: "noop",
+			rationale: `memory no-op (${snapshot.reason}) after ${run.turns} turn(s): ${run.proposal.rationale}`,
+			durationMs: Date.now() - startedAt,
+			memoryTurns: run.turns,
+			memorySearches: run.searches,
+			appliedEdits: 0,
+		});
 		return;
 	}
 	const source = { sessionId, ...(memorySnapshot.sourceSeqs.length > 0 ? { seqs: [...memorySnapshot.sourceSeqs] } : {}) };
@@ -573,9 +662,50 @@ export async function runMemoryExtractionPhase(
 	state.memoryCheckpoint = memorySnapshot.cursor;
 	const applied = application.results.reduce((count, result) => count + result.appliedEdits.filter((edit) => edit.applied).length, 0);
 	const declined = application.declinedScopes.length > 0 ? `; declined scopes=${application.declinedScopes.join(",")}` : "";
+	const durationMs = Date.now() - startedAt;
+	for (const result of application.results) {
+		record({
+			sessionId,
+			reason: snapshot.reason,
+			turnsSinceLastReview,
+			outcome: "applied",
+			rationale: `memory applied (${snapshot.reason}) after ${run.turns} turn(s): ${run.proposal.rationale}${declined}`,
+			refinementId: result.id,
+			durationMs,
+			memoryTurns: run.turns,
+			memorySearches: run.searches,
+			appliedEdits: result.appliedEdits.filter((edit) => edit.applied).length,
+		});
+	}
+	if (application.declinedScopes.length > 0) {
+		record({
+			sessionId,
+			reason: snapshot.reason,
+			turnsSinceLastReview,
+			outcome: "declined",
+			rationale: `memory scopes declined (${snapshot.reason}): ${application.declinedScopes.join(",")}`,
+			durationMs,
+			memoryTurns: run.turns,
+			memorySearches: run.searches,
+			appliedEdits: 0,
+		});
+	}
 	ctx.logger("continual-evolve").info(
 		`memory agent applied ${applied} edit(s) across ${application.results.length} scope batch(es) [${sessionId}] after ${run.turns} turn(s)${declined}: ${run.proposal.rationale}`,
 	);
+	// Visibility (P1 unified receipt): only applied outcomes wake the agent
+	// with a follow-up — and only on the turn path, never mid-compaction.
+	// No-op and declined-only runs stay audit-only (reviews.jsonl).
+	if (config.notifyOnAutoReview && snapshot.reason === "turn_snapshot" && applied > 0) {
+		notifyMemoryExtraction(ctx, agent, {
+			outcome: "applied",
+			results: application.results,
+			...(application.declinedScopes.length > 0 ? { declinedScopes: [...application.declinedScopes] } : {}),
+			turns: run.turns,
+			searches: run.searches,
+			durationMs,
+		});
+	}
 }
 
 async function runReviewPhase(

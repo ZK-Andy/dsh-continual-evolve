@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import { buildGateNotice, notifyAutoReview } from "../src/notify.js";
+import { buildGateNotice, buildMemoryReceipt, notifyAutoReview, notifyMemoryExtraction } from "../src/notify.js";
 import type { RefinementResult } from "../src/types.js";
 
 function result(overrides: Partial<RefinementResult> = {}): RefinementResult {
@@ -128,5 +128,48 @@ describe("notifyAutoReview", () => {
 		expect(() => notifyAutoReview(ctx, agent, result(), 6)).not.toThrow();
 		expect(warn).toHaveBeenCalledTimes(1);
 		expect(warn.mock.calls[0][0]).toContain("inbox full");
+	});
+});
+
+describe("buildMemoryReceipt", () => {
+	it("renders applied batches with edits, stats, and rollback commands", () => {
+		const text = buildMemoryReceipt({
+			outcome: "applied",
+			results: [
+				result({
+					id: "evolve_mem1",
+					appliedEdits: [{ id: "mem_a", action: "create", kind: "memory", title: "深色偏好", content: "c", applied: true }],
+				}),
+			],
+			turns: 2,
+			searches: 1,
+			durationMs: 5300,
+		});
+		expect(text).toContain("沉淀 1 条记忆");
+		expect(text).toContain("记忆「深色偏好」（mem_a）");
+		expect(text).toContain("2 轮推理 / 1 次检索 / 5.3s");
+		expect(text).toContain("/evolve rollback evolve_mem1");
+		expect(text).toContain("/evolve recall");
+		expect(text).toContain("不要调用任何工具");
+	});
+
+	it("renders declined scopes without applied results", () => {
+		const text = buildMemoryReceipt({ outcome: "declined", declinedScopes: ["global"], turns: 1, searches: 0, durationMs: 100 });
+		expect(text).toContain("global");
+		expect(text).toContain("未获批准");
+	});
+
+	it("renders no-op as one quiet line", () => {
+		const text = buildMemoryReceipt({ outcome: "noop", turns: 1, searches: 1, durationMs: 200 });
+		expect(text).toContain("no-op");
+		expect(text).not.toContain("/evolve rollback");
+	});
+
+	it("contains a receipt follow-up failure instead of throwing", () => {
+		const warn = vi.fn();
+		const ctx = { logger: () => ({ warn }) } as unknown as Parameters<typeof notifyMemoryExtraction>[0];
+		const agent = { id: "s", followup: () => { throw new Error("inbox full"); } } as unknown as Agent;
+		expect(() => notifyMemoryExtraction(ctx, agent, { outcome: "noop", turns: 0, searches: 0, durationMs: 0 })).not.toThrow();
+		expect(warn).toHaveBeenCalledTimes(1);
 	});
 });

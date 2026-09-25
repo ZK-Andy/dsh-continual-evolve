@@ -10,11 +10,15 @@ import { join } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import {
 	consultSkillEdits,
+	drainSchedulerOnDispose,
 	loadGateHarnessView,
 	isDedicatedMemoryOnlyProposal,
 	parseReviewModel,
 	registerAutoReview,
+	resolveSessionCloseDrainMs,
 	runGoalBlockedFate,
+	runMemoryExtractionPhase,
+	SESSION_CLOSE_DRAIN_MS_DEFAULT,
 	SKILL_CONSULT_COOLDOWN_TURNS,
 	splitSkillEdits,
 	stripDedicatedMemoryEdits,
@@ -495,8 +499,11 @@ describe("registerAutoReview wiring", () => {
 			h.emit("agent/turn-stopping", { agent, turn: 1 });
 			h.emit("agent/status", { agent, status: "idle" });
 			await vi.waitFor(() => expect(call).toBe(3));
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
-			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "declined" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
+			// [armed, memory-noop, review-declined]: the dedicated phase
+			// found nothing, then the review declined the stripped plan.
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "noop" });
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
 			const statePath = join(h.dir, "evolve", "local", agent.id, "harness_state.json");
 			const stateText = existsSync(statePath) ? readFileSync(statePath, "utf8") : "";
 			expect(stateText).not.toContain("不应由通用 planner 写入");
@@ -556,7 +563,8 @@ describe("registerAutoReview wiring", () => {
 			h.emit("agent/turn-stopping", { agent, turn: 2 });
 			h.emit("agent/status", { agent, status: "idle" });
 			await vi.waitFor(() => expect(call).toBe(3));
-			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "noop" });
+			expect(JSON.parse(h.reviewsLines()[3] ?? "{}")).toMatchObject({ outcome: "declined" });
 
 			events.push({
 				type: "user/message",
@@ -613,7 +621,8 @@ describe("registerAutoReview wiring", () => {
 			h.emit("agent/turn-stopping", { agent, turn: 1 });
 			h.emit("agent/status", { agent, status: "idle" });
 			await vi.waitFor(() => expect(call).toBe(2));
-			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "noop" });
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "failed" });
 
 			events.push({
 				type: "user/message",
@@ -779,8 +788,9 @@ describe("registerAutoReview wiring", () => {
 			h.emit("agent/turn-stopping", { agent, turn: 2 });
 			h.emit("agent/status", { agent, status: "idle" });
 			await vi.waitFor(() => expect(asks).toBe(2));
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
-			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(4));
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined", rationale: expect.stringContaining("memory scopes declined") });
+			expect(JSON.parse(h.reviewsLines()[3] ?? "{}")).toMatchObject({ outcome: "declined" });
 			expect(asks).toBe(2);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
@@ -858,8 +868,9 @@ describe("registerAutoReview wiring", () => {
 
 			h.emit("session/event", { id: agent.id }, { type: "compaction/start" });
 			await vi.waitFor(() => expect(globalAsks).toBe(2));
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
-			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(4));
+			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined", rationale: expect.stringContaining("memory scopes declined") });
+			expect(JSON.parse(h.reviewsLines()[3] ?? "{}")).toMatchObject({ outcome: "declined" });
 			expect(projectAsks).toBe(1);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
@@ -906,7 +917,9 @@ describe("registerAutoReview wiring", () => {
 		const h = wiringHarness({
 			llm,
 			sessionQuery: { readSurface: async (sessionId) => ({ events: sessionId === agentA.id ? aEvents : bEvents }) },
-			config: { prefixCacheMode: "off" },
+			// Bounded drain, fast: the hanging run must abort after ~50ms,
+			// not after the 15s production default.
+			config: { prefixCacheMode: "off", sessionCloseDrainMs: 50 },
 		});
 		try {
 			h.emit("agent/turn-stopping", { agent: agentA, turn: 1 });
@@ -1066,6 +1079,85 @@ describe("runGoalBlockedFate (D3)", () => {
 			expect(state.goalBlockStreak).toBe(1);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("resolveSessionCloseDrainMs", () => {
+	it("defaults, keeps explicit values, and fails back on invalid input", () => {
+		expect(resolveSessionCloseDrainMs(undefined)).toBe(SESSION_CLOSE_DRAIN_MS_DEFAULT);
+		expect(resolveSessionCloseDrainMs(0)).toBe(0);
+		expect(resolveSessionCloseDrainMs(2500)).toBe(2500);
+		expect(resolveSessionCloseDrainMs(2500.7)).toBe(2500);
+		expect(resolveSessionCloseDrainMs(-5)).toBe(SESSION_CLOSE_DRAIN_MS_DEFAULT);
+		expect(resolveSessionCloseDrainMs(Number.NaN)).toBe(SESSION_CLOSE_DRAIN_MS_DEFAULT);
+	});
+});
+
+describe("drainSchedulerOnDispose", () => {
+	it("drains settled work then aborts", async () => {
+		const shutdown = vi.fn();
+		await drainSchedulerOnDispose({ drain: async () => {}, shutdown }, 1000);
+		expect(shutdown).toHaveBeenCalledTimes(1);
+	});
+
+	it("aborts immediately when the budget is zero", async () => {
+		const drain = vi.fn(async () => {});
+		const shutdown = vi.fn();
+		await drainSchedulerOnDispose({ drain, shutdown }, 0);
+		expect(drain).not.toHaveBeenCalled();
+		expect(shutdown).toHaveBeenCalledTimes(1);
+	});
+
+	it("times out a stuck drain and still aborts", async () => {
+		const shutdown = vi.fn();
+		const hanging = new Promise<void>(() => {});
+		await drainSchedulerOnDispose({ drain: () => hanging, shutdown }, 20);
+		expect(shutdown).toHaveBeenCalledTimes(1);
+	});
+
+	it("aborts even when the drain rejects", async () => {
+		const shutdown = vi.fn();
+		await drainSchedulerOnDispose({ drain: async () => { throw new Error("boom"); }, shutdown }, 1000);
+		expect(shutdown).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("runMemoryExtractionPhase receipts", () => {
+	function phaseHarness() {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-memphase-"));
+		const engine = createEvolutionEngine(dir);
+		const infos: string[] = [];
+		const ctx = { logger: () => ({ info: (m: string) => infos.push(m), warn: () => {} }) } as unknown as Context;
+		const rows: { outcome?: string; rationale?: string; durationMs?: number; appliedEdits?: number; memoryTurns?: number }[] = [];
+		return { dir, engine, ctx, infos, rows, record: (entry: { outcome?: string }) => rows.push(entry) };
+	}
+
+	function gateState(): GateState {
+		return {
+			turns: 4, completedTurn: 4, lastSnapshotTurn: 4, memoryDecisions: {}, lastReviewAt: 0,
+			running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0,
+		} as GateState;
+	}
+
+	function snapshot() {
+		return {
+			sessionId: "session-mem", turn: 4, reason: "turn_snapshot", cursor: "seq:5", events: [],
+			trajectory: "", userText: "", sourceSeqs: [], maxChars: 100, minUserWords: 3, eligible: false,
+		} as never;
+	}
+
+	it("records a noop audit row when the checkpoint slice is ineligible", async () => {
+		const h = phaseHarness();
+		try {
+			const agent = { id: "session-mem", options: {} } as never;
+			await runMemoryExtractionPhase(h.ctx, h.engine, agent, baseConfig(), gateState(), snapshot(), h.record as never);
+			expect(h.rows.length).toBe(1);
+			expect(h.rows[0]?.outcome).toBe("noop");
+			expect(h.rows[0]?.appliedEdits).toBe(0);
+			expect(typeof h.rows[0]?.durationMs).toBe("number");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 });

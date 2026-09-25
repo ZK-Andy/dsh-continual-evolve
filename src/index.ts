@@ -40,6 +40,11 @@ export const Config = z.object({
 	autoReview: z.boolean().default(false),
 	/** ZCode-style minimum lexical words in one direct user text part. */
 	memoryMinUserWords: z.natural().default(3),
+	/**
+	 * Session-close bounded drain for in-flight extraction, in milliseconds.
+	 * Absent → 15s; 0 restores the legacy immediate abort on dispose.
+	 */
+	sessionCloseDrainMs: z.natural().default(15000),
 	/** Legacy/local-fate cadence fallback; successful-turn review is snapshot-driven. */
 	reviewIntervalTurns: z.natural().default(6),
 	/** Trajectory slice handed to the gate, in characters. */
@@ -217,6 +222,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		enabledByDefault: config.autoReview ?? false,
 		memoryOnly: true,
 		memoryMinUserWords: config.memoryMinUserWords ?? 3,
+		sessionCloseDrainMs: config.sessionCloseDrainMs ?? 15000,
 		maxInputChars: config.maxReviewInputChars ?? 40000,
 		budgetTokens: config.reviewBudgetTokens ?? 4096,
 		notifyOnAutoReview: config.notifyOnAutoReview ?? true,
