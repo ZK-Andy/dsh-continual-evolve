@@ -342,7 +342,155 @@ describe("executeWrapupCommand", () => {
 			expect(result.kind).toBe("success");
 			expect(onError).toBeDefined();
 			onError!(new Error("disk full"));
-			expect(warnings.some((w) => w.includes("token-usage ledger failed for session-x"))).toBe(true);
+			expect(warnings.some((w) => w.includes("token-usage ledger failed for session-x: disk full"))).toBe(true);
+			onError!("string failure");
+			expect(warnings.some((w) => w.includes("token-usage ledger failed for session-x: string failure"))).toBe(true);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("reports skipped promotes for ghost keys and globally covered topics", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "dup_1");
+			engine.apply(
+				"global",
+				undefined,
+				{
+					summary: "seed global duplicate",
+					rationale: "test",
+					expectedOutcome: "duplicate exists",
+					edits: [{ action: "create", kind: "memory", title: "Entry dup_1", content: PROMOTABLE_COMMAND_BODY, metadata: { memoryType: "reference" } }],
+				},
+				{ scope: "global" },
+			);
+			assessMock.mockResolvedValue({
+				rationale: "mixed",
+				items: [
+					{ key: "memory:dup_1", verdict: "promote", reason: "durable" },
+					{ key: "memory:ghost", verdict: "promote", reason: "model hallucinated" },
+				],
+			});
+			const result = await executeWrapupCommand(ctxOf(), engine, invocationOf(agentOf("session-x")));
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("1 covered globally");
+			expect(result.text).toContain("- promote skipped: memory:dup_1 — already covered globally");
+			expect(result.text).toContain("- promote skipped: memory:ghost — not in the audited candidate list");
+			expect(engine.load("global", undefined).entries.memory["dup_1"]).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("reports split skips for ghost keys and globally duplicated splits", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "dup_1");
+			engine.apply(
+				"global",
+				undefined,
+				{
+					summary: "seed global duplicate",
+					rationale: "test",
+					expectedOutcome: "duplicate exists",
+					edits: [{ action: "create", kind: "memory", title: "Entry dup_1", content: PROMOTABLE_COMMAND_BODY, metadata: { memoryType: "reference" } }],
+				},
+				{ scope: "global" },
+			);
+			assessMock.mockResolvedValue({
+				rationale: "mixed splits",
+				items: [
+					{ key: "memory:ghost", verdict: "archive", reason: "stale", promote: { title: "Ghost part", content: PROMOTABLE_COMMAND_BODY } },
+					{ key: "memory:dup_1", verdict: "archive", reason: "dup", promote: { title: "Entry dup_1", content: PROMOTABLE_COMMAND_BODY } },
+				],
+			});
+			const result = await executeWrapupCommand(ctxOf(), engine, invocationOf(agentOf("session-x")));
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("- split skipped: memory:ghost — not in the audited candidate list");
+			expect(result.text).toContain("- split skipped: memory:dup_1");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("silently skips ghost archive and keep entries without crashing", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "mem_1");
+			assessMock.mockResolvedValue({
+				rationale: "ghosts",
+				items: [
+					{ key: "memory:ghost", verdict: "archive", reason: "stale" },
+					{ key: "memory:ghost_keep", verdict: "keep", reason: "x", contradicted: true },
+				],
+			});
+			const result = await executeWrapupCommand(ctxOf(), engine, invocationOf(agentOf("session-x")));
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("memory:ghost");
+			expect(engine.load("local", "session-x").entries.memory["mem_1"]).toBeDefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("reports a string-valued approval failure without throwing", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "mem_1");
+			assessMock.mockResolvedValue({
+				rationale: "durable preference",
+				items: [{ key: "memory:mem_1", verdict: "promote", reason: "cross-session durable" }],
+			});
+			const ctx = {
+				userQuestions: {
+					ask: async () => {
+						throw "boom-string";
+					},
+				},
+				get: () => undefined,
+			} as never;
+			const result = await executeWrapupCommand(ctx, engine, invocationOf(agentOf("session-x")));
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("global 写入未批准");
+			expect(result.text).toContain("boom-string");
+			expect(engine.load("global", undefined).entries.memory["mem_1"]).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a review-archive when the question call throws or malforms", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "sourced_3", { sourceSeqs: [9], sourceSession: "session-x" });
+			assessMock.mockResolvedValue({
+				rationale: "session-specific",
+				items: [{ key: "memory:sourced_3", verdict: "archive", reason: "one-off" }],
+			});
+			const throwing = {
+				userQuestions: {
+					ask: async () => {
+						throw new Error("ask offline");
+					},
+				},
+				get: () => undefined,
+			} as never;
+			const kept = await executeWrapupCommand(throwing, engine, invocationOf(agentOf("session-x")));
+			expect(kept.kind).toBe("success");
+			expect(kept.text).toContain("kept memory:sourced_3 — user declined the archive");
+			const malformed = {
+				userQuestions: { ask: async () => ({}) },
+				get: () => undefined,
+			} as never;
+			const keptAgain = await executeWrapupCommand(malformed, engine, invocationOf(agentOf("session-x")));
+			expect(keptAgain.text).toContain("kept memory:sourced_3 — user declined the archive");
+			expect(isArchived(engine.load("local", "session-x").entries.memory["sourced_3"]!)).toBe(false);
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}

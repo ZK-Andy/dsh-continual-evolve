@@ -307,3 +307,53 @@ describe("validateEdit memory shape (one-fact typed memories)", () => {
 		).toBeUndefined();
 	});
 });
+
+describe("validateEdit update-only paths (round 6)", () => {
+	it("resolves an untyped memory update without a persisted type to no type", () => {
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", title: "t" }), undefined, "local", undefined)).toBeUndefined();
+		const bareBefore = {} as unknown as Parameters<typeof validateEdit>[3];
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", title: "t" }), undefined, "local", bareBefore)).toBeUndefined();
+		const typedBefore = { metadata: { other: 1 } } as unknown as Parameters<typeof validateEdit>[3];
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", title: "t" }), undefined, "local", typedBefore)).toBeUndefined();
+		const feedbackBefore = { metadata: { memoryType: "feedback" } } as unknown as Parameters<typeof validateEdit>[3];
+		expect(validateEdit(edit({ action: "update", kind: "memory", id: "x", title: "t" }), undefined, "local", feedbackBefore)).toBeUndefined();
+	});
+
+	it("resolves a typeless non-update memory edit to no type", () => {
+		expect(validateEdit(edit({ action: "delete", kind: "memory", id: "x" }), undefined)).toBeUndefined();
+	});
+
+	it("runs the full skill contract on updates carrying a reference", () => {
+		const good = edit({
+			action: "update",
+			kind: "skill",
+			id: "s",
+			reference: { type: "python", import: "pkg.mod", callable: "run" },
+			arguments: { input: "x" },
+		});
+		expect(validateEdit(good, undefined)).toBeUndefined();
+	});
+
+	it("accepts the legacy python_import / call_pattern spellings on update", () => {
+		const legacy = edit({
+			action: "update",
+			kind: "skill",
+			id: "s",
+			reference: { type: "python", python_import: "pkg.mod", call_pattern: "run" },
+			arguments: {},
+		});
+		expect(validateEdit(legacy, undefined)).toBeUndefined();
+	});
+
+	it("rejects an update reference without any import", () => {
+		const noImport = edit({ action: "update", kind: "skill", id: "s", reference: { type: "python" }, arguments: {} });
+		expect(validateEdit(noImport, undefined)).toMatch(/requires python import/);
+	});
+
+	it("checks carried content on skill updates", () => {
+		expect(validateEdit(edit({ action: "update", kind: "skill", id: "s", content: "---\nname: x\n---\nbody" }), undefined)).toMatch(
+			/must not start with a `---`/,
+		);
+		expect(validateEdit(edit({ action: "update", kind: "skill", id: "s", content: "# Fine body" }), undefined)).toBeUndefined();
+	});
+});
