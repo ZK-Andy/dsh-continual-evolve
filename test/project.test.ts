@@ -26,6 +26,14 @@ describe("resolveProjectKey", () => {
 		expect(resolveProjectKey("/mnt/work/a", "team-app")).toBe(resolveProjectKey("/mnt/work/b", "team-app"));
 		expect(resolveProjectKey("/mnt/work/a", "team-app")).toMatch(/^project-[0-9a-f]{16}$/);
 	});
+
+	it("treats a blank workspace identity as absent", () => {
+		expect(resolveProjectKey("/mnt/work/my-app", "   ")).toBe(resolveProjectKey("/mnt/work/my-app"));
+	});
+
+	it("falls back to the literal slug when the basename strips to empty", () => {
+		expect(resolveProjectKey("/mnt/---")).toMatch(/^project-[0-9a-f]{16}$/);
+	});
 });
 
 describe("projectKeyOf", () => {
@@ -40,6 +48,21 @@ describe("projectKeyOf", () => {
 		expect(projectKeyOf({ id: "s", session: { header: {} } })).toBeUndefined();
 		expect(projectKeyOf({ id: "s", session: { header: { cwd: "relative/path" } } })).toBeUndefined();
 		expect(projectKeyOf({ id: "s", session: { header: { cwd: 42 } } })).toBeUndefined();
+	});
+
+	it("falls back to the nested meta cwd", () => {
+		const agent = { id: "s", session: { header: { meta: { cwd: "/mnt/work/app" } } } };
+		expect(projectKeyOf(agent)).toBe(resolveProjectKey("/mnt/work/app"));
+	});
+
+	it("honours an explicit workspace identity option", () => {
+		const agent = { id: "s", session: { header: { cwd: "/mnt/work/app" } } };
+		expect(projectKeyOf(agent, { workspaceIdentity: "team-app" })).toBe(resolveProjectKey("/mnt/work/other", "team-app"));
+	});
+
+	it("returns undefined when the agent throws on access — never throws", () => {
+		const agent = Object.defineProperty({}, "session", { get() { throw new Error("boom"); } });
+		expect(projectKeyOf(agent)).toBeUndefined();
 	});
 });
 

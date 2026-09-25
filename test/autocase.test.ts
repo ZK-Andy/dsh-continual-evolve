@@ -94,4 +94,10 @@ describe("auto-case scaffolds", () => {
 		expect(rubric).toContain("authored at calibration time");
 		expect(rubric).toContain("case totalDurationMs regressed");
 	});
+
+	it("renders the none-captured fallbacks when no reasons were recorded", () => {
+		const text = renderAutoCaseStatement(input({ reasons: [] }), "20260828T130000000Z");
+		expect(text).toContain("  - (none captured)");
+		expect(renderAutoCaseRubric(input({ reasons: [] }))).toContain("(none)");
+	});
 });

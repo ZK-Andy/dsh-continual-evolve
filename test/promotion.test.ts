@@ -88,6 +88,17 @@ describe("contentOverlap / mostSimilarGlobalEntry", () => {
 		expect(mostSimilarGlobalEntry(state, "memory", "持久结论二", PORTABLE + " 微调。", DEFAULT_PROMOTION_POLICY)?.id).toBe("existing");
 		expect(mostSimilarGlobalEntry(state, "memory", "完全不同的话题", "数据库迁移必须在低峰期执行。", DEFAULT_PROMOTION_POLICY)).toBeUndefined();
 	});
+
+	it("scores empty text at 0 instead of dividing by zero", () => {
+		expect(contentOverlap("", PORTABLE)).toBe(0);
+		expect(contentOverlap(PORTABLE, "")).toBe(0);
+	});
+
+	it("keeps the highest score across several candidates", () => {
+		const state = globalWith("mid", "持久结论微调", `${PORTABLE} 微调。`);
+		state.entries.memory["best"] = { ...state.entries.memory["mid"]!, id: "best", title: "持久结论", content: PORTABLE };
+		expect(mostSimilarGlobalEntry(state, "memory", "持久结论", PORTABLE, DEFAULT_PROMOTION_POLICY)?.id).toBe("best");
+	});
 });
 
 describe("filterPromotable guards", () => {
@@ -214,5 +225,14 @@ describe("resolvePromotionPolicy", () => {
 		expect(policy.blockPatterns.some((p) => p.source.includes("internal-codename"))).toBe(true);
 		expect(policy.blockPatterns.length).toBeGreaterThanOrEqual(1);
 		expect(policy.minPromoteChars).toBe(42);
+	});
+
+	it("falls back to defaults when no usable patterns are supplied", () => {
+		const empty = resolvePromotionPolicy({});
+		expect(empty.blockPatterns).toBe(DEFAULT_PROMOTION_POLICY.blockPatterns);
+		expect(empty.minPromoteChars).toBe(DEFAULT_PROMOTION_POLICY.minPromoteChars);
+		expect(empty.maxContentOverlap).toBe(DEFAULT_PROMOTION_POLICY.maxContentOverlap);
+		const allBad = resolvePromotionPolicy({ blockPatterns: ["(bad["] });
+		expect(allBad.blockPatterns).toBe(DEFAULT_PROMOTION_POLICY.blockPatterns);
 	});
 });
