@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-738%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-783%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -20,6 +20,7 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 - **Three scopes** with merge semantics (global < project < local): **local** per-session staging, **project** per-workspace cross-session store, **global** cross-project — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
 - **Typed one-fact memories**: every memory entry carries a recall type (`user | feedback | project | reference`); pitfalls (`feedback`) must include Why + How to apply
 - **Dedicated background memory agent**: eligible successful turns feed a bounded ZCode-style loop that searches the frozen memory manifest and proposes memory-only edits through a closed tool set; it cannot call agents, MCP, the network, or write source files. The generic review/planner/fate path is not run by this listener
+- **Memory recall, projection, and receipts**: `evolve_recall` reads back full memory content by query/kind/scope/type; every memory apply also materializes a readable `MEMORY.md` index plus one fact file per entry; each extraction lands a unified audit receipt (no-op/applied/declined with duration and turn stats) and only applied outcomes notify the session
 - **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
 - **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
 - **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives — with `merge`, near-duplicate content folds into the surviving original
@@ -56,6 +57,9 @@ Commands (in-session):
 | `/evolve plan [msg]` | run the LLM planner against the store |
 | `/evolve wrapup` | assess this session's local entries: promote / archive / keep |
 | `/evolve archive · unarchive · demote <id>` | hide from injection (data kept, restorable) — `demote` targets global noise |
+| `/evolve recall [scope] <query…>` | targeted memory recall: full content with version, source, and staleness |
+| `/evolve remember <type> [scope] <text…>` | immediately persist one typed memory (`user|feedback|project|reference`) |
+| `/evolve forget [scope] <query…>` | locate one memory and archive it (restorable); ambiguous queries only list |
 | `/evolve consolidate [apply] [merge]` | report (or apply) one batch archive of conflict-hinted + stale zero-use global entries; `merge` folds near-duplicate content into the survivors |
 | `/evolve failures` | aggregated failure classes (gate + benchmark) |
 | `/evolve log [tail N] [session <id>]` | plugin log |
@@ -66,13 +70,13 @@ Commands (in-session):
 | `/evolve pause · resume · status` | pause/resume the auto-review gate (manual tools keep working), gate state |
 | `/evolve usage` | per-entry injection counts + exact provider-reported tokens for direct memory/review/planner/wrapup/fate calls (benchmark host subagents excluded) |
 
-Model tools: `evolve_list / add / update / delete / rollback` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval).
+Model tools: `evolve_list / add / update / delete / rollback / recall` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval; `evolve_recall` filters by query, kinds, scopes, memory types, and limit, and returns full content with version, source, and staleness).
 
 For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
 
 `/evolve usage` also reads `evolve/token-usage.jsonl`: exact provider-reported input/cache/output/total tokens for the plugin's direct memory-agent, review, planner, manual-wrapup, and automatic-fate calls. The report covers a retained tail rather than lifetime usage, distinguishes missing provider samples, and explicitly excludes host benchmark subagents, their agent-loop calls, and per-entry injection attribution.
 
-Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a relevance-ordered directory index (`[memory:type:id] title` hooks, capped at 15 lines with a fold counter) — full text via `evolve_list`. Empty store = zero injected tokens.
+Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a relevance-ordered directory index (`[memory:type:id] title` hooks, capped at 15 lines with a fold counter) — full text via `evolve_recall` (targeted) or `evolve_list`. Every memory apply also refreshes a readable `MEMORY.md` index plus one fact file per entry in the store directory. Empty store = zero injected tokens.
 
 ## Configuration
 
@@ -81,6 +85,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `baseDir` | resolved DSH home | root for the `evolve/` stores |
 | `autoReview` | `false` | initial Memory Agent default when no `evolve/runtime.json` exists yet; the listener is always registered, so this is not a registration gate |
 | `memoryMinUserWords` | `3` | ZCode-style minimum lexical words in one direct user text part; uses CJK-aware segmentation |
+| `sessionCloseDrainMs` | `15000` | session-close bounded drain for in-flight extraction in ms (`0` aborts immediately) |
 | `reviewIntervalTurns` | `6` | legacy local-fate cadence fallback; successful-turn review no longer waits for this interval |
 | `maxReviewInputChars` | `40000` | trajectory slice handed to the gate |
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
@@ -124,13 +129,17 @@ phases are not reachable from this listener. The memory trigger follows ZCode's
 lightweight eligibility: direct user text must contain at least
 `memoryMinUserWords` lexical words (CJK-aware segmentation), while
 empty/internal/direct-memory-write snapshots are skipped; compaction does not
-add a separate memory-only trigger.
+add a separate memory-only trigger. Every extraction writes a unified audit
+receipt (`noop`/`applied`/`declined` with duration and turn/search stats) to
+`reviews.jsonl`; only applied outcomes queue a visible follow-up, and a
+closing session lets in-flight extraction settle up to `sessionCloseDrainMs`
+before aborting.
 
 ## Development
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (742 tests)
+pnpm test                    # vitest (783 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -138,8 +147,8 @@ pnpm lint                    # oxlint src test
 Project layout:
 
 ```
-├── src/                   # engine, tools, commands, memory agent, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (44 files)
+├── src/                   # engine, tools, commands, memory agent, recall, projection, gate, fate, benchmark, injection + token usage…
+├── test/                  # vitest suites (47 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)
