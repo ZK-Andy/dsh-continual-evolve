@@ -9,13 +9,17 @@ import {
 	type MemoryExtractionProposal,
 } from "../src/memory-agent.js";
 import {
+	declinedContentTokens,
 	declinedMemoryPath,
 	fingerprintMemoryBatch,
 	isDeclinedRepeat,
 	loadDeclinedMemory,
+	matchDeclinedCheckpoint,
+	MAX_DECLINED_ENTRY_TOKENS,
 	MAX_DECLINED_MEMORY_LEDGER,
 	recordDeclinedMemory,
 } from "../src/declines.js";
+import { tokenize } from "../src/search.js";
 import { createEvolutionEngine } from "../src/service.js";
 
 function proposal(edits: MemoryExtractionProposal["edits"] = []): MemoryExtractionProposal {
@@ -87,7 +91,7 @@ describe("decline ledger IO", () => {
 				"utf8",
 			);
 			expect(loadDeclinedMemory(dir)).toEqual([
-				{ scope: "global", fingerprint: "fp", title: "t", declinedAt: "2026-09-25T00:00:00.000Z" },
+				{ scope: "global", fingerprint: "fp", title: "t", tokens: [], declinedAt: "2026-09-25T00:00:00.000Z" },
 			]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -98,12 +102,12 @@ describe("decline ledger IO", () => {
 		const dir = mkdtempSync(join(tmpdir(), "evolve-declines-cap-"));
 		try {
 			for (let index = 0; index < MAX_DECLINED_MEMORY_LEDGER + 5; index += 1) {
-				recordDeclinedMemory(dir, "global", `fp-${index}`, `title-${index}`);
+				recordDeclinedMemory(dir, "global", [{ action: "create", title: `title-${index}`, content: `content-${index}` }], `title-${index}`);
 			}
 			const entries = loadDeclinedMemory(dir);
 			expect(entries).toHaveLength(MAX_DECLINED_MEMORY_LEDGER);
-			expect(entries.some((entry) => entry.fingerprint === "fp-0")).toBe(false);
-			expect(entries.some((entry) => entry.fingerprint === `fp-${MAX_DECLINED_MEMORY_LEDGER + 4}`)).toBe(true);
+			const fps = new Set(entries.map((entry) => entry.fingerprint));
+			expect(fps.size).toBe(MAX_DECLINED_MEMORY_LEDGER);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -121,7 +125,7 @@ describe("decline ledger IO", () => {
 				]),
 				"utf8",
 			);
-			recordDeclinedMemory(dir, "project", "fp-c", "c");
+			recordDeclinedMemory(dir, "project", [{ action: "create", title: "c", content: "cc" }], "c");
 			expect(loadDeclinedMemory(dir)).toHaveLength(3);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -177,4 +181,93 @@ describe("decline repeat suppression in apply", () => {
 			fingerprintMemoryBatch("global", changed.edits),
 		)).toBe(true);
 	}));
+});
+
+describe("decline secret screen and checkpoint precheck", () => {
+	const fcitx = [{ action: "create", title: "输入法环境", content: "fcitx5 需要设置 GTK_IM_MODULE 变量为 fcitx。" }];
+
+	it("skips secret-shaped declines without touching the ledger", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-declines-secret-"));
+		try {
+			const secret = [{ action: "create", title: "发布令牌", content: `Call the API with token ghp_${"abcdefghijklmnopqrstuvwxyz123456"}` }];
+			expect(recordDeclinedMemory(dir, "global", secret, "发布令牌")).toBeUndefined();
+			expect(loadDeclinedMemory(dir)).toEqual([]);
+			expect(recordDeclinedMemory(dir, "global", fcitx, "输入法环境")).not.toBeUndefined();
+			expect(loadDeclinedMemory(dir)).toHaveLength(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("matches checkpoints that re-cover declined content", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-declines-match-"));
+		try {
+			recordDeclinedMemory(dir, "global", fcitx, "输入法环境");
+			const entries = loadDeclinedMemory(dir);
+			expect(entries[0]?.tokens.length).toBeGreaterThan(0);
+			const hit = matchDeclinedCheckpoint(entries, tokenize("今晚又在调输入法环境，fcitx5 需要设置 GTK_IM_MODULE 变量为 fcitx 才能连拼。"));
+			expect(hit?.entry.scope).toBe("global");
+			expect(hit?.coverage).toBeGreaterThanOrEqual(0.85);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores unrelated checkpoints and tiny entries", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-declines-miss-"));
+		try {
+			recordDeclinedMemory(dir, "global", fcitx, "输入法环境");
+			recordDeclinedMemory(dir, "global", [{ action: "create", title: "好", content: "" }], "好");
+			const entries = loadDeclinedMemory(dir);
+			expect(matchDeclinedCheckpoint(entries, tokenize("今天把覆盖率又往上打了一轮，门禁全绿。"))).toBeUndefined();
+			expect(matchDeclinedCheckpoint(entries, tokenize("好"))).toBeUndefined();
+			expect(matchDeclinedCheckpoint([], tokenize("fcitx5 GTK_IM_MODULE"))).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("caps stored tokens per entry", () => {
+		const tokens = declinedContentTokens([{ action: "create", title: "t", content: "内容 ".repeat(300) }]);
+		expect(tokens.length).toBeLessThanOrEqual(MAX_DECLINED_ENTRY_TOKENS);
+	});
+});
+
+describe("matchDeclinedCheckpoint selection", () => {
+	function seed(dir: string): void {
+		mkdirSync(join(dir, "evolve"), { recursive: true });
+		writeFileSync(
+			declinedMemoryPath(dir),
+			JSON.stringify([
+				{ scope: "global", fingerprint: "a", title: "a", tokens: ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"], declinedAt: "2026-09-25T00:00:00.000Z" },
+				{ scope: "global", fingerprint: "b", title: "b", tokens: ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"], declinedAt: "2026-09-25T00:00:00.000Z" },
+				{ scope: "global", fingerprint: "empty", title: "e", tokens: [], declinedAt: "2026-09-25T00:00:00.000Z" },
+			]),
+			"utf8",
+		);
+	}
+
+	it("picks the strongest coverage and skips tokenless entries", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-declines-best-"));
+		try {
+			seed(dir);
+			const entries = loadDeclinedMemory(dir);
+			const hit = matchDeclinedCheckpoint(entries, ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "extra"]);
+			expect(hit?.entry.fingerprint).toBe("b");
+			expect(hit?.coverage).toBe(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("misses when coverage clears the token floor but not the coverage floor", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-declines-partial-"));
+		try {
+			seed(dir);
+			const entries = loadDeclinedMemory(dir);
+			expect(matchDeclinedCheckpoint(entries, ["alpha", "beta", "gamma", "delta", "epsilon", "zzz"])).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });

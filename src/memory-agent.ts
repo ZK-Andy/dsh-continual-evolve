@@ -469,7 +469,7 @@ export async function applyMemoryExtractionProposal(
 		else {
 			declinedScopes.push(scope);
 			try {
-				recordDeclinedMemory(engine.baseDir, scope, fingerprint, compactText(scopeEdits[0]?.title ?? proposal.summary, 120));
+				recordDeclinedMemory(engine.baseDir, scope, scopeEdits, compactText(scopeEdits[0]?.title ?? proposal.summary, 120));
 			} catch (error) {
 				ctx.logger("continual-evolve").warn(`declined-memory ledger write failed: ${error instanceof Error ? error.message : String(error)}`);
 			}

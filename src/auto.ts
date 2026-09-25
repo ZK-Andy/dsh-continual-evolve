@@ -39,6 +39,8 @@ import { isGateEnabled } from "./runtime.js";
 import { compareReviewCursors, createReviewScheduler, type ReviewScheduler } from "./review-scheduler.js";
 import { captureTurnSnapshot, sliceTurnSnapshot, type TurnSnapshot } from "./turn-snapshot.js";
 import { captureAutoCase } from "./autocase.js";
+import { loadDeclinedMemory, matchDeclinedCheckpoint } from "./declines.js";
+import { tokenize } from "./search.js";
 import {
 	applyMemoryExtractionProposal,
 	buildMemoryManifest,
@@ -579,6 +581,25 @@ export async function runMemoryExtractionPhase(
 			turnsSinceLastReview,
 			outcome: "noop",
 			rationale: `memory no-op (${snapshot.reason}): no new eligible evidence after checkpoint`,
+			durationMs: Date.now() - startedAt,
+			memoryTurns: 0,
+			memorySearches: 0,
+			appliedEdits: 0,
+		});
+		return;
+	}
+	const declinedHit = matchDeclinedCheckpoint(loadDeclinedMemory(engine.baseDir), tokenize(memorySnapshot.trajectory));
+	if (declinedHit !== undefined) {
+		advanceMemoryCheckpoint(state, memorySnapshot.cursor);
+		ctx.logger("continual-evolve").info(
+			`memory agent pre-suppressed (${snapshot.reason}) [${agent.id}]: checkpoint overlaps declined ${declinedHit.entry.scope}:${declinedHit.entry.fingerprint} (coverage ${(declinedHit.coverage * 100).toFixed(0)}%, ${declinedHit.hits} tokens) — agent not invoked`,
+		);
+		record({
+			sessionId,
+			reason: snapshot.reason,
+			turnsSinceLastReview,
+			outcome: "noop",
+			rationale: `memory pre-suppressed (${snapshot.reason}): checkpoint overlaps declined ${declinedHit.entry.scope}:${declinedHit.entry.fingerprint} — agent not invoked`,
 			durationMs: Date.now() - startedAt,
 			memoryTurns: 0,
 			memorySearches: 0,

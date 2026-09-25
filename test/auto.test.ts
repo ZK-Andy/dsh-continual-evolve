@@ -26,6 +26,7 @@ import {
 	type GateState,
 } from "../src/auto.js";
 import { createEvolutionEngine } from "../src/service.js";
+import { recordDeclinedMemory } from "../src/declines.js";
 import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
 import { emptyHarnessState, type HarnessEntry, type RefinementProposal } from "../src/types.js";
@@ -1156,6 +1157,30 @@ describe("runMemoryExtractionPhase receipts", () => {
 			expect(h.rows[0]?.outcome).toBe("noop");
 			expect(h.rows[0]?.appliedEdits).toBe(0);
 			expect(typeof h.rows[0]?.durationMs).toBe("number");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("pre-suppresses checkpoints overlapping declined content without invoking the agent", async () => {
+		const h = phaseHarness();
+		try {
+			recordDeclinedMemory(h.dir, "global", [{
+				action: "create",
+				title: "输入法环境",
+				content: "fcitx5 需要设置 GTK_IM_MODULE 变量为 fcitx。",
+			}], "输入法环境");
+			const agent = { id: "session-mem", options: {} } as never;
+			const eligible = {
+				...snapshot(),
+				eligible: true,
+				trajectory: "今晚又在调输入法环境，fcitx5 需要设置 GTK_IM_MODULE 变量为 fcitx 才能连拼。",
+			} as never;
+			await runMemoryExtractionPhase(h.ctx, h.engine, agent, baseConfig(), gateState(), eligible, h.record as never);
+			expect(h.rows.length).toBe(1);
+			expect(h.rows[0]?.outcome).toBe("noop");
+			expect(h.rows[0]?.rationale).toContain("pre-suppressed");
+			expect(h.infos.some((line) => line.includes("pre-suppressed"))).toBe(true);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
