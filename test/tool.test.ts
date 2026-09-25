@@ -199,6 +199,30 @@ describe("evolve_update / evolve_delete", () => {
 		}
 	});
 
+	it("carries an explicit path onto the created entry", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			const result = await harness
+				.byName("evolve_add")
+				.execute({ kind: "prompt", title: "pathed note", content: "prompt body", path: "guides" }, agentExec);
+			expect(result.text).toMatch(/1 applied, 0 failed/);
+			expect(harness.engine.load("local", "session-tool").entries.prompt["pathed_note"]?.path).toBe("guides");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reclassifies the memory type on update", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await addMemory(harness, "retyped");
+			const result = await harness.byName("evolve_update").execute({ kind: "memory", id: "retyped", memoryType: "user" }, agentExec);
+			expect(result.text).toMatch(/- update memory:retyped \(v2\)/);
+			expect(harness.engine.load("local", "session-tool").entries.memory["retyped"]?.metadata["memoryType"]).toBe("user");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
 	it("deletes an entry, and reports a failed edit for a missing id", async () => {
 		const harness = toolHarness({ requireGlobalApproval: false });
 		try {
@@ -255,6 +279,21 @@ describe("evolve_update / evolve_delete", () => {
 				.execute({ kind: "memory", id: "g_update", content: "Updated durable fact. Why: test. How to apply: test.", global: true }, agentExec);
 			expect(result.text).toMatch(/- update memory:g_update \(v2\)/);
 			expect(gated.engine.load("global").entries.memory["g_update"]?.content).toContain("Updated durable fact");
+		} finally {
+			rmSync(gated.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("labels the project store in the approval question", async () => {
+		const gated = toolHarness({ requireGlobalApproval: true, answer: "批准" });
+		const projExec = { agent: { id: "session-proj", session: { header: { cwd: "/mnt/work/app" } } } };
+		try {
+			const result = await gated
+				.byName("evolve_add")
+				.execute({ kind: "memory", title: "proj durable", content: "Durable project fact about deploy freezes.", memoryType: "reference", scope: "project" }, projExec);
+			expect(result.text).toMatch(/1 applied, 0 failed/);
+			const { resolveProjectKey } = await import("../src/project.js");
+			expect(Object.keys(gated.engine.load("project", resolveProjectKey("/mnt/work/app")).entries.memory)).toContain("proj_durable");
 		} finally {
 			rmSync(gated.dir, { recursive: true, force: true });
 		}
@@ -408,6 +447,19 @@ describe("evolve_recall", () => {
 		const harness = toolHarness({ requireGlobalApproval: false });
 		try {
 			await expect(harness.byName("evolve_recall").execute({ kinds: ["nope"] }, agentExec)).rejects.toThrow("unknown kind");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("passes memoryTypes, limit, and includeArchived through", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await addMemory(harness);
+			const result = await harness.byName("evolve_recall").execute({ memoryTypes: ["feedback"], limit: 5, includeArchived: true }, agentExec);
+			expect(result.text).toContain("1 hit(s)");
+			const empty = await harness.byName("evolve_recall").execute({ memoryTypes: ["user"] }, agentExec);
+			expect(empty.text).toContain("0 hit(s)");
 		} finally {
 			rmSync(harness.dir, { recursive: true, force: true });
 		}

@@ -311,6 +311,11 @@ describe("validateRenderedSkillMarkdown yaml subset", () => {
 		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
 	});
 
+	it("accepts a nested key with an empty value", () => {
+		const md = "---\nname: x\ndescription: y\nmetadata:\n  owner:\n  level: 1\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+	});
+
 	it("rejects an unparseable nested line", () => {
 		const md = "---\nname: x\ndescription: y\nmetadata:\n  not a mapping!!\n---\n\nbody";
 		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/invalid YAML frontmatter/);

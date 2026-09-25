@@ -8,6 +8,7 @@ import type { GenerateOptions, StreamChunk, ToolCallId } from "@deepseek-ai/dsh-
 import {
 	applyMemoryExtractionProposal,
 	buildMemoryManifest,
+	formatMemoryManifest,
 	MEMORY_AGENT_TOOL_NAMES,
 	MEMORY_AGENT_TOOL_SCHEMAS,
 	parseMemoryExtractionProposal,
@@ -993,5 +994,93 @@ describe("MEMORY_AGENT_SYSTEM_PROMPT quality contract", () => {
 		expect(prompt).toContain("Granularity examples (vague → reject; sharp → save)");
 		expect(prompt).toContain("user communicates in Chinese");
 		expect(prompt).toContain("write memory and handoff content in Chinese prose");
+	});
+});
+
+describe("proposal envelope and edit-field validation (branch-85 round)", () => {
+	const envelope = (edits: unknown) => ({ summary: "s", rationale: "r", expectedOutcome: "o", edits });
+
+	it("rejects non-object proposals, non-array edits, and oversized batches", () => {
+		expect(() => parseMemoryExtractionProposal(null, [])).toThrow("must be an object");
+		expect(() => parseMemoryExtractionProposal(envelope({}), [])).toThrow("must be an array");
+		expect(() => parseMemoryExtractionProposal(envelope(Array.from({ length: 21 }, () => ({}))), [])).toThrow("exceeds 20 edits");
+	});
+
+	it("rejects unsupported actions, scopes, blast radii, and skill-only fields", () => {
+		const base = { kind: "memory", targetScope: "local", blastRadius: "session", title: "x", content: "y", metadata: { memoryType: "user" } };
+		expect(() => parseMemoryExtractionProposal(envelope([{ ...base, action: "explode" }]), [])).toThrow("unsupported action");
+		expect(() => parseMemoryExtractionProposal(envelope([{ ...base, action: "create", targetScope: "everywhere" }]), [])).toThrow("unsupported targetScope");
+		expect(() => parseMemoryExtractionProposal(envelope([{ ...base, action: "create", blastRadius: "planet" }]), [])).toThrow("unsupported blastRadius");
+		expect(() => parseMemoryExtractionProposal(envelope([{ ...base, action: "create", reference: {} }]), [])).toThrow("skill-only fields");
+	});
+});
+
+describe("manifest rendering and search edges (branch-85 round)", () => {
+	function mixedManifest() {
+		const state = emptyHarnessState();
+		state.entries.memory["typed"] = entry("typed", "global", "类型化条目", "类型化内容", "user");
+		state.entries.memory["untyped"] = { ...entry("untyped", "global", "无类型条目", "无类型内容", "user"), metadata: {} };
+		state.entries.memory["old"] = {
+			...entry("old", "global", "归档条目", "归档内容", "user"),
+			metadata: { memoryType: "reference", archivedAt: "2026-01-01T00:00:00.000Z" },
+		};
+		return buildMemoryManifest(state);
+	}
+
+	it("marks untyped and archived entries in the manifest", () => {
+		const text = formatMemoryManifest(mixedManifest());
+		expect(text).toContain("untyped");
+		expect(text).toContain(", archived");
+	});
+
+	it("truncates over-budget manifests with an omitted-entries line", () => {
+		const text = formatMemoryManifest(mixedManifest(), 20);
+		expect(text).toContain("+3 more entries");
+	});
+
+	it("returns nothing on blank queries and boosts exact scope:id hits", () => {
+		const manifest = mixedManifest();
+		expect(searchMemoryManifest(manifest, "   ")).toEqual([]);
+		expect(searchMemoryManifest(manifest, "global:typed")[0]?.id).toBe("typed");
+		expect(searchMemoryManifest(manifest, "无类型").map((hit) => hit.id)).toContain("untyped");
+	});
+});
+
+describe("approval render fallbacks (branch-85 round)", () => {
+	it("labels unchanged titles and contents on sparse updates", () => {
+		const sparse = proposal([{
+			action: "update",
+			kind: "memory",
+			targetScope: "global",
+			blastRadius: "general",
+			id: "ghost",
+			reason: "new evidence",
+		}]);
+		const text = renderMemoryApprovalDetails(sparse, "global", emptyHarnessState());
+		expect(text).toContain("(existing title unchanged)");
+		expect(text).toContain("(content unchanged)");
+	});
+});
+
+describe("runMemoryAgent route A (branch-85 round)", () => {
+	it("builds a session prefix instead of the trajectory fallback", async () => {
+		const requests: GenerateOptions[] = [];
+		const llm = {
+			stream: async function* (request: GenerateOptions) {
+				requests.push(request);
+				yield* toolCallChunks("propose-a", "memory_propose", proposal());
+			},
+		} as unknown as Context["llm"];
+		const events = [{ type: "user/message", data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
+		const run = await runMemoryAgent({ llm } as unknown as Context, {
+			provider: "test",
+			model: "memory-model",
+			manifest: [],
+			trajectory: "user: 请记住这个约定",
+			trajectoryEvents: events,
+			prefixCache: { mode: "session" },
+		});
+		expect(run.proposal.edits).toEqual([]);
+		expect(JSON.stringify(requests[0]?.messages)).not.toContain("<conversation>");
 	});
 });

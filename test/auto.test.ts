@@ -1387,3 +1387,89 @@ describe("full-gate review/planner application", () => {
 		}
 	});
 });
+
+describe("registerAutoReview scheduler guards (branch-85 round)", () => {
+	it("ignores non-idle statuses and agentless payloads", () => {
+		const h = wiringHarness();
+		try {
+			h.emit("agent/status", { agent: wireAgent, status: "busy" });
+			h.emit("agent/status", {});
+			h.emit("agent/disposed", {});
+			expect(h.reviewsLines()).toHaveLength(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("skips a second idle with no new turn", async () => {
+		const h = wiringHarness();
+		try {
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			expect(h.reviewsLines()).toHaveLength(2);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores session events that are not compaction starts", () => {
+		const h = wiringHarness();
+		try {
+			h.emit("session/event", { id: "session-wire" }, { type: "other" });
+			expect(h.reviewsLines()).toHaveLength(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("passes an explicit minUserWords into snapshot capture", async () => {
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
+		const h = wiringHarness({ sessionQuery: { readSurface: async () => ({ events }) }, config: { memoryMinUserWords: 3 } });
+		try {
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("registerAutoReview failure guards (branch-85 round)", () => {
+	it("warns instead of crashing when the audit trail is unwritable", async () => {
+		const h = wiringHarness();
+		try {
+			const { chmodSync } = await import("node:fs");
+			const reviews = join(h.dir, "evolve", "reviews.jsonl");
+			chmodSync(reviews, 0o000);
+			try {
+				h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+				h.emit("agent/status", { agent: wireAgent, status: "idle" });
+				await vi.waitFor(() => expect(h.warnings.some((w) => w.includes("failed to record"))).toBe(true));
+			} finally {
+				chmodSync(reviews, 0o644);
+			}
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("aborts a scheduled review when the gate pauses mid-flight", async () => {
+		const h = wiringHarness();
+		try {
+			const { saveGateRuntime } = await import("../src/runtime.js");
+			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			// Pause synchronously: the async capture/schedule/callback chain
+			// observes the paused gate and aborts without recording.
+			saveGateRuntime(h.dir, true);
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			expect(h.reviewsLines()).toHaveLength(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+});

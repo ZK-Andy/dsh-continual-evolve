@@ -248,6 +248,25 @@ describe("parseWrapupAssessment", () => {
 	it("throws when the reply is not an object", () => {
 		expect(() => parseWrapupAssessment("[1,2,3]", candidates)).toThrow();
 	});
+
+	it("skips non-object items and normalizes malformed fields", () => {
+		const text = JSON.stringify({
+			items: [
+				null,
+				42,
+				"x",
+				{ key: 42, verdict: "promote", reason: "non-string key" },
+				{ key: "memory:mem_1", verdict: "promote", reason: 42 },
+				{ key: "memory:mem_1", verdict: "archive", reason: "ok", promote: { title: 1, content: true } },
+			],
+		});
+		const assessment = parseWrapupAssessment(text, candidates);
+		const kept = assessment.items.filter((item) => item.key === "memory:mem_1");
+		expect(kept.length).toBeGreaterThan(0);
+		expect(kept[0]?.reason).toBe("");
+		expect(kept.find((item) => item.verdict === "archive")?.promote).toBeUndefined();
+		expect(() => parseWrapupAssessment("42", candidates)).toThrow("JSON object");
+	});
 });
 
 describe("valence feedback (P1 效价反馈)", () => {
@@ -468,5 +487,63 @@ describe("assessLocalEntries token ledger wiring", () => {
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("assessment edge guards (branch-85 round)", () => {
+	it("returns early with no candidates and fails loud with no route", async () => {
+		const ctx = {} as unknown as Context;
+		const routeless = { id: "s", options: {} } as never;
+		await expect(assessLocalEntries(ctx, routeless, [])).resolves.toEqual({ items: [], rationale: "No local candidates to assess." });
+		await expect(
+			assessLocalEntries(ctx, routeless, [candidateOf(entry("m1", "memory", "有用结论"))]),
+		).rejects.toThrow("no provider/model route");
+	});
+
+	it("treats empty titles as uncovered and skips empty global titles", () => {
+		const state = emptyHarnessState();
+		state.entries.memory["blank"] = entry("blank", "memory", "   ");
+		expect(globalCoverageDetected(state, "memory", { id: "x", title: "   " })).toBe(false);
+		expect(globalCoverageDetected(state, "memory", { id: "x", title: "需要提升的结论" })).toBe(false);
+		expect(globalHintsFor(state, "memory", { id: "other", title: "需要提升的结论" })).toEqual([]);
+		expect(globalHintsFor(state, "memory", { id: "blank", title: "别的标题" })).toHaveLength(1);
+	});
+
+	it("skips non-local entries when auditing candidates", () => {
+		const mixed = emptyHarnessState();
+		mixed.entries.memory["g"] = { ...entry("g", "memory", "全局条目"), scope: "global" };
+		mixed.entries.memory["l"] = entry("l", "memory", "本地条目");
+		expect(listLocalCandidates(mixed, emptyHarnessState()).map((c) => c.id)).toEqual(["l"]);
+	});
+
+	it("needs no confirmation for non-archive verdicts", () => {
+		const cand = candidateOf(entry("m1", "memory", "有用结论"));
+		expect(needsArchiveReview({ key: "memory:m1", verdict: "promote", reason: "x" }, cand)).toBe(false);
+		expect(needsArchiveReview({ key: "memory:m1", verdict: "keep", reason: "x" }, cand)).toBe(false);
+	});
+
+	it("confirms archives with real distillation sources", () => {
+		const seqCand = { ...candidateOf(entry("m1", "memory", "有用结论")), metadata: { sourceSeqs: [4] } };
+		expect(needsArchiveReview({ key: "memory:m1", verdict: "archive", reason: "x" }, seqCand)).toBe(true);
+		const sessCand = { ...candidateOf(entry("m1", "memory", "有用结论")), metadata: { sourceSession: "s-1" } };
+		expect(needsArchiveReview({ key: "memory:m1", verdict: "archive", reason: "x" }, sessCand)).toBe(true);
+	});
+
+	it("blocks unclassified and near-duplicate split promotions", () => {
+		const item: WrapupItem = { key: "memory:m1", verdict: "archive", reason: "x", promote: { title: "清洗结论", content: PROMOTABLE_BODY } };
+		expect(splitPromoteBlocked(item, emptyHarnessState(), "memory"))?.toContain("classified");
+		const dup = emptyHarnessState();
+		dup.entries.memory["e"] = entry("e", "memory", "完全不同的标题", { content: PROMOTABLE_BODY, scope: "global" });
+		expect(splitPromoteBlocked(item, dup, "memory", undefined, { memoryType: "reference" }))?.toContain("near-duplicates");
+	});
+
+	it("skips unclassified memories and tolerates missing metadata in promotion", () => {
+		const noType = { ...candidateOf(entry("m1", "memory", "有用结论")), metadata: {} };
+		const { promotable, skipped } = filterPromotable([{ key: "memory:m1", verdict: "promote", reason: "x" }], emptyHarnessState(), [noType]);
+		expect(promotable).toHaveLength(0);
+		expect(skipped[0]?.reason).toContain("recall type");
+		const noMeta = { ...candidateOf(entry("m1", "memory", "有用结论")), kind: "prompt" as const, metadata: undefined as never };
+		const again = filterPromotable([{ key: "prompt:m1", verdict: "promote", reason: "x" }], emptyHarnessState(), [noMeta]);
+		expect(again.promotable).toHaveLength(1);
 	});
 });

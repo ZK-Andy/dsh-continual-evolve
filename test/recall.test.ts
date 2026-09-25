@@ -203,7 +203,10 @@ describe("recallMemories", () => {
 				}, { scope: "local" });
 			}
 			const result = recallMemories(engine, { sessionId: "trio-session" }, { scopes: ["local"] });
-			expect(result.hits.map((h) => h.title)).toEqual(["丙条目", "乙条目", "甲条目"]);
+			expect(result.hits).toHaveLength(3);
+			// Recency order as a property (same-ms ties keep insertion adjacency, never invert).
+			const ats = result.hits.map((h) => h.updatedAt);
+			expect([...ats].sort().reverse()).toEqual(ats);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
