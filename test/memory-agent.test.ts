@@ -982,6 +982,8 @@ describe("MEMORY_AGENT_SYSTEM_PROMPT quality contract", () => {
 		const mod = await import("../src/memory-agent.js");
 		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT).toContain("Do not remember");
 		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT).toContain("one-off debugging trails");
+		// Tightened 2026-09-25: already-applied one-off fixes are no-ops.
+		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT).toContain("already-applied troubleshooting fix");
 	});
 
 	it("demands actionable specificity with vague-vs-sharp examples", async () => {
@@ -994,6 +996,8 @@ describe("MEMORY_AGENT_SYSTEM_PROMPT quality contract", () => {
 		expect(prompt).toContain("Granularity examples (vague → reject; sharp → save)");
 		expect(prompt).toContain("user communicates in Chinese");
 		expect(prompt).toContain("write memory and handoff content in Chinese prose");
+		// Tightened 2026-09-25: tonight's declined fcitx5 proposal is the reject anchor.
+		expect(prompt).toContain("fixed fcitx5 by setting GTK_IM_MODULE tonight");
 	});
 });
 
