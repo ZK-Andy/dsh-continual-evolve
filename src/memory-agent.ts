@@ -144,6 +144,7 @@ Rules:
 - Every edit must have kind=memory, an explicit targetScope, and a coherent blastRadius.
 - targetScope=local is session staging. project persists within the current repository. global persists across projects. project/global require human approval before application.
 - update/delete/archive must name an existing id from the same targetScope. Prefer archive over delete when the fact is obsolete but should remain restorable.
+- Do not remember: code structure or file paths re-readable from the repository; git history, diffs, commit hashes, or CI logs; content already written in project instruction files; temporary session state, one-off debugging trails, or current task progress; model-only speculation without conversation evidence.
 - You cannot read or write source files, call agents, use MCP, use the network, or mutate the harness directly. memory_propose is the only finish tool and never writes state itself.
 - If no durable memory is justified, call memory_propose with edits=[].
 - Always finish by calling memory_propose. Do not return unproposed prose.`;
