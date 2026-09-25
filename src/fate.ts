@@ -364,9 +364,6 @@ export async function runLocalFatePhase(
 			rationale: `fate: ${assessment.rationale} (${applied.join("; ")})`,
 			refinementId: results.map((result) => result.id).join(","),
 		});
-		if (config.notifyOnAutoReview && (reason === "turn_snapshot" || reason === "turn_interval") && applied.length > 0) {
-			notifyFateApplied(ctx, agent, applied);
-		}
 		return;
 	}
 

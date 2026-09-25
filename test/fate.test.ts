@@ -230,6 +230,21 @@ describe("planLocalFates", () => {
 		expect(plan.silentArchives).toEqual([]);
 		expect(plan.reviewArchives).toEqual([]);
 	});
+
+	it("marks archive splits missing from the candidate list as splitSkipped", () => {
+		const candidates = [candidateOf(entry("m1", "memory", "在列条目"))];
+		const items = [
+			{
+				key: "memory:ghost",
+				verdict: "archive" as const,
+				reason: "stale",
+				promote: { title: "影子部分", content: PROMOTABLE_BODY },
+			},
+		];
+		const plan = planWith(candidates, items, emptyHarnessState());
+		expect(plan.splits).toEqual([]);
+		expect(plan.splitSkipped).toEqual([{ key: "memory:ghost", reason: "not in the audited candidate list" }]);
+	});
 });
 
 describe("consultLocalFates", () => {
@@ -306,6 +321,44 @@ describe("consultLocalFates", () => {
 	it("is conservative when the question call fails", async () => {
 		const { ctx } = userCtx("throw");
 		expect(await consultLocalFates(ctx, fakeAgent, plan, gateWith())).toMatchObject({ approved: false, reason: "error" });
+	});
+
+	it("lists splits and review archives in the consult question", async () => {
+		const splitCandidate = candidateOf(entry("s1", "memory", "待拆解"));
+		const questionPlan = {
+			...plan,
+			candidates: [...plan.candidates, splitCandidate, candidateOf(entry("a1", "memory", "待归档"))],
+			promotable: [],
+			splits: [
+				{
+					item: {
+						key: "memory:s1",
+						verdict: "archive" as const,
+						reason: "half durable",
+						promote: { title: "干净部分", content: PROMOTABLE_BODY },
+					},
+					candidate: splitCandidate,
+				},
+			],
+			reviewArchives: [{ key: "memory:a1", verdict: "archive" as const, reason: "stale" }],
+		};
+		const questions: unknown[] = [];
+		const ctx = {
+			llm: llmStreaming("{}"),
+			logger: noopLogger,
+			userQuestions: {
+				ask: async (request: unknown) => {
+					questions.push(request);
+					return { answers: [{ id: "evolve-fate-consult", selected: ["执行"] }] };
+				},
+			},
+		} as unknown as Context;
+		const result = await consultLocalFates(ctx, fakeAgent, questionPlan, gateWith());
+		expect(result).toMatchObject({ approved: true, asked: true, reason: "consented" });
+		const text = JSON.stringify(questions);
+		expect(text).toContain("拆出提升");
+		expect(text).toContain("干净部分");
+		expect(text).toContain("归档（未被全局覆盖且源自真实对话，需确认）");
 	});
 });
 
@@ -547,6 +600,42 @@ describe("runLocalFatePhase", () => {
 		expect(h.engine.load("local", "session-fate").entries.memory["dup"]?.metadata.archivedAt).toBeTruthy();
 		expect(h.records.some((entry) => entry.outcome === "approved")).toBe(true);
 		expect(followedUp).toHaveLength(1);
+	});
+
+	it("contains a throwing followup notice without failing the phase (onError)", async () => {
+		const h = scenario(
+			JSON.stringify({
+				rationale: "covered globally",
+				items: [{ key: "memory:dup", verdict: "archive", reason: "covered globally" }],
+			}),
+			"missing",
+			{ dup: entry("dup", "memory", "已被全局覆盖的话题") },
+			{
+				dup: entry("dup", "memory", "已被全局覆盖的话题", {
+					scope: "global",
+					content: "已被全局覆盖话题的全局正文（独立内容，避免内容去重误撞本地候选）。",
+				}),
+			},
+		);
+		const gate = gateWith({ turns: 6, lastFateAt: 0 });
+		const warnings: string[] = [];
+		const ctx = {
+			...h.ctx,
+			logger: () => ({ info: () => {}, warn: (msg: string) => warnings.push(msg), error: () => {} }),
+		} as unknown as Context;
+		const throwingAgent = {
+			...fakeAgent,
+			followup: () => {
+				throw new Error("followup offline");
+			},
+		} as never;
+		await runLocalFatePhase(ctx, h.engine, throwingAgent, configWith({ notifyOnAutoReview: true }), gate, "turn_snapshot", (entry) =>
+			h.records.push(entry),
+		);
+
+		expect(h.engine.load("local", "session-fate").entries.memory["dup"]?.metadata.archivedAt).toBeTruthy();
+		expect(h.records.some((entry) => entry.outcome === "approved")).toBe(true);
+		expect(warnings.some((w) => w.includes("local-fate notice failed"))).toBe(true);
 	});
 
 	it("never consults on the turn path: governed actions deferred, silent archives applied", async () => {

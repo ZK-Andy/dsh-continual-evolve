@@ -102,10 +102,9 @@ export function createReviewScheduler<TSnapshot>(
 						bestCursor = candidate;
 					}
 				}
-				if (bestIndex < 0) {
-					pending.length = 0;
-					return undefined;
-				}
+				// bestIndex is always set here: the error purge above leaves only
+				// acquired snapshots in `settled` (SnapshotAcquisition has exactly
+				// two variants), so the first settled entry takes the slot.
 				const chosen = pending[bestIndex];
 				pending.splice(bestIndex, 1);
 				for (let index = pending.length - 1; index >= 0; index -= 1) {

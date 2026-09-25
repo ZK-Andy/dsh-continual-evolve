@@ -51,6 +51,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "coverage:gaps": "tsx scripts/coverage-gaps.ts",
     "test:watch": "vitest",
     "lint": "oxlint src test",
     "clean": "rm -rf lib",
