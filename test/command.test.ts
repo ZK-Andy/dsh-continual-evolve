@@ -12,6 +12,8 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import { findEntryById, registerEvolveCommand, stripAngleBrackets, tokenizeEvolveInput } from "../src/command.js";
 import { createEvolutionEngine } from "../src/service.js";
+import { saveHarnessState } from "../src/state.js";
+import { storePaths } from "../src/store.js";
 import { emptyHarnessState, ARCHIVED_AT_KEY, type HarnessEntry } from "../src/types.js";
 import { TOKEN_USAGE_LEDGER_VERSION, appendTokenUsage } from "../src/token-usage.js";
 
@@ -96,10 +98,15 @@ describe("findEntryById", () => {
 /** Harness driving the real `/evolve` handler against a temp-dir engine. */
 function commandHarness(
 	runtimeOverride: Partial<Parameters<typeof registerEvolveCommand>[3]> = {},
+	extra: {
+		requireGlobalApproval?: boolean;
+		llm?: Context["llm"];
+		userQuestions?: { ask: (request: unknown) => Promise<unknown> };
+	} = {},
 ): {
 	dir: string;
 	engine: ReturnType<typeof createEvolutionEngine>;
-	run: (rawInput: string, sessionId?: string) => Promise<CommandResult>;
+	run: (rawInput: string, sessionId?: string, agent?: CommandInvocation["agent"]) => Promise<CommandResult>;
 } {
 	const dir = mkdtempSync(join(tmpdir(), "evolve-cmd-"));
 	const engine = createEvolutionEngine(dir);
@@ -110,18 +117,22 @@ function commandHarness(
 				handler = def.handler;
 			},
 		},
+		get: () => undefined,
+		...(extra.llm ? { llm: extra.llm } : {}),
+		...(extra.userQuestions ? { userQuestions: extra.userQuestions } : {}),
 	} as unknown as Context;
 	registerEvolveCommand(
 		ctx,
 		engine,
-		{ requireGlobalApproval: false },
+		{ requireGlobalApproval: extra.requireGlobalApproval ?? false },
 		{ rubricKey: Buffer.alloc(32, 7), autoRollbackOnReject: true, ...runtimeOverride },
 	);
 	if (!handler) throw new Error("evolve command was not registered");
 	return {
 		dir,
 		engine,
-		run: (rawInput, sessionId = "session-cmd") => handler({ rawInput, agent: { id: sessionId }, signal: undefined } as never),
+		run: (rawInput: string, sessionId = "session-cmd", agent?: CommandInvocation["agent"]) =>
+			handler({ rawInput, agent: agent ?? { id: sessionId }, signal: undefined } as never),
 	};
 }
 
@@ -129,9 +140,10 @@ function commandHarness(
 function withDir(
 	fn: (harness: ReturnType<typeof commandHarness>) => Promise<void>,
 	runtimeOverride: Partial<Parameters<typeof registerEvolveCommand>[3]> = {},
+	extra: Parameters<typeof commandHarness>[1] = {},
 ): () => Promise<void> {
 	return async () => {
-		const harness = commandHarness(runtimeOverride);
+		const harness = commandHarness(runtimeOverride, extra);
 		try {
 			await fn(harness);
 		} finally {
@@ -553,5 +565,224 @@ describe("executeEvolveCommand — recall / remember / forget", () => {
 		const result = await h.run("forget 不存在的记忆主题xyz");
 		expect(result.kind).toBe("error");
 		expect(result.text).toContain("no memory matches");
+	}));
+
+	it("forget requires a query", withDir(async (h) => {
+		const result = await h.run("forget");
+		expect(result.kind).toBe("error");
+		expect(result.text).toContain("forget requires a query");
+	}));
+});
+
+describe("executeEvolveCommand — project scope", () => {
+	const cwdAgent = { id: "session-cmd", session: { header: { cwd: "/mnt/work/app" } } } as never;
+
+	it("lists the project store for an agent with a session cwd", withDir(async (h) => {
+		const listed = await h.run("list project", "session-cmd", cwdAgent);
+		expect(listed.kind).toBe("success");
+	}));
+
+	it("fails loudly for project scope without a session cwd", withDir(async (h) => {
+		const result = await h.run("list project");
+		expect(result.kind).toBe("error");
+		expect(result.text).toContain("project scope needs the session cwd");
+	}));
+
+	it("remembers directly into the project store", withDir(async (h) => {
+		const result = await h.run("remember user project 偏好深色主题项目级", "session-cmd", cwdAgent);
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("1 applied");
+	}));
+
+	it("asks approval before remembering into the global store", withDir(async (h) => {
+		const result = await h.run("remember user global 偏好深色主题跨会话");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("1 applied");
+		const recalled = await h.run("recall 深色", "session-cmd", { id: "other-session" } as never);
+		expect(recalled.text).toContain("偏好深色主题跨会话");
+	}, {}, { requireGlobalApproval: true, userQuestions: { ask: async () => ({ answers: [{ id: "approve-global-evolve", selected: ["批准"] }] }) } }));
+});
+
+describe("executeEvolveCommand — consolidate", () => {
+	it("reports a clean store with nothing to do", withDir(async (h) => {
+		const result = await h.run("consolidate");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("already consolidated");
+	}));
+
+	function seedStaleGlobal(h: ReturnType<typeof commandHarness>, title: string): string {
+		const applied = h.engine.apply("global", undefined, {
+			summary: "seed stale",
+			rationale: "test",
+			expectedOutcome: "stale candidate",
+			edits: [{ action: "create", kind: "memory", title, content: `${title}的完整正文内容足够长可以沉淀`, metadata: { memoryType: "reference" } }],
+		}, { scope: "global" }).appliedEdits.find((e) => e.applied);
+		if (!applied?.id) throw new Error("seed failed");
+		const state = h.engine.load("global", undefined);
+		state.entries.memory[applied.id]!.updated_at = "2025-01-01T00:00:00.000Z";
+		saveHarnessState(storePaths(h.dir, "global", undefined).stateDir, state);
+		return applied.id;
+	}
+
+	it("reports and applies stale zero-use entries in one batch", withDir(async (h) => {
+		const id = seedStaleGlobal(h, "stale entry one");
+		const report = await h.run("consolidate");
+		expect(report.kind).toBe("success");
+		expect(report.text).toContain("consolidation plan");
+		expect(report.text).toContain(id);
+		const applied = await h.run("consolidate apply");
+		expect(applied.kind).toBe("success");
+		expect(applied.text).toContain("applied:");
+		expect(h.engine.load("global", undefined).entries.memory[id]?.metadata[ARCHIVED_AT_KEY]).toBeTruthy();
+	}));
+
+	it("merges conflict-pair content into the survivor with merge", withDir(async (h) => {
+		// Seed through the store directly: the write-time conflict guard
+		// would block the near-duplicate create via engine.apply.
+		const { CONFLICT_HINT_KEY } = await import("../src/types.js");
+		const state = emptyHarnessState();
+		const survivor = { id: "survivor", kind: "memory", title: "survivor fact", content: "Survivor durable content about builds.", path: "general", scope: "global", reference: {}, arguments: {}, metadata: { memoryType: "reference" }, source: "evolve", created_at: "2026-09-25T00:00:00.000Z", updated_at: "2026-09-25T00:00:00.000Z", version: 1 };
+		const dup = { ...survivor, id: "dup", title: "survivor fact restated", content: "Survivor durable content about builds restated.", metadata: { memoryType: "reference", [CONFLICT_HINT_KEY]: "memory:survivor:0.85" } };
+		state.entries.memory["survivor"] = survivor as never;
+		state.entries.memory["dup"] = dup as never;
+		saveHarnessState(storePaths(h.dir, "global", undefined).stateDir, state);
+		const report = await h.run("consolidate merge");
+		expect(report.kind).toBe("success");
+		expect(report.text).toContain("并入");
+		const applied = await h.run("consolidate apply merge");
+		expect(applied.kind).toBe("success");
+		const survivorEntry = h.engine.load("global", undefined).entries.memory[survivor.id];
+		expect(survivorEntry?.content).toContain("Merged from");
+		expect(h.engine.load("global", undefined).entries.memory[dup.id]?.metadata[ARCHIVED_AT_KEY]).toBeTruthy();
+	}));
+});
+
+describe("executeEvolveCommand — subcommand passthroughs", () => {
+	it("routes wrapup / goal / mount / unmount / benchmark", withDir(async (h) => {
+		const wrapup = await h.run("wrapup");
+		expect(wrapup.kind).toBe("success");
+		expect(wrapup.text).toContain("nothing to wrap up");
+
+		const goal = await h.run("goal");
+		expect(goal.kind).toBe("error");
+		expect(goal.text).toContain("goals service");
+
+		const mountUsage = await h.run("mount");
+		expect(mountUsage.kind).toBe("error");
+		expect(mountUsage.text).toContain("mount requires");
+
+		const mountList = await h.run("mount list");
+		expect(mountList.kind).toBe("success");
+
+		const unmountUsage = await h.run("unmount");
+		expect(unmountUsage.kind).toBe("error");
+		expect(unmountUsage.text).toContain("unmount requires");
+
+		const benchmark = await h.run("benchmark");
+		expect(benchmark.kind).toBe("success");
+	}));
+});
+
+describe("executeEvolveCommand — project-aware status / usage / log", () => {
+	const cwdAgent = { id: "session-cmd", session: { header: { cwd: "/mnt/work/app" } } } as never;
+
+	it("shows the project store line in status for an agent with a cwd", withDir(async (h) => {
+		const status = await h.run("status", "session-cmd", cwdAgent);
+		expect(status.kind).toBe("success");
+		expect(status.text).toContain("project");
+	}));
+
+	it("reports usage for an agent with a cwd", withDir(async (h) => {
+		const usage = await h.run("usage", "session-cmd", cwdAgent);
+		expect(usage.kind).toBe("success");
+		expect(usage.text).toContain("injected entries");
+	}));
+
+	it("folds long injected and stale lists behind counters", withDir(async (h) => {
+		const { saveUsage } = await import("../src/usage.js");
+		const ids: string[] = [];
+		for (let i = 0; i < 37; i += 1) {
+			const applied = h.engine.apply("local", "session-cmd", {
+				summary: `seed ${i}`,
+				rationale: "test",
+				expectedOutcome: "usage entry",
+				edits: [{ action: "create", kind: "memory", title: `usage entry ${i}`, content: "durable content body", metadata: { memoryType: "reference" } }],
+			}, { scope: "local" }).appliedEdits.find((e) => e.applied);
+			if (!applied?.id) throw new Error("seed failed");
+			ids.push(applied.id);
+		}
+		const counts: Record<string, number> = {};
+		for (const id of ids.slice(0, 16)) counts[`memory:${id}`] = 2;
+		saveUsage(h.dir, { counts, lastSession: {} });
+		const usage = await h.run("usage");
+		expect(usage.kind).toBe("success");
+		expect(usage.text).toContain("… and 1 more");
+	}));
+
+	it("names an empty plugin log file explicitly", withDir(async (h) => {
+		const { pluginLogFilePath } = await import("../src/logfile.js");
+		const logPath = pluginLogFilePath(h.dir);
+		mkdirSync(join(logPath, ".."), { recursive: true });
+		writeFileSync(logPath, "", "utf8");
+		const result = await h.run("log");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("empty plugin log");
+	}));
+
+	it("rejects a non-numeric log tail loudly", withDir(async (h) => {
+		const result = await h.run("log tail abc");
+		expect(result.kind).toBe("error");
+		expect(result.text).toContain("positive integer");
+	}));
+
+	it("reports resume as a no-op when the agent is already running", withDir(async (h) => {
+		const first = await h.run("resume");
+		expect(first.kind).toBe("success");
+		const second = await h.run("resume");
+		expect(second.kind).toBe("success");
+		expect(second.text).toContain("already running");
+	}));
+
+	it("tolerates non-object kinds in an import file", withDir(async (h) => {
+		const payload = {
+			version: 1,
+			schema: 1,
+			entries: { prompt: "not-an-object", memory: {}, skill: {}, subagent: {} },
+			refinements: [],
+			history: [],
+		};
+		const path = join(h.dir, "import-bad.json");
+		writeFileSync(path, JSON.stringify(payload), "utf8");
+		const result = await h.run(`import ${path}`);
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("imported local store");
+	}));
+
+	it("asks approval before planning into the global store", withDir(async (h) => {
+		const result = await h.run("plan global durable rule", "session-cmd", {
+			id: "session-cmd",
+			options: { provider: "test-provider", model: "test-model" },
+		} as never);
+		expect(result.kind, result.text).toBe("success");
+		expect(result.text).toContain("1 applied");
+		expect(Object.keys(h.engine.load("global", undefined).entries.prompt)).toHaveLength(1);
+	}, {}, {
+		requireGlobalApproval: true,
+		userQuestions: { ask: async () => ({ answers: [{ id: "approve-global-evolve", selected: ["批准"] }] }) },
+		llm: {
+			stream: async function* () {
+				const text = JSON.stringify({
+					summary: "global prompt",
+					rationale: "durable",
+					expectedOutcome: "saved",
+					edits: [{ action: "create", kind: "prompt", title: "Global rule", content: "Always confirm.", blastRadius: "general", reason: "r" }],
+				});
+				yield { type: "block-start", index: 0, blockType: "text" };
+				yield { type: "text-delta", index: 0, text };
+				yield { type: "block-end", index: 0, block: { type: "text", text } };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		} as never,
 	}));
 });

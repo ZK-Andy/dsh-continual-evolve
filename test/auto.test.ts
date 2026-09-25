@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
 	consultSkillEdits,
 	drainSchedulerOnDispose,
@@ -1156,6 +1156,232 @@ describe("runMemoryExtractionPhase receipts", () => {
 			expect(h.rows[0]?.outcome).toBe("noop");
 			expect(h.rows[0]?.appliedEdits).toBe(0);
 			expect(typeof h.rows[0]?.durationMs).toBe("number");
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("warns instead of crashing when the audit ledger cannot be written", async () => {
+		const blocker = join(tmpdir(), `evolve-blocker-${Date.now()}`);
+		writeFileSync(blocker, "x");
+		try {
+			const engine = createEvolutionEngine(blocker);
+			const warnings: string[] = [];
+			const listeners = new Map<string, Array<(payload: unknown) => void>>();
+			const ctx = {
+				on: (event: string, fn: (payload: unknown) => void) => {
+					listeners.set(event, [...(listeners.get(event) ?? []), fn]);
+				},
+				logger: () => ({ info: () => {}, warn: (m: string) => warnings.push(m), error: () => {} }),
+				sessionQuery: { readSurface: async () => ({ events: [] }) },
+			} as unknown as Context;
+			registerAutoReview(ctx, engine, baseConfig());
+			const agent = { id: "session-mem" } as never;
+			for (const fn of listeners.get("agent/turn-stopping") ?? []) fn({ agent, turn: 1 });
+			for (const fn of listeners.get("agent/status") ?? []) fn({ agent, status: "idle" });
+			// The empty surface records a mechanical skip; the ledger write
+			// fails and is contained as a warning with nothing on disk.
+			await vi.waitFor(() => expect(warnings.some((w) => w.includes("failed to record auto-review"))).toBe(true));
+			expect(existsSync(join(blocker, "evolve", "reviews.jsonl"))).toBe(false);
+		} finally {
+			rmSync(blocker, { force: true });
+		}
+	});
+});
+
+describe("auto-review failure containment", () => {
+	it("aborts quietly when the scheduler shutdown throws (immediate mode)", async () => {
+		const shutdown = () => { throw new Error("already torn down"); };
+		await expect(drainSchedulerOnDispose({ drain: async () => {}, shutdown }, 0)).resolves.toBeUndefined();
+	});
+
+	it("aborts quietly when the scheduler shutdown throws (drain mode)", async () => {
+		const shutdown = vi.fn(() => { throw new Error("already torn down"); });
+		await drainSchedulerOnDispose({ drain: async () => {}, shutdown }, 1000);
+		expect(shutdown).toHaveBeenCalledTimes(1);
+	});
+
+	it("warns instead of crashing when the armed marker cannot be written", () => {
+		const blocker = join(tmpdir(), `evolve-blocker-${Date.now()}`);
+		writeFileSync(blocker, "x");
+		try {
+			const engine = createEvolutionEngine(blocker);
+			const warnings: string[] = [];
+			const ctx = {
+				on: () => {},
+				logger: () => ({ info: () => {}, warn: (m: string) => warnings.push(m), error: () => {} }),
+			} as unknown as Context;
+			registerAutoReview(ctx, engine, baseConfig());
+			expect(warnings.some((w) => w.includes("failed to write armed marker"))).toBe(true);
+		} finally {
+			rmSync(blocker, { force: true });
+		}
+	});
+});
+
+describe("full-gate review/planner application", () => {
+	const gateEvents = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "每周都要做会话交接" }], source: { kind: "user" } } }];
+
+	/** Audit rows only: reviews.jsonl also carries evolve_complete events. */
+	function auditRows(h: { reviewsLines: () => string[] }): { outcome?: string }[] {
+		return h.reviewsLines().map((line) => JSON.parse(line) as { outcome?: string }).filter((row) => row.outcome !== undefined);
+	}
+
+	function gateAgent(id: string, followup: (msg: unknown) => void = () => undefined) {
+		return { id, options: { provider: "test-provider", model: "test-model" }, session: { header: {}, events: gateEvents }, followup } as never;
+	}
+
+	function scriptedLlm(replies: string[]): { llm: Context["llm"]; calls: () => number } {
+		let calls = 0;
+		const llm = {
+			stream: async function* () {
+				const text = replies[Math.min(calls, replies.length - 1)] ?? "";
+				calls += 1;
+				const chunks: StreamChunk[] = [
+					{ type: "block-start", index: 0, blockType: "text" },
+					{ type: "text-delta", index: 0, text },
+					{ type: "block-end", index: 0, block: { type: "text", text } },
+					{ type: "finish", reason: { kind: "stop" } },
+				];
+				for (const chunk of chunks) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		return { llm, calls: () => calls };
+	}
+
+	const SKILL_PLAN = JSON.stringify({
+		summary: "session handoff workflow",
+		rationale: "the trajectory repeats the handoff routine",
+		expectedOutcome: "guidance skill for handoffs",
+		edits: [{
+			action: "create",
+			kind: "skill",
+			title: "Session handoff process",
+			content: "Run the handoff checklist at session end.",
+			skill_kind: "executable",
+			reference: { type: "python", import: "handoff", callable: "run" },
+			arguments: { scope: { type: "string", required: true, description: "handoff scope" } },
+			blastRadius: "session",
+			reason: "repeated multi-step workflow with a real trigger",
+		}],
+	});
+
+	it("withholds skill edits without the question service and captures an auto-case", async () => {
+		const { llm } = scriptedLlm([
+			JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] }),
+			JSON.stringify({ shouldRefine: true, rationale: "repeated handoff workflow", instructions: "propose the handoff skill" }),
+			SKILL_PLAN,
+		]);
+		const agent = gateAgent("session-gate-skill");
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
+			config: { autoCase: true, prefixCacheMode: "off" },
+		});
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
+			const review = JSON.parse(h.reviewsLines()[2] ?? "{}") as { outcome?: string; rationale?: string };
+			expect(review.outcome).toBe("declined");
+			expect(review.rationale).toContain("withheld");
+			const engine = createEvolutionEngine(h.dir);
+			expect(Object.keys(engine.load("local", "session-gate-skill").entries.skill)).toHaveLength(0);
+			expect(existsSync(join(h.dir, "evolve", "benchmarks", "auto_regression"))).toBe(true);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("contains an auto-case capture failure instead of breaking the gate", async () => {
+		const { llm } = scriptedLlm([
+			JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] }),
+			JSON.stringify({ shouldRefine: true, rationale: "repeated handoff workflow", instructions: "propose the handoff skill" }),
+			SKILL_PLAN,
+		]);
+		const agent = gateAgent("session-gate-autocase");
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
+			config: { autoCase: true, prefixCacheMode: "off" },
+		});
+		try {
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(join(h.dir, "evolve"), { recursive: true });
+			writeFileSync(join(h.dir, "evolve", "benchmarks"), "blocker");
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(auditRows(h)).toHaveLength(3));
+			expect(auditRows(h)[2]?.outcome).toBe("declined");
+			expect(h.warnings.some((w) => w.includes("auto-case capture failed"))).toBe(true);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("applies consented skill edits locally and notifies the session", async () => {		const { llm } = scriptedLlm([
+			JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] }),
+			JSON.stringify({ shouldRefine: true, rationale: "repeated handoff workflow", instructions: "propose the handoff skill" }),
+			SKILL_PLAN,
+		]);
+		const followedUp: unknown[] = [];
+		const agent = gateAgent("session-gate-apply", (msg) => followedUp.push(msg));
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
+			userQuestions: { ask: async () => ({ answers: [{ id: "evolve-skill-consult", selected: ["固化"] }] }) },
+			config: { notifyOnAutoReview: true, prefixCacheMode: "off" },
+		});
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(auditRows(h)).toHaveLength(3));
+			const review = auditRows(h)[2] as { outcome?: string };
+			expect(review.outcome).toBe("approved");
+			const engine = createEvolutionEngine(h.dir);
+			expect(Object.keys(engine.load("local", "session-gate-apply").entries.skill)).toHaveLength(1);
+			expect(followedUp).toHaveLength(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("lands local memory edits from the dedicated phase and notifies on applied", async () => {
+		const { llm } = scriptedLlm([
+			JSON.stringify({
+				summary: "one durable preference",
+				rationale: "user repeats the same build command",
+				expectedOutcome: "memory saved",
+				edits: [{
+					action: "create",
+					kind: "memory",
+					targetScope: "local",
+					blastRadius: "session",
+					title: "Build command",
+					content: "Build with pnpm build. Why: repeated. How to apply: run it.",
+					metadata: { memoryType: "project" },
+				}],
+			}),
+			JSON.stringify({ shouldRefine: false, rationale: "memory phase owns this evidence" }),
+		]);
+		const followedUp: unknown[] = [];
+		const agent = gateAgent("session-gate-memory", (msg) => followedUp.push(msg));
+		const h = wiringHarness({
+			llm,
+			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
+			config: { notifyOnAutoReview: true, prefixCacheMode: "off", requireGlobalApproval: false },
+		});
+		try {
+			h.emit("agent/turn-stopping", { agent, turn: 1 });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(auditRows(h)).toHaveLength(3));
+			const rows = auditRows(h);
+			expect(rows[1]?.outcome).toBe("applied");
+			expect(rows[2]?.outcome).toBe("declined");
+			const engine = createEvolutionEngine(h.dir);
+			const memories = engine.load("local", "session-gate-memory").entries.memory;
+			expect(Object.values(memories).some((entry) => entry.title === "Build command")).toBe(true);
+			expect(followedUp).toHaveLength(1);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}

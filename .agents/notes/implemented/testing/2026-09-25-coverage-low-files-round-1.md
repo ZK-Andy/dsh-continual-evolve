@@ -24,6 +24,7 @@ per-file 水位线（`implemented/process/2026-09-25-gate-ts-migration.md`）开
 
 - 收益：845 测试 / 50 文件（+50 测试，+2 文件）；`tool` / `notify` / `mount` / `evaluate` 四个文件语句与函数 100；全仓 94.12 / 83.71 分支 / 98.53 函数。
 - 代价：`branches: 73` 仍远低于 DSH 的 100；`auto.ts` 是下一轮主战场。
+- 后续：第二轮见 `2026-09-25-coverage-low-files-round-2.md`（auto/command + 覆盖率徽章 + 水位线 82/90/82/75）。
 
 ## Testing
 
