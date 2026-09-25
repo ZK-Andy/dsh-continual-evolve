@@ -573,3 +573,316 @@ describe("casecheck / pilot / freeze / meta", () => {
 		}
 	});
 });
+
+describe("error branches (round 5)", () => {
+	it("add-case with no args reports the usage error", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["add-case"], runtime);
+			expect(result.kind).toBe("error");
+			expect(result.text).toContain("needs <bid> <title> <statement> <rubric>");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("status with no bid shows the empty board", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["status"], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("(no reference evaluation yet)");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("run with no bid reports not found", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["run"], runtime);
+			expect(result.kind).toBe("error");
+			expect(result.text).toContain("not found");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("run with a bare candidate keyword records a reference", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			evaluateStateMock.mockResolvedValue(outcomeOf("reference", [cell(cid, 90)]));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["run", bid, "candidate"], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("reference evaluation recorded as the baseline");
+			expect(loadScoreboard(base, bid).reference?.overall).toBe(90);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("casecheck reports unknown benchmarks and empty ones", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const ghost = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["casecheck", "ghost"], runtime);
+			expect(ghost.kind).toBe("error");
+			expect(ghost.text).toContain("benchmark ghost not found");
+			createBenchmark(base, { title: "Empty" });
+			const noCases = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["casecheck", "empty"], runtime);
+			expect(noCases.kind).toBe("error");
+			expect(noCases.text).toContain("has no cases");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("casecheck treats a missing meta file as draft", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			rmSync(join(base, "evolve", "benchmarks", bid, "cases", cid, "meta.json"));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["casecheck", bid], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("[draft]");
+			expect(result.text).toContain("meta.json missing");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("casecheck uses the singular form for exactly one problem", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const def = createBenchmark(base, { title: "Singular" });
+			const added = addCase(base, def.id, "One missing field", "This statement is long enough to clear the length floor.", "Rubric text.");
+			saveCaseMeta(base, def.id, added.id, { status: "draft", capability: "c", distinguisher: "d", shortcuts: "" });
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["casecheck", def.id], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("✗ 1 problem found");
+			expect(result.text).toContain("✗ (1 problem):");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("pilot reports unknown benchmarks and cases", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const ghost = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["pilot", "ghost", "c"], runtime);
+			expect(ghost.kind).toBe("error");
+			expect(ghost.text).toContain("benchmark ghost not found");
+			const { bid } = seededBenchmark(base);
+			const noCase = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["pilot", bid, "ghost-case"], runtime);
+			expect(noCase.kind).toBe("error");
+			expect(noCase.text).toContain("case ghost-case not found");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("pilot records the executor session when the cell carries one", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			evaluateStateMock.mockResolvedValue(outcomeOf(`pilot:${cid}`, [{ ...cell(cid, 75), sessionId: "sess-1" }]));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["pilot", bid, cid], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("session: sess-1");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("pilot marks an ok cell below the threshold", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			evaluateStateMock.mockResolvedValue(outcomeOf(`pilot:${cid}`, [cell(cid, 50)]));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["pilot", bid, cid], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain(`pilot ${cid}: 50 (below threshold)`);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("pilot records a failed cell with a zero score", async () => {		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			evaluateStateMock.mockResolvedValue(outcomeOf(`pilot:${cid}`, [{ ...cell(cid, 0), status: "failed", notes: "executor crash" }]));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["pilot", bid, cid], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain(`pilot ${cid}: failed: executor crash`);
+			expect(loadCaseMeta(base, bid, cid)?.calibrationHistory[0]?.score).toBe(0);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("pilot tolerates an empty evaluation (unknown cell)", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			evaluateStateMock.mockResolvedValue(outcomeOf(`pilot:${cid}`, []));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["pilot", bid, cid], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain(`pilot ${cid}: failed: unknown`);
+			expect(loadCaseMeta(base, bid, cid)?.calibrationHistory[0]?.passed).toBe(false);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("freeze validates arguments and benchmark/case existence", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const bare = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["freeze"], runtime);
+			expect(bare.kind).toBe("error");
+			expect(bare.text).toContain("benchmark freeze needs <bid> <cid>");
+			const bidOnly = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["freeze", "b"], runtime);
+			expect(bidOnly.kind).toBe("error");
+			expect(bidOnly.text).toContain("benchmark freeze needs <bid> <cid>");
+			const ghost = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["freeze", "ghost", "c"], runtime);
+			expect(ghost.kind).toBe("error");
+			expect(ghost.text).toContain("benchmark ghost not found");
+			const { bid } = seededBenchmark(base);
+			const noCase = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["freeze", bid, "ghost-case"], runtime);
+			expect(noCase.kind).toBe("error");
+			expect(noCase.text).toContain("case ghost-case not found");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("freeze uses the singular form for exactly one quality problem", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const def = createBenchmark(base, { title: "SingularFreeze" });
+			const added = addCase(base, def.id, "One missing field", "This statement is long enough to clear the length floor.", "Rubric text.");
+			saveCaseMeta(base, def.id, added.id, { status: "draft", capability: "c", distinguisher: "d", shortcuts: "" });
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["freeze", def.id, added.id], runtime);
+			expect(result.kind).toBe("error");
+			expect(result.text).toContain("has 1 quality problem:");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("meta with no args reports the usage error and unknown cases", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const bare = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["meta"], runtime);
+			expect(bare.kind).toBe("error");
+			expect(bare.text).toContain("benchmark meta needs <bid> <cid> <field> <value>");
+			const { bid } = seededBenchmark(base);
+			const noCase = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["meta", bid, "ghost-case", "capability", "x"], runtime);
+			expect(noCase.kind).toBe("error");
+			expect(noCase.text).toContain("case ghost-case not found");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("list shows a reference score once recorded", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const first = seededBenchmark(base, "Scored");
+			saveScoreboard(base, first.bid, {
+				reference: { label: "reference", createdAt: "x", cells: [cell("c", 90)], aggregate: {}, overall: 90 },
+				candidates: [],
+				decisions: [],
+			});
+			const second = seededBenchmark(base, "Unscored");
+			saveScoreboard(base, second.bid, {
+				reference: { label: "reference", createdAt: "x", cells: [], aggregate: {}, overall: null },
+				candidates: [],
+				decisions: [],
+			});
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["list"], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("ref=90");
+			expect(result.text).toContain("ref=?");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("status renders null overalls, bare candidates, and accepted empty decisions", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			saveScoreboard(base, bid, {
+				reference: { label: "reference", createdAt: "x", cells: [cell(cid, 90)], aggregate: {}, overall: null },
+				candidates: [
+					{ label: "candidate:evolve_y", createdAt: "x", cells: [cell(cid, 70)], aggregate: {}, overall: null },
+				],
+				decisions: [{ candidateLabel: "candidate:evolve_y", accepted: true, reasons: [], createdAt: "x" }],
+			});
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["status", bid], runtime);
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain('reference "reference": overall=?');
+			expect(result.text).toContain('candidate "candidate:evolve_y": overall=?');
+			expect(result.text).toContain("decision: ACCEPTED candidate:evolve_y — ok");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("second reference run shows an unknown overall when the first lacked one", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid } = seededBenchmark(base);
+			saveScoreboard(base, bid, {
+				reference: { label: "reference", createdAt: "x", cells: [], aggregate: {}, overall: null },
+				candidates: [],
+				decisions: [],
+			});
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["run", bid], runtime);
+			expect(result.kind).toBe("error");
+			expect(result.text).toContain("reference already evaluated (?)");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("captures a draft auto-case on rejection when enabled", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			const { bid, cid } = seededBenchmark(base);
+			saveScoreboard(base, bid, {
+				reference: { label: "reference", createdAt: "x", cells: [cell(cid, 90)], aggregate: {}, overall: 90 },
+				candidates: [],
+				decisions: [],
+			});
+			evaluateStateMock.mockResolvedValue(outcomeOf("candidate:evolve_x", [cell(cid, 50)]));
+			const result = await executeBenchmarkCommand({} as never, engine, invocationOf("s1"), ["run", bid, "candidate", "evolve_x"], {
+				...runtime,
+				autoCase: true,
+			});
+			expect(result.kind).toBe("success");
+			expect(result.text).toContain("auto-case captured: auto_regression/");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});

@@ -127,7 +127,7 @@ export async function executeBenchmarkCommand(
 			for (const d of board.decisions) {
 				lines.push(`decision: ${d.accepted ? "ACCEPTED" : "rejected"} ${d.candidateLabel} — ${d.reasons.join("; ") || "ok"}`);
 			}
-			return success(lines.join("\n") || "(empty scoreboard)");
+			return success(lines.join("\n"));
 		}
 		case "run": {
 			const bid = stripAngleBrackets(args[0] ?? "");
