@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createEvolutionEngine } from "../src/service.js";
 import { hasMemoryProjection, materializeMemoryProjection, memoryFactFilename, readMemoryFact } from "../src/projection.js";
 import { emptyHarnessState, MEMORY_TYPE_KEY } from "../src/types.js";
@@ -126,6 +126,69 @@ describe("materializeMemoryProjection", () => {
 			writeFileSync(join(paths.stateDir, "memory", "stray.md"), "stale", "utf8");
 			materializeMemoryProjection(paths.stateDir, state);
 			expect(existsSync(join(paths.stateDir, "memory", "stray.md"))).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("suffixes fact filenames when colon-mapping collides", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-proj-"));
+		try {
+			const state = emptyHarnessState();
+			const now = new Date().toISOString();
+			for (const id of ["a:b", "a_b"]) {
+				state.entries.memory[id] = {
+					id, kind: "memory", title: `fact ${id}`, content: `body ${id}`,
+					path: "", scope: "global", reference: {}, arguments: {},
+					metadata: { [MEMORY_TYPE_KEY]: "user" },
+					source: "evolve", created_at: now, updated_at: now, version: 1,
+				};
+			}
+			const paths = storePaths(dir, "global", undefined);
+			materializeMemoryProjection(paths.stateDir, state);
+			// Both map to a_b.md — the second takes the ~2 suffix.
+			expect(existsSync(join(paths.stateDir, "memory", "a_b.md"))).toBe(true);
+			expect(existsSync(join(paths.stateDir, "memory", "a_b~2.md"))).toBe(true);
+			const index = readFileSync(join(paths.stateDir, "MEMORY.md"), "utf8");
+			expect(index).toContain("memory/a_b.md");
+			expect(index).toContain("memory/a_b~2.md");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("swallows an unsweepable stale entry (EISDIR) without breaking apply", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-proj-"));
+		try {
+			const state = emptyHarnessState();
+			const paths = storePaths(dir, "global", undefined);
+			materializeMemoryProjection(paths.stateDir, state);
+			// A stale *directory* ending in .md lists in the sweep but
+			// unlinkSync fails on it (EISDIR) — the catch must swallow it.
+			mkdirSync(join(paths.stateDir, "memory", "stale.md"));
+			materializeMemoryProjection(paths.stateDir, state);
+			expect(existsSync(join(paths.stateDir, "memory", "stale.md"))).toBe(true);
+			expect(existsSync(join(paths.stateDir, "MEMORY.md"))).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("treats an unreadable facts dir as empty (EACCES) and still writes the index", () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-proj-"));
+		try {
+			const state = emptyHarnessState();
+			const paths = storePaths(dir, "global", undefined);
+			materializeMemoryProjection(paths.stateDir, state);
+			// mkdirSync(recursive) tolerates the existing dir; readdirSync
+			// then throws EACCES — the catch falls back to existing=[].
+			chmodSync(join(paths.stateDir, "memory"), 0o000);
+			try {
+				materializeMemoryProjection(paths.stateDir, state);
+			} finally {
+				chmodSync(join(paths.stateDir, "memory"), 0o755);
+			}
+			expect(readFileSync(join(paths.stateDir, "MEMORY.md"), "utf8")).toContain("(no memory entries yet)");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
