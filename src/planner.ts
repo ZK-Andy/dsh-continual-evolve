@@ -27,6 +27,12 @@ to reusable state: prompt notes, memories, skills, and subagent specs.
 Rules:
 - The base system prompt is immutable and MUST NOT be rewritten (never edit id "base_system_prompt").
 - Prefer small evidence-backed edits. If no useful edit is justified, return an empty edits array.
+- Repeated evidence is mandatory for prompt/skill/subagent proposals: the same
+  pattern must recur at least twice in the trajectory. A single one-off
+  interaction never justifies a prompt, skill, or subagent edit — return an
+  empty edits array with a rationale instead. Session-scoped local prompt
+  landings converge on /evolve wrapup human review; the turn pipeline must
+  not silently persist one-off abstractions.
 - prompt = narrow behavioral policy addendums; memory = ONE FACT per entry, typed via metadata.memoryType
 -   (user = who the user is; feedback = a pitfall/correction or confirmed approach, MUST carry Why + How to apply;
 -   project = work goal/constraint not derivable from the repo; reference = URL/dashboard/ticket pointer).
@@ -138,7 +144,7 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 	}
 	const scopeInstruction = options.global
 		? "Requested scope: global. Only propose stable cross-session lessons, durable preferences, reusable skills/subagents, or explicitly project-qualified facts."
-		: "Requested scope: local. Prefer session-scoped edits for current task progress; global entries are read-only context — do not propose update/delete for them.";
+		: "Requested scope: local. Propose session-scoped edits only when the trajectory shows repeated evidence (>=2 occurrences of the same pattern); a single one-off interaction returns an empty edits array. Global entries are read-only context — do not propose update/delete for them.";
 
 	// Ground the plan in the caller's session: Route A carries the context
 	// as a session-derived message prefix (cache-eligible on providers with

@@ -60,8 +60,13 @@ Decide whether this checkpoint should continue the non-memory /evolve path.
 A dedicated memory extraction agent has already processed the same snapshot
 with a frozen memory manifest, so do NOT approve solely to create, update,
 archive, or delete a memory entry. Decline with a rationale that the memory
-phase owns that evidence. For the remaining kinds, approve repeated failures,
-reusable tactics, repeated delegation roles, or narrow behavioral policies.
+phase owns that evidence. For the remaining kinds, approve ONLY when the
+trajectory shows repeated evidence: the same failure, tactic, delegation
+role, or behavioral policy recurs at least twice across turns. A single
+one-off interaction defaults to decline no matter how useful it looks for
+future turns — one data point is never enough to generalize. When approving,
+cite the repeated spans in the instructions so the planner can ground its
+edits.
 
 The current harness state below includes GLOBAL entries (scope=global) plus
 this session's local entries (scope=local). When a topic is already covered
@@ -169,7 +174,7 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 		`<current_harness_state>\n${formatHarnessStateForPrompt(state)}\n</current_harness_state>`,
 		`<refinement_history>\n${historyForPrompt(history)}\n</refinement_history>`,
 		conversationBlock,
-		"Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local edits; do not ask for global refinement here.",
+		"Return shouldRefine=true only when the trajectory shows repeated evidence (>=2 occurrences) useful to this session's future turns. A single one-off interaction defaults to shouldRefine=false. Prefer local edits; do not ask for global refinement here.",
 	]
 		.filter(Boolean)
 		.join("\n\n");

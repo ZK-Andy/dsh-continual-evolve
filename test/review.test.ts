@@ -40,6 +40,11 @@ describe("AUTO_REVIEW_SYSTEM_PROMPT", () => {
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/never\s+for\s+one-off flows/i);
 		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/offered to the user/i);
 	});
+
+	it("requires repeated evidence: single one-off interactions default to decline", () => {
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/at least twice/i);
+		expect(AUTO_REVIEW_SYSTEM_PROMPT).toMatch(/one data point is never enough/i);
+	});
 });
 
 describe("parseAutoRefineReview", () => {

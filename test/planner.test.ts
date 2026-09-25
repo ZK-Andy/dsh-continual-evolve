@@ -36,6 +36,12 @@ describe("PLANNER_SYSTEM_PROMPT", () => {
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/repeated evidence/i);
 		expect(PLANNER_SYSTEM_PROMPT).toMatch(/offered to\s+the user/i);
 	});
+
+	it("requires repeated evidence for prompt/skill/subagent: single interactions return empty edits", () => {
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/repeated evidence is mandatory/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/single one-off/i);
+		expect(PLANNER_SYSTEM_PROMPT).toMatch(/empty edits array/i);
+	});
 });
 
 const emptyState: HarnessState = {

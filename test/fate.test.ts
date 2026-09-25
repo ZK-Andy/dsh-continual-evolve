@@ -453,13 +453,13 @@ describe("runLocalFatePhase", () => {
 	async function runAgainst(
 		h: Harness,
 		gate: GateState,
-		reason: "turn_interval" | "compact",
+		reason: "turn_interval" | "turn_snapshot" | "compact" | "goal_blocked",
 		config: AutoReviewConfig = configWith(),
 	): Promise<void> {
 		await runLocalFatePhase(h.ctx, h.engine, fakeAgent, config, gate, reason, (entry) => h.records.push(entry));
 	}
 
-	it("promotes on user approval: global create + local stamp, audited as approved", async () => {
+	it("promotes on user approval via goal_blocked: global create + local stamp, audited as approved", async () => {
 		const h = scenario(
 			JSON.stringify({
 				rationale: "durable lesson",
@@ -469,7 +469,7 @@ describe("runLocalFatePhase", () => {
 			{ m1: entry("m1", "memory", "持久结论") },
 		);
 		const gate = gateWith({ turns: 6, lastFateAt: 0 });
-		await runAgainst(h, gate, "turn_interval");
+		await runAgainst(h, gate, "goal_blocked");
 
 		expect(h.llmCalls()).toBe(1);
 		const global = h.engine.load("global", undefined);
@@ -493,7 +493,7 @@ describe("runLocalFatePhase", () => {
 			{ m1: entry("m1", "memory", "持久结论") },
 		);
 		const gate = gateWith({ turns: 6, lastFateAt: 0 });
-		await runAgainst(h, gate, "turn_interval");
+		await runAgainst(h, gate, "goal_blocked");
 
 		expect(h.asks()).toBe(1);
 		expect(h.engine.load("global", undefined).entries.memory["m1"]).toBeUndefined();
@@ -503,7 +503,7 @@ describe("runLocalFatePhase", () => {
 
 		// Same set, same session, still inside the cooldown: no second LLM call.
 		const gate2 = gateWith({ turns: 8, lastFateAt: 6, fateRejects: new Map(gate.fateRejects) });
-		await runAgainst(h, gate2, "turn_interval");
+		await runAgainst(h, gate2, "goal_blocked");
 		expect(h.llmCalls()).toBe(1);
 
 		// After the cooldown elapses the set is assessed (and can be approved).
@@ -516,9 +516,41 @@ describe("runLocalFatePhase", () => {
 			"执行",
 			{ m1: entry("m1", "memory", "持久结论") },
 		);
-		await runAgainst(h3, gate3, "turn_interval");
+		await runAgainst(h3, gate3, "goal_blocked");
 		expect(h3.llmCalls()).toBe(1);
 		expect(h3.engine.load("global", undefined).entries.memory["m1"]).toBeTruthy();
+	});
+
+	it("never consults on the turn path: governed actions deferred, silent archives applied", async () => {
+		const h = scenario(
+			JSON.stringify({
+				rationale: "one covered archive, one promote",
+				items: [
+					{ key: "memory:dup", verdict: "archive", reason: "covered globally" },
+					{ key: "memory:m1", verdict: "promote", reason: "durable" },
+				],
+			}),
+			"执行", // must NOT be consulted on turn_snapshot even with a service
+			{
+				dup: entry("dup", "memory", "已被全局覆盖的话题"),
+				m1: entry("m1", "memory", "持久结论"),
+			},
+			{
+				dup: entry("dup", "memory", "已被全局覆盖的话题", {
+					scope: "global",
+					content: "已被全局覆盖话题的全局正文（独立内容，避免内容去重误撞本地候选）。",
+				}),
+			},
+		);
+		const gate = gateWith({ turns: 6, lastFateAt: 0 });
+		await runAgainst(h, gate, "turn_snapshot");
+
+		expect(h.asks()).toBe(0);
+		const local = h.engine.load("local", "session-fate");
+		expect(local.entries.memory["dup"]?.metadata.archivedAt).toBeTruthy();
+		expect(local.entries.memory["m1"]?.metadata.archivedAt).toBeUndefined();
+		expect(h.engine.load("global", undefined).entries.memory["m1"]).toBeUndefined();
+		expect(h.records.some((entry) => entry.outcome === "deferred" && entry.rationale?.includes("/evolve wrapup"))).toBe(true);
 	});
 
 	it("is conservative without the question service (nothing governed applied)", async () => {
@@ -536,7 +568,7 @@ describe("runLocalFatePhase", () => {
 		expect(h.records.some((entry) => entry.outcome === "deferred")).toBe(true);
 	});
 
-	it("defers even silent archives when the question call fails (conservative)", async () => {
+	it("defers even silent archives when the question call fails (conservative, goal_blocked)", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "evolve-fate-error-"));
 		try {
 			const engine = createEvolutionEngine(dir);
@@ -567,7 +599,7 @@ describe("runLocalFatePhase", () => {
 			} as unknown as Context;
 			const records: Array<Omit<ReviewRecord, "timestamp">> = [];
 			const gate = gateWith();
-			await runLocalFatePhase(ctx, engine, fakeAgent, configWith(), gate, "turn_interval", (entry) => records.push(entry));
+			await runLocalFatePhase(ctx, engine, fakeAgent, configWith(), gate, "goal_blocked", (entry) => records.push(entry));
 			expect(asked).toBe(true);
 			const after = engine.load("local", "session-fate");
 			expect(after.entries.memory["dup"]?.metadata.archivedAt).toBeUndefined();

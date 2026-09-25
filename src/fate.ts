@@ -344,7 +344,10 @@ export async function runLocalFatePhase(
 	const needsDialog = plan.promotable.length + plan.splits.length + plan.reviewArchives.length > 0;
 
 	let consent: FateConsultResult = { approved: false, asked: false, reason: "nothing-to-ask" };
-	if (reason !== "compact" && needsDialog) {
+	// Turn-path tightening (2026-09-25): turn_snapshot/turn_interval never open
+	// a dialog — governed actions are deferred to `/evolve wrapup`. Only an
+	// explicit goal_blocked signal (own streak counter) may consult.
+	if (reason === "goal_blocked" && needsDialog) {
 		consent = await consultLocalFates(ctx, agent, plan, state);
 	}
 
@@ -383,18 +386,18 @@ export async function runLocalFatePhase(
 		return;
 	}
 
-	if (reason === "compact" && needsDialog) {
-		// Compaction: no dialog. Only deterministic silent archives apply;
-		// governed actions are deferred with an audit record.
+	if (needsDialog && reason !== "goal_blocked") {
+		// Turn/compact path: no dialog. Only deterministic silent archives apply;
+		// governed actions are deferred with an audit record pointing at wrapup.
 		const { applied, results } = applyLocalFates(engine, sessionId, plan, localState, "silent-only");
 		if (applied.length > 0) {
-			logger.info(`auto-review local-fate (compact) [${sessionId}]: silent-archived ${applied.length} — ${assessment.rationale}`);
+			logger.info(`auto-review local-fate (${reason}) [${sessionId}]: silent-archived ${applied.length} — ${assessment.rationale}`);
 			record({
 				sessionId,
 				reason,
 				turnsSinceLastReview: turnsSinceFate,
 				outcome: "approved",
-				rationale: `fate (compact): ${assessment.rationale} (${applied.join("; ")})`,
+				rationale: `fate (${reason}): ${assessment.rationale} (${applied.join("; ")})`,
 				refinementId: results.map((result) => result.id).join(","),
 			});
 		}
@@ -403,7 +406,7 @@ export async function runLocalFatePhase(
 			reason,
 			turnsSinceLastReview: turnsSinceFate,
 			outcome: "deferred",
-			rationale: `fate (compact): ${plan.promotable.length} promotes, ${plan.splits.length} splits, ${plan.reviewArchives.length} review-archives deferred — run /evolve wrapup for a full session exit`,
+			rationale: `fate (${reason}): ${plan.promotable.length} promotes, ${plan.splits.length} splits, ${plan.reviewArchives.length} review-archives deferred — run /evolve wrapup for a full session exit`,
 		});
 		return;
 	}
