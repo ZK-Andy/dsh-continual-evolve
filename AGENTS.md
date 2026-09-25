@@ -48,10 +48,7 @@ web 检索优先 anysearch 纵向面（zone/tag/params 富参数）；GitHub 归
 
 ```sh
 pnpm typecheck && pnpm lint && pnpm test   # TS 工程链（vitest + oxlint）
-python3 scripts/verify-adr-format.py       # ADR 头/骨架/状态-目录一致性
-python3 scripts/verify-doc-budgets.py --manifest scripts/doc-budgets.manifest.json  # 字数预算
-python3 scripts/verify-md-links.py         # 相对链接/锚点（skills/ 排除）
-python3 scripts/verify-governance.py       # 治理面快检（与 CI governance.yml 同逻辑）
+pnpm check:docs                            # 文档门禁（tsx run-gates：adr/预算/链接/治理）
 scripts/change-scope.sh [<base> <head>]    # 变更范围（评审/push 前置）
 ```
 

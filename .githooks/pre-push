@@ -19,6 +19,7 @@ CHANGED="$(git diff --name-only HEAD 2>/dev/null || true; git diff --cached --na
 if echo "$CHANGED" | grep -qE "^(src|test)/"; then
   echo "-> typecheck (tsc)"
   ./node_modules/.bin/tsc -p tsconfig.json --noEmit
+  ./node_modules/.bin/tsc -p tsconfig.scripts.json --noEmit
   echo "-> lint (oxlint)"
   ./node_modules/.bin/oxlint --config .oxlintrc.json src test
   echo "-> test (vitest)"
@@ -29,8 +30,8 @@ fi
 
 # 文档门禁（增量也跑，防推坏链接）
 echo "-> 文档门禁"
-python3 scripts/verify-adr-format.py
-python3 scripts/verify-doc-budgets.py --manifest scripts/doc-budgets.manifest.json
-python3 scripts/verify-md-links.py
+./node_modules/.bin/tsx scripts/verify-adr-format.ts
+./node_modules/.bin/tsx scripts/verify-doc-budgets.ts --manifest scripts/doc-budgets.manifest.json
+./node_modules/.bin/tsx scripts/verify-md-links.ts
 
 echo "pre-push OK"

@@ -1,6 +1,6 @@
 # Agent Notes 规则（ADR 系统）
 
-本目录是项目的决策记录系统（Agent Notes / ADR）。规则如下，`scripts/verify-adr-format.py` 机器强制。
+本目录是项目的决策记录系统（Agent Notes / ADR）。规则如下，`scripts/verify-adr-format.ts` 机器强制。
 
 ## 何时写
 
@@ -29,7 +29,7 @@
 ## 门禁
 
 ```sh
-python3 scripts/verify-adr-format.py   # 在仓库根运行，校验头/骨架/状态-目录一致性
+tsx scripts/verify-adr-format.ts   # 在仓库根运行，校验头/骨架/状态-目录一致性
 ```
 
 双语暂不启用：当前正文中文单语。启用双语时恢复 `.zh.md` 镜像 + `.i18n.yaml` 配对机制（见体系方法论）。

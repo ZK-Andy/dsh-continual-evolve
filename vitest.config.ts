@@ -8,9 +8,13 @@ export default defineConfig({
 			include: ["src/**/*.ts"],
 			exclude: ["src/index.ts", "src/types.ts"],
 			thresholds: {
-				lines: 75,
-				functions: 75,
-				statements: 75,
+				// DSH-shaped per-file gate: every file must clear the floor,
+				// not just the repo average. Values are the current waterline
+				// (2026-09-25 actuals ~92/82/95); raise toward 100 file by file.
+				perFile: true,
+				lines: 78,
+				functions: 65,
+				statements: 78,
 				branches: 65,
 			},
 		},

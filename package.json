@@ -48,12 +48,14 @@
     "build": "tsc -p tsconfig.json",
     "prepare": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "lint": "oxlint src test",
-    "clean": "rm -rf lib"
+    "clean": "rm -rf lib",
+    "check:docs": "tsx scripts/run-gates.ts docs",
+    "check:governance": "tsx scripts/verify-governance.ts"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -73,6 +75,7 @@
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^3.2.0",
     "oxlint": "^0.16.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   }
