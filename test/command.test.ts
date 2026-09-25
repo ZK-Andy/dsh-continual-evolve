@@ -537,10 +537,10 @@ describe("executeEvolveCommand — recall / remember / forget", () => {
 	}));
 
 	it("forget lists candidates instead of archiving an ambiguous query", withDir(async (h) => {
-		// Titles carry ASCII-distinctive slugs: CJK-only titles all slug
-		// to the kind fallback id and would collide (engine slug boundary).
-		await h.run("remember user 深色偏好 dark-one");
-		await h.run("remember user 深色偏好 dark-two");
+		// Pure-Chinese titles take hashed ids since the 2026-09-25 slug
+		// fix, so both memories land instead of colliding on "memory".
+		await h.run("remember user 深色主题偏好一");
+		await h.run("remember user 深色主题偏好二");
 		const result = await h.run("forget 深色");
 		expect(result.kind).toBe("success");
 		expect(result.text).toContain("matches 2 memories");

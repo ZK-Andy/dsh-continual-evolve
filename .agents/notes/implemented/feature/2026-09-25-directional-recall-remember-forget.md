@@ -26,5 +26,5 @@ Status: implemented
 ## Consequences
 
 - 模型侧多一个只读工具，token 成本只在调用时产生；目录注入预算不受影响。
-- 已知边界：纯中文标题经 `slug` 全归一化到 kind fallback id（如 `memory`），连续 remember 会撞 id（第二条按重复 id 被拒）。这是引擎既有 `slug` 行为，本次不改；测试用 ASCII 区分标题绕行，forget 的单义路径不受影响。
+- 已知边界（2026-09-25 已修复，见 `implemented/bug-fix/2026-09-25-cjk-slug-hash-fallback.md`）：此前纯中文标题经 `slug` 全归一化到 kind fallback id（如 `memory`），连续 remember 会撞 id；现空归一化取 `<fallback>_<sha256-8>`，`forget` 多义测试已改回纯中文标题回归。
 - P1 剩余：Markdown 投影、memory benchmark、统一回执与有界 drain。

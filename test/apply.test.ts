@@ -668,3 +668,46 @@ describe("non-create id literal-first resolution (#19, 2026-09-24)", () => {
 		}
 	});
 });
+
+describe("create id for non-ASCII-only titles (2026-09-25)", () => {
+	it("applies two distinct Chinese titles under distinct hashed ids", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-cjk-"));
+		try {
+			const engine = createEvolutionEngine(dir);
+			const result = engine.apply("local", "session-cjk", {
+				summary: "two Chinese memories",
+				rationale: "regression: pure-Chinese titles shared the kind fallback id",
+				expectedOutcome: "both entries land under distinct ids",
+				edits: [
+					{ action: "create", kind: "memory", title: "深色主题偏好一", content: "用户偏好深色主题开发环境", metadata: { memoryType: "user" } },
+					{ action: "create", kind: "memory", title: "深色主题偏好二", content: "用户偏好深色主题编辑器", metadata: { memoryType: "user" } },
+				],
+			}, { scope: "local" });
+			expect(result.appliedEdits.every((edit) => edit.applied)).toBe(true);
+			const ids = result.appliedEdits.map((edit) => edit.id);
+			expect(new Set(ids).size).toBe(2);
+			expect(ids.every((id) => id.startsWith("memory_"))).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("still rejects a byte-identical Chinese title as already existing", () => {
+		const dir = mkdtempSync(join(tmpdir(), "apply-cjk-"));
+		try {
+			const engine = createEvolutionEngine(dir);
+			const seed = {
+				summary: "seed",
+				rationale: "r",
+				expectedOutcome: "o",
+				edits: [{ action: "create", kind: "memory", title: "深色主题偏好一", content: "用户偏好深色主题开发环境", metadata: { memoryType: "user" } }],
+			} as const;
+			expect(engine.apply("local", "session-cjk", seed, { scope: "local" }).appliedEdits[0]?.applied).toBe(true);
+			const again = engine.apply("local", "session-cjk", seed, { scope: "local" });
+			expect(again.appliedEdits[0]?.applied).toBe(false);
+			expect(again.appliedEdits[0]?.error).toContain("already exists");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

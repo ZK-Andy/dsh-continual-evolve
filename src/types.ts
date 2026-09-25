@@ -8,6 +8,7 @@
  * code here is an original implementation, written for the DeepSeek Harness
  * plugin surface.
  */
+import { createHash } from "node:crypto";
 
 /** What a harness entry can be. */
 export type RefinementKind = "prompt" | "memory" | "skill" | "subagent";
@@ -233,7 +234,15 @@ export interface PythonReference {
 	call_pattern?: string;
 }
 
-/** A stable id derived from a title. */
+/**
+ * A stable id derived from a title: ASCII runs become snake_case (unchanged
+ * legacy behavior). Titles with no ASCII content at all (e.g. pure Chinese)
+ * used to collapse onto the bare fallback, so distinct memories shared one
+ * id and every later create failed as "already exists". They now take
+ * `<fallback>_<sha256-8>` instead: distinct titles get distinct ids while
+ * identical titles still dedupe onto the same id. The fallback itself is
+ * assumed id-safe (callers pass entry kinds).
+ */
 export function slug(raw: string, fallback: string): string {
 	const normalized = raw
 		.trim()
@@ -241,7 +250,9 @@ export function slug(raw: string, fallback: string): string {
 		.replace(/[^a-z0-9]+/g, "_")
 		.replace(/^_+|_+$/g, "")
 		.slice(0, 80);
-	return normalized || fallback;
+	if (normalized) return normalized;
+	const digest = createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 8);
+	return `${fallback}_${digest}`;
 }
 
 /** Fresh empty state with the current schema version. */
