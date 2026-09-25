@@ -970,3 +970,23 @@ describe("applyMemoryExtractionProposal", () => {
 		expect(engine.load("project", "project-key").entries.memory).toEqual({});
 	}));
 });
+
+describe("MEMORY_AGENT_SYSTEM_PROMPT quality contract", () => {
+	it("carries the do-not-remember exclusion list", async () => {
+		const mod = await import("../src/memory-agent.js");
+		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT).toContain("Do not remember");
+		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT).toContain("one-off debugging trails");
+	});
+
+	it("demands actionable specificity with vague-vs-sharp examples", async () => {
+		const mod = await import("../src/memory-agent.js");
+		const prompt = mod.MEMORY_AGENT_SYSTEM_PROMPT;
+		// The surprising-or-non-obvious filter: obvious restatements stay no-ops.
+		expect(prompt).toContain("surprising or non-obvious");
+		// Few-shot granularity anchors (ZCode parity): the model imitates
+		// the examples' specificity, not just the abstract rules.
+		expect(prompt).toContain("Granularity examples (vague → reject; sharp → save)");
+		expect(prompt).toContain("user communicates in Chinese");
+		expect(prompt).toContain("write memory and handoff content in Chinese prose");
+	});
+});
