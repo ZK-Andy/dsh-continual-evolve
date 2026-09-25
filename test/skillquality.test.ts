@@ -12,6 +12,8 @@ import {
 	readSkillCreatorTemplate,
 	skillQualityGuide,
 	skillResourceRefs,
+	splitFrontmatter,
+	validateRenderedSkill,
 	validateRenderedSkillMarkdown,
 	validateSkillEntryContent,
 } from "../src/skillquality.js";
@@ -237,6 +239,139 @@ describe("skillResourceRefs", () => {
 	it("skips parent-relative and generic enumeration targets", () => {
 		const refs = skillResourceRefs("See `../skill-creator/references/template.md` and the references/scripts/agents categories.");
 		expect(refs).toEqual([]);
+	});
+});
+
+describe("readSkillCreatorTemplate read failure", () => {
+	it("returns null when the template path throws on read (EISDIR)", () => {
+		const root = tmpRoot();
+		try {
+			const dir = join(root, "skill-creator", "references");
+			mkdirSync(dir, { recursive: true });
+			// A directory where the file should be: existsSync is true but
+			// readFileSync throws, so the reader must degrade to null.
+			mkdirSync(join(dir, "template.md"));
+			expect(readSkillCreatorTemplate(root)).toBeNull();
+			expect(skillQualityGuide(root).source).toBe("builtin");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("splitFrontmatter", () => {
+	it("splits yaml and body on delimiters", () => {
+		expect(splitFrontmatter("---\nname: x\n---\n\nbody")).toEqual({ yaml: "name: x", body: "\nbody" });
+	});
+
+	it("returns null without an opening delimiter", () => {
+		expect(splitFrontmatter("name: x\n")).toBeNull();
+	});
+
+	it("returns null without a closing delimiter", () => {
+		expect(splitFrontmatter("---\nname: x\n")).toBeNull();
+	});
+});
+
+describe("validateRenderedSkillMarkdown quoted scalars", () => {
+	it("accepts single-quoted scalars with an escaped quote", () => {
+		const md = "---\nname: 'my-skill'\ndescription: 'Use it''s here'\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+	});
+
+	it("accepts double-quoted scalars with escapes", () => {
+		const md = '---\nname: "my-skill"\ndescription: "line1\\nline2\\t\\"q\\"\\\\"\n---\n\nbody';
+		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+	});
+
+	it("rejects an unterminated single-quoted scalar", () => {
+		const md = "---\nname: 'oops\ndescription: y\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/invalid YAML frontmatter/);
+	});
+
+	it("rejects an unterminated double-quoted scalar", () => {
+		const md = '---\nname: "oops\ndescription: y\n---\n\nbody';
+		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/invalid YAML frontmatter/);
+	});
+});
+
+describe("validateRenderedSkillMarkdown yaml subset", () => {
+	it("skips blank lines and comment lines", () => {
+		const md = "---\n# a comment\n\nname: x\n\n# another\ndescription: y\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+	});
+
+	it("accepts literal and folded block scalars", () => {
+		expect(validateRenderedSkillMarkdown("---\nname: x\ndescription: |\n  line1\n  line2\n---\n\nbody")).toEqual([]);
+		expect(validateRenderedSkillMarkdown("---\nname: x\ndescription: >\n  line1\n  line2\n---\n\nbody")).toEqual([]);
+	});
+
+	it("accepts a nested metadata object", () => {
+		const md = "---\nname: x\ndescription: y\nmetadata:\n  owner: team\n  level: 1\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+	});
+
+	it("rejects an unparseable nested line", () => {
+		const md = "---\nname: x\ndescription: y\nmetadata:\n  not a mapping!!\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/invalid YAML frontmatter/);
+	});
+
+	it("rejects an unparseable top-level line", () => {
+		const md = "---\nname: x\njust words here\ndescription: y\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/invalid YAML frontmatter/);
+	});
+});
+
+describe("validateRenderedSkillMarkdown name and routing fields", () => {
+	it("rejects a missing name", () => {
+		const md = "---\ndescription: y\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/requires non-empty `name`/);
+	});
+
+	it("rejects a non-kebab name", () => {
+		const md = "---\nname: Bad_Name\ndescription: y\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md).join(" ")).toMatch(/invalid skill name/);
+	});
+
+	it("accepts capitalized boolean spellings", () => {
+		for (const spelling of ["True", "FALSE", "Yes", "NO", "On", "OFF"]) {
+			const md = `---\nname: x\ndescription: y\ndisable-model-invocation: ${spelling}\n---\n\nbody`;
+			expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+		}
+	});
+
+	it("accepts a valid whenToUse", () => {
+		const md = "---\nname: x\ndescription: y\nwhenToUse: Use when routing skills.\n---\n\nbody";
+		expect(validateRenderedSkillMarkdown(md)).toEqual([]);
+	});
+});
+
+describe("skillResourceRefs prose shapes", () => {
+	it("collects a prose reference at the start of the string", () => {
+		expect(skillResourceRefs("references/guide.md")).toEqual(["references/guide.md"]);
+	});
+
+	it("collects a dot-relative prose reference without flagging an escape", () => {
+		expect(skillResourceRefs("see ./references/x.md for details")).toEqual(["references/x.md"]);
+	});
+
+	it("collects markdown links carrying a title plus a parenthesized prose path", () => {
+		const refs = skillResourceRefs('See [guide](references/guide.md "Guide") and (scripts/run.mjs).');
+		expect(refs).toContain("references/guide.md");
+		expect(refs).toContain("scripts/run.mjs");
+	});
+});
+
+describe("validateRenderedSkill entry materialization", () => {
+	it("validates an executable entry through the materializer", () => {
+		expect(validateRenderedSkill(skillEntry())).toEqual([]);
+	});
+
+	it("validates a guidance entry through the materializer", () => {
+		const entry = skillEntry({ skill_kind: "guidance" });
+		delete entry.reference;
+		delete entry.arguments;
+		expect(validateRenderedSkill(entry)).toEqual([]);
 	});
 });
 

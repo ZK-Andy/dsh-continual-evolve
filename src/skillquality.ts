@@ -267,8 +267,12 @@ export function validateSkillEntryContent(content: string): string[] {
 		);
 	}
 	for (const match of trimmed.matchAll(/(?<![\w])(references|scripts)\/[^\s)]+/g)) {
+		// match[0] always starts with `references/` or `scripts/` (the regex
+		// anchors it there), so only an embedded `/../` can escape the skill
+		// directory — the ../-prefix, absolute-path, and drive-letter
+		// spellings can never match and are intentionally not checked.
 		const ref = match[0] ?? "";
-		if (ref.startsWith("../") || ref.includes("/../") || ref.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(ref)) {
+		if (ref.includes("/../")) {
 			problems.push(`skill content resource reference escapes the skill directory: ${ref}`);
 		}
 	}

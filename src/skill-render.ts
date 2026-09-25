@@ -67,7 +67,8 @@ export function renderSkillMarkdown(entry: HarnessEntry): string {
 			lines.push(`- ${key}: ${JSON.stringify(value)}`);
 		}
 	}
-	if (Object.keys(entry.arguments).length > 0) {
+	const args = entry.arguments;
+	if (args && typeof args === "object" && Object.keys(args).length > 0) {
 		lines.push("", "## Arguments", "```json", JSON.stringify(entry.arguments, null, 2), "```");
 	}
 	return `${lines.join("\n").trimEnd()}\n`;

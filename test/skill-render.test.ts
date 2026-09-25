@@ -70,6 +70,19 @@ describe("renderSkillMarkdown", () => {
 		expect(md).not.toContain("## Arguments");
 	});
 
+	it("renders a guidance entry with absent reference and arguments", () => {
+		// Guidance skills legitimately carry no contract (validate.ts
+		// permits absent/empty reference + arguments); the renderer must
+		// not crash on the absent shape.
+		const base = entry({ skill_kind: "guidance" });
+		delete base.reference;
+		delete base.arguments;
+		const md = renderSkillMarkdown(base);
+		expect(md).toContain("name: my-skill");
+		expect(md).not.toContain("## Invocation");
+		expect(md).not.toContain("## Arguments");
+	});
+
 	it("trims whitespace from content", () => {
 		const md = renderSkillMarkdown(entry({ content: "  trimmed  \n" }));
 		// Content is trimmed but the blank line between frontmatter and body is structural
@@ -86,6 +99,12 @@ describe("renderSkillMarkdown", () => {
 		const md = renderSkillMarkdown(entry());
 		expect(md.endsWith("\n")).toBe(true);
 		expect(md.endsWith("\n\n")).toBe(false);
+	});
+
+	it("falls back to the bare title when the body yields no routing hint", () => {
+		const md = renderSkillMarkdown(entry({ title: "My Skill Title", content: "# Only headings\n- list" }));
+		expect(md).toContain("description: My Skill Title");
+		expect(md).not.toContain("use when:");
 	});
 });
 
