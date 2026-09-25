@@ -20,6 +20,12 @@ import {
 	type ToolSchema,
 } from "@deepseek-ai/dsh-llm";
 import { requestScopeApproval, type ScopeApprovalDecision } from "./approval.js";
+import {
+	fingerprintMemoryBatch,
+	isDeclinedRepeat,
+	loadDeclinedMemory,
+	recordDeclinedMemory,
+} from "./declines.js";
 import { streamModelTurn, type LlmSessionId } from "./llm-text.js";
 import { EVOLVE_MESSAGE_SOURCE } from "./message-source.js";
 import { extractJsonObject, parseJsonCandidate } from "./plan.js";
@@ -432,6 +438,13 @@ export async function applyMemoryExtractionProposal(
 		}
 		const baseline = options.baselines[scope];
 		if (!baseline) throw new Error(`memory agent has no ${scope} baseline`);
+		const scopeEdits = proposal.edits.filter((edit) => edit.targetScope === scope);
+		const fingerprint = fingerprintMemoryBatch(scope, scopeEdits);
+		if (isDeclinedRepeat(loadDeclinedMemory(engine.baseDir), scope, fingerprint)) {
+			ctx.logger("continual-evolve").info(`memory ${scope} proposal repeat-suppressed (declined before, no popup)`);
+			declinedScopes.push(scope);
+			continue;
+		}
 		const decisionKey = options.decisionCursor === undefined
 			? undefined
 			: memoryScopeDecisionKey(options.decisionCursor, scope, proposal.edits.filter((edit) => edit.targetScope === scope));
@@ -453,7 +466,14 @@ export async function applyMemoryExtractionProposal(
 		);
 		if (decisionKey !== undefined) options.onScopeDecision?.(decisionKey, approved);
 		if (approved === "approved") approvedScopes.add(scope);
-		else declinedScopes.push(scope);
+		else {
+			declinedScopes.push(scope);
+			try {
+				recordDeclinedMemory(engine.baseDir, scope, fingerprint, compactText(scopeEdits[0]?.title ?? proposal.summary, 120));
+			} catch (error) {
+				ctx.logger("continual-evolve").warn(`declined-memory ledger write failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
 	}
 
 	const results: RefinementResult[] = [];
