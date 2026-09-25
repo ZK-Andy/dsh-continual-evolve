@@ -172,4 +172,91 @@ describe("recallMemories", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("breaks relevance ties by recency", () => {
+		const { dir, engine } = engineHarness();
+		try {
+			// Entry ids hash the title, so distinct titles coexist; local
+			// scope skips the conflict block, so identical content ties.
+			const twin = (title: string) => ({
+				summary: "seed", rationale: "test", expectedOutcome: "test",
+				edits: [userMemory(title, "共享内容英国短毛猫护理")],
+			});
+			engine.apply("local", "twin-session", twin("甲条目"), { scope: "local" });
+			engine.apply("local", "twin-session", twin("乙条目"), { scope: "local" });
+			const result = recallMemories(engine, { sessionId: "twin-session" }, { query: "英国短毛猫", scopes: ["local"] });
+			expect(result.hits.length).toBe(2);
+			const [first, second] = result.hits;
+			expect(first!.updatedAt >= second!.updatedAt).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("orders three entries by recency without a query", () => {
+		const { dir, engine } = engineHarness();
+		try {
+			for (const title of ["甲条目", "乙条目", "丙条目"]) {
+				engine.apply("local", "trio-session", {
+					summary: "seed", rationale: "test", expectedOutcome: "test",
+					edits: [userMemory(title, `${title}内容各不相同`)],
+				}, { scope: "local" });
+			}
+			const result = recallMemories(engine, { sessionId: "trio-session" }, { scopes: ["local"] });
+			expect(result.hits.map((h) => h.title)).toEqual(["丙条目", "乙条目", "甲条目"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("carries conflict hints and source provenance onto hits and format", () => {
+		const { dir, engine } = engineHarness();
+		try {
+			const seedEdit = (title: string, content: string, metadata: Record<string, unknown>) => ({
+				summary: "seed", rationale: "test", expectedOutcome: "test",
+				edits: [{ action: "create" as const, kind: "memory" as const, title, content, metadata }],
+			});
+			engine.apply("global", undefined, seedEdit("带来源的结论", "内容携带来源与冲突印章", {
+				[MEMORY_TYPE_KEY]: "reference", conflictHint: "memory:older:0.65", sourceSession: "session-abc", sourceSeqs: [3, 7],
+			}), { scope: "global" });
+			engine.apply("global", undefined, seedEdit("空信号条目", "空字符串印章与坏 seq 视为无信号", {
+				[MEMORY_TYPE_KEY]: "user", conflictHint: "", sourceSeqs: ["x"],
+			}), { scope: "global" });
+			const result = recallMemories(engine, {}, { scopes: ["global"] });
+			expect(result.hits.length).toBe(2);
+			const hinted = result.hits.find((h) => h.title === "带来源的结论")!;
+			expect(hinted.staleHint).toBe("memory:older:0.65");
+			expect(hinted.sourceSession).toBe("session-abc");
+			expect(hinted.sourceSeqs).toEqual([3, 7]);
+			const bare = result.hits.find((h) => h.title === "空信号条目")!;
+			expect(bare.staleHint).toBeUndefined();
+			expect(bare.sourceSession).toBeUndefined();
+			expect(bare.sourceSeqs).toBeUndefined();
+			const text = formatRecallResult(result);
+			expect(text).toContain("conflict-hint=memory:older:0.65");
+			expect(text).toContain("src=session-abc:3,7");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("renders empty results, notes, and archived flags", () => {
+		const { dir, engine } = engineHarness();
+		try {
+			const empty = recallMemories(engine, { sessionId: "s", projectKey: "p" }, { query: "不存在" });
+			expect(formatRecallResult(empty)).toContain("hidden unless includeArchived");
+			expect(formatRecallResult(empty, "  ")).not.toContain("for \"");
+			const archived = formatRecallResult({
+				hits: [{
+					scope: "global", kind: "memory", id: "x", title: "t", content: "c", path: "",
+					version: 2, createdAt: "a", updatedAt: "b", archived: true,
+				}],
+				notes: ["n1"], totalCandidates: 1,
+			});
+			expect(archived).toContain("· archived");
+			expect(archived).toContain("note: n1");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });

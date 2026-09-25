@@ -395,6 +395,95 @@ describe("caseCheckProblems (A5)", () => {
 	});
 });
 
+describe("corrupt and defensive paths", () => {
+	it("treats a corrupt benchmark definition as missing", () => {
+		const base = tmpBase();
+		try {
+			const def = createBenchmark(base, { title: "Container" });
+			writeFileSync(join(base, "evolve/benchmarks", def.id, "benchmark.json"), "garbage{{{", "utf8");
+			expect(loadBenchmark(base, def.id)).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects cases for unknown benchmarks and duplicate titles", () => {
+		const base = tmpBase();
+		try {
+			const def = createBenchmark(base, { title: "Dup Titles" });
+			expect(() => addCase(base, "ghost", "T", "statement text here", "rubric")).toThrow("not found");
+			addCase(base, def.id, "Same Title", "statement text here", "rubric");
+			expect(() => addCase(base, def.id, "Same Title", "other statement here", "rubric")).toThrow("already exists");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("skips incomplete case dirs and reports their problems", () => {
+		const base = tmpBase();
+		try {
+			const def = createBenchmark(base, { title: "Hollow" });
+			const good = addCase(base, def.id, "Good Case", "A sufficiently long statement for testing", "rubric");
+			const casesDir = join(base, "evolve/benchmarks", def.id, "cases");
+			mkdirSync(join(casesDir, "hollow"), { recursive: true });
+			const brokenDir = join(casesDir, "broken");
+			mkdirSync(brokenDir, { recursive: true });
+			writeFileSync(join(brokenDir, "statement.md"), "A sufficiently long statement for testing", "utf8");
+			writeFileSync(join(brokenDir, "rubric.json"), "garbage{{{", "utf8");
+			const ids = listCases(base, def.id).map((c) => c.id);
+			expect(ids).toContain(good.id);
+			expect(ids).not.toContain("hollow");
+			expect(ids).not.toContain("broken");
+			expect(caseCheckProblems(base, def.id, "broken")).toContain("rubric.json is not valid JSON");
+			// A metaless case transitions from the default draft.
+			expect(transitionCaseStatus(base, def.id, "broken", "calibrating").status).toBe("calibrating");
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to empty scoreboards when missing, partial, or corrupt", () => {
+		const base = tmpBase();
+		try {
+			const def = createBenchmark(base, { title: "Boards" });
+			const path = join(base, "evolve/benchmarks", def.id, "scoreboard.json");
+			rmSync(path);
+			expect(loadScoreboard(base, def.id)).toEqual({ candidates: [], decisions: [] });
+			writeFileSync(path, "{}", "utf8");
+			expect(loadScoreboard(base, def.id)).toEqual({ candidates: [], decisions: [] });
+			writeFileSync(path, "garbage{{{", "utf8");
+			expect(loadScoreboard(base, def.id)).toEqual({ candidates: [], decisions: [] });
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("treats a corrupt case meta as missing", () => {
+		const base = tmpBase();
+		try {
+			const def = createBenchmark(base, { title: "Meta" });
+			const added = addCase(base, def.id, "Meta Case", "A sufficiently long statement for testing", "rubric");
+			writeFileSync(join(base, "evolve/benchmarks", def.id, "cases", added.id, "meta.json"), "garbage{{{", "utf8");
+			expect(loadCaseMeta(base, def.id, added.id)).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("lists no cases when the cases path is not a directory", () => {
+		const base = tmpBase();
+		try {
+			const def = createBenchmark(base, { title: "NotDir" });
+			addCase(base, def.id, "Some Case", "A sufficiently long statement for testing", "rubric");
+			rmSync(join(base, "evolve/benchmarks", def.id, "cases"), { recursive: true });
+			writeFileSync(join(base, "evolve/benchmarks", def.id, "cases"), "not a dir", "utf8");
+			expect(listCases(base, def.id)).toEqual([]);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("calibration history (A5)", () => {
 	it("stores and loads calibration records", () => {
 		const base = tmpBase();
