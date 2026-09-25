@@ -972,6 +972,11 @@ describe("applyMemoryExtractionProposal", () => {
 });
 
 describe("MEMORY_AGENT_SYSTEM_PROMPT quality contract", () => {
+	it("stays within the size budget: every line is recurring per-turn spend", async () => {
+		const mod = await import("../src/memory-agent.js");
+		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT.length).toBeLessThanOrEqual(mod.MEMORY_AGENT_SYSTEM_PROMPT_BUDGET_CHARS);
+	});
+
 	it("carries the do-not-remember exclusion list", async () => {
 		const mod = await import("../src/memory-agent.js");
 		expect(mod.MEMORY_AGENT_SYSTEM_PROMPT).toContain("Do not remember");

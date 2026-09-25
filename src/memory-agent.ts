@@ -37,6 +37,13 @@ import { validateBlastRadiusScope, validateEdit } from "./validate.js";
 export const MEMORY_AGENT_MAX_TURNS = 5;
 /** Bound one proposal so approval text and engine compensation stay reviewable. */
 export const MEMORY_AGENT_MAX_EDITS = 20;
+/**
+ * System-prompt size budget (chars): the prompt ships on EVERY extractor
+ * turn (up to five per snapshot), so each added line is recurring token
+ * spend, not one-off text. Raise this cap only in the same commit that
+ * justifies the added lines (regression pressure beats silent bloat).
+ */
+export const MEMORY_AGENT_SYSTEM_PROMPT_BUDGET_CHARS = 3000;
 
 /** The complete tool-name allowlist exposed by the memory agent. */
 export const MEMORY_AGENT_TOOL_NAMES = ["memory_search", "memory_propose"] as const;
