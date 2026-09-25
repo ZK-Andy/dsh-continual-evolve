@@ -30,6 +30,7 @@ describe("scopeOf", () => {
 /** Minimal structural view of a registered tool definition. */
 interface RegisteredTool {
 	name: string;
+	output?: { render: (args: Record<string, unknown>, value: { text?: string }) => { type: string; text: string }[] };
 	execute: (args: Record<string, unknown>, exec: { agent?: { id: string }; signal?: AbortSignal }) => Promise<{ text: string }>;
 }
 
@@ -243,6 +244,22 @@ describe("evolve_update / evolve_delete", () => {
 		}
 	});
 
+	it("asks once for a global update after approval", async () => {
+		const gated = toolHarness({ requireGlobalApproval: true, answer: "批准" });
+		try {
+			await gated
+				.byName("evolve_add")
+				.execute({ kind: "memory", title: "g update", content: "Durable cross-session fact about deploy freezes.", memoryType: "reference", global: true }, agentExec);
+			const result = await gated
+				.byName("evolve_update")
+				.execute({ kind: "memory", id: "g_update", content: "Updated durable fact. Why: test. How to apply: test.", global: true }, agentExec);
+			expect(result.text).toMatch(/- update memory:g_update \(v2\)/);
+			expect(gated.engine.load("global").entries.memory["g_update"]?.content).toContain("Updated durable fact");
+		} finally {
+			rmSync(gated.dir, { recursive: true, force: true });
+		}
+	});
+
 	it("asks once for a global batch delete (one approval, one refinement)", async () => {
 		let approvals = 0;
 		const dir = mkdtempSync(join(tmpdir(), "evolve-tool-batch-"));
@@ -269,6 +286,22 @@ describe("evolve_update / evolve_delete", () => {
 			expect(Object.keys(engine.load("global").entries.memory)).toHaveLength(0);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("output render", () => {
+	it("renders every tool text result and tolerates missing text", () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			for (const name of ["evolve_list", "evolve_recall", "evolve_add", "evolve_update", "evolve_delete", "evolve_rollback"]) {
+				const render = harness.byName(name).output?.render;
+				expect(render, `${name} has an output render`).toBeDefined();
+				expect(render!({}, { text: "hello" })).toEqual([{ type: "text", text: "hello" }]);
+				expect(render!({}, {})).toEqual([{ type: "text", text: "" }]);
+			}
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
 		}
 	});
 });

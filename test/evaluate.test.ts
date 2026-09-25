@@ -154,6 +154,123 @@ describe("evaluateState two-stage separation", () => {
 	});
 });
 
+describe("evaluateState failure and fallback paths", () => {
+	it("fails the cell when the rubric envelope cannot be decrypted", async () => {
+		const bad = { ...caseWith("c1"), rubric: "v1:only-two-parts" };
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" } },
+			reviewer: { structured: { caseId: "c1", run: 1, score: 90, passed: true, notes: "good" } },
+		});
+		const outcome = await evaluateState(ctx, agent, { ...baseOptions, cases: [bad] });
+		expect(outcome.cells[0]?.status).toBe("failed");
+		expect(outcome.cells[0]?.notes).toMatch(/rubric decrypt failed/);
+	});
+
+	it("falls back to the dev rubric key when the caller passes none", async () => {
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" } },
+			reviewer: { structured: { caseId: "c1", run: 1, score: 90, passed: true, notes: "good" } },
+		});
+		const { rubricKey: _dropped, ...withoutKey } = baseOptions;
+		const outcome = await evaluateState(ctx, agent, withoutKey);
+		// The dev key cannot open the test envelope: a failed cell, not a crash.
+		expect(outcome.cells[0]?.status).toBe("failed");
+		expect(outcome.cells[0]?.notes).toMatch(/rubric decrypt failed/);
+	});
+
+	it("fails the cell when the executor stops without completing", async () => {
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" }, stopReason: "aborted" },
+			reviewer: { structured: { caseId: "c1", run: 1, score: 90, passed: true, notes: "good" } },
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("failed");
+		expect(outcome.cells[0]?.notes).toMatch(/executor stopped: aborted/);
+	});
+
+	it("fails the cell when the executor returns nothing usable", async () => {
+		const { ctx } = spawner({ executor: {} });
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("failed");
+		expect(outcome.cells[0]?.notes).toMatch(/neither a structured value nor usable text/);
+	});
+
+	it("fails the cell when the reviewer stops without completing", async () => {
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" } },
+			reviewer: { structured: { caseId: "c1", run: 1, score: 90, passed: true, notes: "good" }, stopReason: "error" },
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("failed");
+		expect(outcome.cells[0]?.notes).toMatch(/reviewer stopped: error/);
+	});
+
+	it("fails the cell when the reviewer returns nothing usable", async () => {
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" } },
+			reviewer: {},
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("failed");
+		expect(outcome.cells[0]?.notes).toMatch(/neither a structured value nor usable text/);
+	});
+
+	it("recovers the cell from reviewer text JSON when no structured value arrives", async () => {
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" } },
+			reviewer: { text: JSON.stringify({ caseId: "c1", run: 1, score: 77, passed: true, notes: "from text" }) },
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("ok");
+		expect(outcome.cells[0]?.score).toBe(77);
+	});
+
+	it("fails the cell when reviewer text is neither JSON nor a cell", async () => {
+		const { ctx } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "evidence" } },
+			reviewer: { text: "just some prose, no score" },
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("failed");
+	});
+
+	it("recovers executor evidence from JSON text", async () => {
+		const { ctx } = spawner({
+			executor: { text: JSON.stringify({ caseId: "c1", run: 1, evidence: "json evidence" }) },
+			reviewer: { structured: { caseId: "c1", run: 1, score: 80, passed: true, notes: "ok" } },
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("ok");
+	});
+
+	it("truncates over-long evidence before grading", async () => {
+		const { ctx, calls } = spawner({
+			executor: { structured: { caseId: "c1", run: 1, evidence: "x".repeat(9000) } },
+			reviewer: { structured: { caseId: "c1", run: 1, score: 80, passed: true, notes: "ok" } },
+		});
+		const outcome = await evaluateState(ctx, agent, baseOptions);
+		expect(outcome.cells[0]?.status).toBe("ok");
+		expect(calls[1]?.promptText).toContain("evidence truncated at 8000 chars");
+	});
+
+	it("throws loudly without a provider/model route or the subagents service", async () => {
+		const noRoute = { id: "session-bench", options: {} } as never;
+		const { ctx } = spawner({});
+		await expect(evaluateState(ctx, noRoute, baseOptions)).rejects.toThrow(/requires a provider\/model route/);
+		await expect(evaluateState({} as Context, agent, baseOptions)).rejects.toThrow(/requires the subagents service/);
+	});
+
+	it("falls back to the call-site case/run when structured values omit them", () => {
+		expect(normalizeExecutor({ evidence: "e" }, "fallback-id", 7)).toEqual({ caseId: "fallback-id", run: 7, evidence: "e" });
+		expect(normalizeExecutor({ caseId: "", run: Number.NaN, evidence: "e" }, "fallback-id", 7)).toEqual({
+			caseId: "fallback-id",
+			run: 7,
+			evidence: "e",
+		});
+		expect(normalizeCell({ score: 50 }, "c", 3, 60)).toEqual({ caseId: "c", run: 3, status: "ok", score: 50, passed: false, notes: "" });
+	});
+});
+
 describe("evaluateState runtime evidence (A3)", () => {
 	it("records provider, model, and caseHash on ok cells", async () => {
 		const { ctx } = spawner({

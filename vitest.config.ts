@@ -12,10 +12,10 @@ export default defineConfig({
 				// not just the repo average. Values are the current waterline
 				// (2026-09-25 actuals ~92/82/95); raise toward 100 file by file.
 				perFile: true,
-				lines: 78,
-				functions: 65,
-				statements: 78,
-				branches: 65,
+				lines: 82,
+				functions: 89,
+				statements: 82,
+				branches: 73,
 			},
 		},
 	},

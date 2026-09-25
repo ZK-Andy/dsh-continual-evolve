@@ -3,7 +3,7 @@
  * ledger persistence, and mount/unmount without a loader service.
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessEntry } from "../src/types.js";
@@ -13,6 +13,7 @@ import {
 	renderMountPackage,
 	renderParameters,
 	renderPluginSource,
+	restoreMounted,
 	unmountSkill,
 } from "../src/mount.js";
 
@@ -87,6 +88,17 @@ describe("renderMountPackage", () => {
 });
 
 describe("renderParameters", () => {
+	it("falls back to an empty ledger for corrupt ledger JSON", () => {
+		const base = makeBase();
+		try {
+			mkdirSync(join(base, "evolve", "mounted"), { recursive: true });
+			writeFileSync(join(base, "evolve", "mounted", "index.json"), "{not json", "utf8");
+			expect(loadLedger(base)).toEqual({ mounted: [] });
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
 	it("maps required contract entries to a root-level required array", () => {
 		const parameters = renderParameters(
 			skillEntry({
@@ -169,6 +181,101 @@ describe("mountSkill / unmountSkill", () => {
 		try {
 			const record = await unmountSkill({ get: () => undefined } as never, base, "nope");
 			expect(record).toBeUndefined();
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("mounts through the loader when the service is available", async () => {
+		const base = makeBase();
+		try {
+			const created: { id: string; name: string }[] = [];
+			const ctx = { get: () => ({ create: async (opts: { id: string; name: string }) => { created.push(opts); return opts.id; } }) } as never;
+			const record = await mountSkill(ctx, base, skillEntry());
+			expect(created).toHaveLength(1);
+			expect(created[0]?.id).toBe(record.entryId);
+			expect(created[0]?.name.endsWith("index.js")).toBe(true);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("wraps a loader creation failure as a hot mount error", async () => {
+		const base = makeBase();
+		try {
+			const ctx = { get: () => ({ create: async () => { throw new Error("loader busy"); } }) } as never;
+			await expect(mountSkill(ctx, base, skillEntry())).rejects.toThrow(/hot mount failed: loader busy/);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("unmounts through the loader and wraps removal failures", async () => {
+		const base = makeBase();
+		try {
+			const removed: string[] = [];
+			const noLoader = { get: () => undefined } as never;
+			await mountSkill(noLoader, base, skillEntry());
+			const withLoader = { get: () => ({ remove: async (id: string) => { removed.push(id); } }) } as never;
+			const record = await unmountSkill(withLoader, base, "code_reviewer");
+			expect(record?.id).toBe("code_reviewer");
+			expect(removed).toEqual([record?.entryId]);
+
+			await mountSkill(noLoader, base, skillEntry());
+			const failing = { get: () => ({ remove: async () => { throw new Error("gone"); } }) } as never;
+			await expect(unmountSkill(failing, base, "code_reviewer")).rejects.toThrow(/hot unmount failed: gone/);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("restoreMounted", () => {
+	it("re-creates every ledger package through the loader at boot", async () => {
+		const base = makeBase();
+		try {
+			const noLoader = { get: () => undefined } as never;
+			const record = await mountSkill(noLoader, base, skillEntry());
+			const created: { id: string; name: string }[] = [];
+			const ctx = {
+				get: () => ({ create: async (opts: { id: string; name: string }) => { created.push(opts); return opts.id; } }),
+				logger: () => ({ info: () => {}, warn: () => {}, error: () => {} }),
+			} as never;
+			await restoreMounted(ctx, base);
+			expect(created).toHaveLength(1);
+			expect(created[0]).toEqual({ id: record.entryId, name: join(record.path, "index.js") });
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("skips ledger entries whose package was removed and runs loaderless without crashing", async () => {
+		const base = makeBase();
+		try {
+			const noLoader = { get: () => undefined, logger: () => ({ info: () => {}, warn: () => {}, error: () => {} }) } as never;
+			const record = await mountSkill(noLoader, base, skillEntry());
+			// Package present but no loader: nothing to re-create, no crash.
+			await restoreMounted(noLoader, base);
+			rmSync(record.path, { recursive: true, force: true });
+			await restoreMounted(noLoader, base);
+			expect(loadLedger(base).mounted).toHaveLength(1);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it("warns and continues when one restore fails", async () => {
+		const base = makeBase();
+		try {
+			const noLoader = { get: () => undefined } as never;
+			await mountSkill(noLoader, base, skillEntry());
+			const warnings: string[] = [];
+			const ctx = {
+				get: () => ({ create: async () => { throw new Error("boot race"); } }),
+				logger: () => ({ info: () => {}, warn: (msg: string) => warnings.push(msg), error: () => {} }),
+			} as never;
+			await restoreMounted(ctx, base);
+			expect(warnings.some((w) => w.includes("mount restore failed for code_reviewer"))).toBe(true);
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}

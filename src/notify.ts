@@ -89,15 +89,16 @@ export function buildMemoryReceipt(receipt: MemoryReceipt): string {
 	if (receipt.outcome === "noop") {
 		return `🧠 记忆提取：本轮无可沉淀的持久事实（no-op，${stats}），未写入任何条目。`;
 	}
-	if (receipt.outcome === "declined" || (receipt.results ?? []).length === 0) {
-		const scopes = (receipt.declinedScopes ?? []).join("、") || "持久化作用域";
+	const results = receipt.results ?? [];
+	const declinedScopes = receipt.declinedScopes ?? [];
+	if (receipt.outcome === "declined" || results.length === 0) {
+		const scopes = declinedScopes.join("、") || "持久化作用域";
 		return `🧠 记忆提取：${scopes}的写入未获批准，已跳过（${stats}），未写入任何条目。`;
 	}
-	const results = receipt.results ?? [];
 	const applied = results.flatMap((result) => result.appliedEdits.filter((edit) => edit.applied));
 	const lines = applied.slice(0, 12).map((edit) => `- 记忆「${edit.title ?? edit.id}」（${edit.id}）`);
 	if (applied.length > 12) lines.push(`- …另有 ${applied.length - 12} 条（见 /evolve history）`);
-	const declined = (receipt.declinedScopes ?? []).length > 0 ? `\n另有作用域${(receipt.declinedScopes ?? []).join("、")}未经批准（已跳过）。` : "";
+	const declined = declinedScopes.length > 0 ? `\n另有作用域${declinedScopes.join("、")}未经批准（已跳过）。` : "";
 	const rollbacks = [...new Set(results.map((result) => result.id))].map((id) => `/evolve rollback ${id}`).join("；");
 	return [
 		`🧠 记忆提取：本轮沉淀 ${applied.length} 条记忆（${results.length} 个作用域批次，${stats}）：`,

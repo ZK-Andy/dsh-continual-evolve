@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-795%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-845%20passing-brightgreen)]()
 
 Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
 
@@ -139,7 +139,7 @@ before aborting.
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (795 tests)
+pnpm test                    # vitest (845 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm lint                    # oxlint src test
 ```
@@ -148,7 +148,7 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, memory agent, recall, projection, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (48 files)
+├── test/                  # vitest suites (50 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)

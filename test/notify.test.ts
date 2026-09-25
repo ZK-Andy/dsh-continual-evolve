@@ -79,6 +79,16 @@ describe("buildGateNotice", () => {
 		expect(notice).toContain("无条目成功应用");
 		expect(notice).toContain("沉淀 0 条条目");
 	});
+
+	it("falls back to the entry id when an applied edit has no title", () => {
+		const notice = buildGateNotice(
+			result({
+				appliedEdits: [{ id: "mem_x", action: "create", kind: "memory", content: "c", applied: true }],
+			}),
+			2,
+		);
+		expect(notice).toContain("记忆「mem_x」（mem_x）");
+	});
 });
 
 describe("notifyAutoReview", () => {
@@ -165,11 +175,115 @@ describe("buildMemoryReceipt", () => {
 		expect(text).not.toContain("/evolve rollback");
 	});
 
+	it("folds long edit lists behind an overflow counter", () => {
+		const appliedEdits = Array.from({ length: 13 }, (_, i) => ({
+			id: `mem_${i}`,
+			action: "create" as const,
+			kind: "memory" as const,
+			title: `T${i}`,
+			content: "c",
+			applied: true,
+		}));
+		const text = buildMemoryReceipt({
+			outcome: "applied",
+			results: [result({ id: "evolve_big", appliedEdits })],
+			turns: 3,
+			searches: 2,
+			durationMs: 1000,
+		});
+		expect(text).toContain("沉淀 13 条记忆");
+		expect(text).toContain("另有 1 条");
+	});
+
+	it("names declined scopes on an applied receipt", () => {
+		const text = buildMemoryReceipt({
+			outcome: "applied",
+			results: [
+				result({
+					id: "evolve_mem1",
+					appliedEdits: [{ id: "mem_a", action: "create", kind: "memory", title: "T", content: "c", applied: true }],
+				}),
+			],
+			declinedScopes: ["global"],
+			turns: 1,
+			searches: 0,
+			durationMs: 100,
+		});
+		expect(text).toContain("global");
+		expect(text).toContain("未经批准");
+	});
+
 	it("contains a receipt follow-up failure instead of throwing", () => {
 		const warn = vi.fn();
 		const ctx = { logger: () => ({ warn }) } as unknown as Parameters<typeof notifyMemoryExtraction>[0];
 		const agent = { id: "s", followup: () => { throw new Error("inbox full"); } } as unknown as Agent;
 		expect(() => notifyMemoryExtraction(ctx, agent, { outcome: "noop", turns: 0, searches: 0, durationMs: 0 })).not.toThrow();
 		expect(warn).toHaveBeenCalledTimes(1);
+	});
+
+	it("falls back to the entry id when an applied edit has no title", () => {
+		const text = buildMemoryReceipt({
+			outcome: "applied",
+			results: [result({ id: "evolve_t", appliedEdits: [{ id: "mem_x", action: "create", kind: "memory", content: "c", applied: true }] })],
+			turns: 1,
+			searches: 0,
+			durationMs: 100,
+		});
+		expect(text).toContain("（mem_x）");
+	});
+
+	it("renders an applied outcome with no batches as declined with the default scope", () => {
+		const text = buildMemoryReceipt({ outcome: "applied", turns: 1, searches: 0, durationMs: 100 });
+		expect(text).toContain("持久化作用域");
+		expect(text).toContain("未写入任何条目");
+	});
+
+	it("renders an applied batch with zero landed edits without hiding it", () => {
+		const text = buildMemoryReceipt({
+			outcome: "applied",
+			results: [
+				result({
+					id: "evolve_empty",
+					appliedEdits: [{ id: "mem_z", action: "create", kind: "memory", title: "Z", content: "c", applied: false, error: "no" }],
+				}),
+			],
+			turns: 1,
+			searches: 0,
+			durationMs: 100,
+		});
+		expect(text).toContain("沉淀 0 条记忆");
+		expect(text).toContain("无条目成功应用");
+		expect(text).toContain("/evolve rollback evolve_empty");
+	});
+
+	it("renders a declined outcome with the default scope when none is named", () => {
+		const text = buildMemoryReceipt({ outcome: "declined", turns: 1, searches: 0, durationMs: 100 });
+		expect(text).toContain("持久化作用域");
+	});
+
+	it("labels an unknown entry kind with the kind itself", () => {		const notice = buildGateNotice(
+			result({
+				appliedEdits: [{ id: "x1", action: "create", kind: "prompt", title: "P", content: "c", applied: true }],
+			}),
+			3,
+		);
+		expect(notice).toContain("提示词");
+		const foreign = buildGateNotice(
+			result({
+				appliedEdits: [{ id: "x2", action: "create", kind: "mystery" as never, title: "M", content: "c", applied: true }],
+			}),
+			3,
+		);
+		expect(foreign).toContain("mystery「M」（x2）");
+	});
+
+	it("contains a non-Error follow-up failure instead of throwing", () => {
+		const warn = vi.fn();
+		const ctx = { logger: () => ({ warn }) } as unknown as Parameters<typeof notifyMemoryExtraction>[0];
+		const agent = { id: "s", followup: () => { throw "string failure"; } } as unknown as Agent;
+		expect(() => notifyAutoReview(ctx, agent, result(), 2)).not.toThrow();
+		expect(() => notifyMemoryExtraction(ctx, agent, { outcome: "noop", turns: 0, searches: 0, durationMs: 0 })).not.toThrow();
+		expect(warn).toHaveBeenCalledTimes(2);
+		expect(warn.mock.calls[1][0]).toContain("string failure");
 	});
 });

@@ -321,4 +321,30 @@ describe("executeWrapupCommand", () => {
 			rmSync(base, { recursive: true, force: true });
 		}
 	});
+
+	it("contains token-usage ledger failures with a warning (onError)", async () => {
+		const base = tmpBase();
+		try {
+			const engine = createEvolutionEngine(base);
+			seedLocal(engine, "session-x", "mem_1");
+			let onError: ((cause: unknown) => void) | undefined;
+			assessMock.mockImplementationOnce(async (_ctx, _agent, _candidates, opts) => {
+				onError = (opts?.tokenUsage as { onError?: (cause: unknown) => void } | undefined)?.onError;
+				return { rationale: "keep", items: [{ key: "memory:mem_1", verdict: "keep", reason: "still relevant" }] };
+			});
+			const warnings: string[] = [];
+			const ctx = {
+				userQuestions: undefined,
+				get: () => undefined,
+				logger: () => ({ info: () => {}, warn: (msg: string) => warnings.push(msg), error: () => {} }),
+			} as never;
+			const result = await executeWrapupCommand(ctx, engine, invocationOf(agentOf("session-x")));
+			expect(result.kind).toBe("success");
+			expect(onError).toBeDefined();
+			onError!(new Error("disk full"));
+			expect(warnings.some((w) => w.includes("token-usage ledger failed for session-x"))).toBe(true);
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
 });

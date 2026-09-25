@@ -521,6 +521,34 @@ describe("runLocalFatePhase", () => {
 		expect(h3.engine.load("global", undefined).entries.memory["m1"]).toBeTruthy();
 	});
 
+	it("notifies the session when silent archives land on the turn path", async () => {
+		const h = scenario(
+			JSON.stringify({
+				rationale: "covered globally",
+				items: [{ key: "memory:dup", verdict: "archive", reason: "covered globally" }],
+			}),
+			"missing",
+			{ dup: entry("dup", "memory", "已被全局覆盖的话题") },
+			{
+				dup: entry("dup", "memory", "已被全局覆盖的话题", {
+					scope: "global",
+					content: "已被全局覆盖话题的全局正文（独立内容，避免内容去重误撞本地候选）。",
+				}),
+			},
+		);
+		const gate = gateWith({ turns: 6, lastFateAt: 0 });
+		const followedUp: unknown[] = [];
+		const notifyingAgent = { ...fakeAgent, followup: (msg: unknown) => followedUp.push(msg) } as never;
+		await runLocalFatePhase(h.ctx, h.engine, notifyingAgent, configWith({ notifyOnAutoReview: true }), gate, "turn_snapshot", (entry) =>
+			h.records.push(entry),
+		);
+
+		expect(h.asks()).toBe(0);
+		expect(h.engine.load("local", "session-fate").entries.memory["dup"]?.metadata.archivedAt).toBeTruthy();
+		expect(h.records.some((entry) => entry.outcome === "approved")).toBe(true);
+		expect(followedUp).toHaveLength(1);
+	});
+
 	it("never consults on the turn path: governed actions deferred, silent archives applied", async () => {
 		const h = scenario(
 			JSON.stringify({

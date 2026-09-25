@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+	DEFAULT_MEMORY_GRADE_THRESHOLDS,
 	gradeMemoryScore,
 	scoreMemoryExtraction,
 	type MemoryBenchmarkEdit,
@@ -114,5 +115,55 @@ describe("scoreMemoryExtraction", () => {
 		expect(graded.failures.join(" ")).toContain("precision");
 		expect(graded.failures.join(" ")).toContain("recall");
 		expect(graded.failures.join(" ")).toContain("noise");
+	});
+
+	it("scores updates: live matches land, misses are noise, outdated re-proposals are stale", () => {
+		const matched = scoreMemoryExtraction(REFERENCE, [
+			{ action: "update", id: "pnpm", title: "包管理用 pnpm", content: "本项目统一用 pnpm 安装依赖" },
+		], []);
+		expect(matched.edits[0]?.matchedFactIds).toEqual(["pnpm"]);
+		expect(matched.stale).toBe(0);
+		expect(matched.noise).toBe(0);
+
+		const missed = scoreMemoryExtraction(REFERENCE, [
+			{ action: "update", id: "other", title: "无关的午餐记录和天气", content: "今天午饭吃了牛肉面条配蒜瓣还喝了免费的汤水外面在下雨" },
+		], []);
+		expect(missed.noise).toBe(1);
+		expect(missed.edits[0]?.noisyReason).toContain("matches no reference fact");
+
+		const stale = scoreMemoryExtraction(REFERENCE, [
+			{ action: "update", id: "old-registry", title: "registry mirror", content: "继续用 registry mirror 加速" },
+		], []);
+		expect(stale.stale).toBe(1);
+		expect(stale.edits[0]?.staleReason).toContain("old-registry");
+	});
+
+	it("scores removals by target: archived re-archives match, live removals are stale, unknown are noise", () => {
+		const manifest = [
+			manifestEntry("archived-one", "旧条目", "早已归档的旧条目正文内容足够长", true),
+			manifestEntry("live-one", "深色主题偏好", "用户偏好深色主题开发环境的完整描述正文", false),
+		];
+		const reArchive = scoreMemoryExtraction(REFERENCE, [{ action: "archive", id: "archived-one" }], manifest);
+		expect(reArchive.stale).toBe(0);
+		expect(reArchive.noise).toBe(0);
+		expect(reArchive.edits[0]?.matchedFactIds).toEqual(["archived:archived-one"]);
+
+		const liveRemoval = scoreMemoryExtraction(REFERENCE, [{ action: "delete", id: "live-one" }], manifest);
+		expect(liveRemoval.stale).toBe(1);
+		expect(liveRemoval.edits[0]?.staleReason).toContain("live-one");
+
+		const unknown = scoreMemoryExtraction(REFERENCE, [{ action: "delete", id: "ghost" }], manifest);
+		expect(unknown.noise).toBe(1);
+		expect(unknown.edits[0]?.noisyReason).toBe("removal matches no reference fact");
+	});
+
+	it("treats an outdated-only reference as fully recalled and names duplicate/stale failures", () => {
+		const outdatedOnly = { facts: [{ id: "old", memoryType: "reference", mustContain: ["registry mirror"], outdated: true }] };
+		const empty = scoreMemoryExtraction(outdatedOnly, [], []);
+		expect(empty.recall).toBe(1);
+		const graded = gradeMemoryScore({ ...empty, duplicate: 2, stale: 1, precision: 1, recall: 1, noise: 0 }, DEFAULT_MEMORY_GRADE_THRESHOLDS);
+		expect(graded.pass).toBe(false);
+		expect(graded.failures.join(" ")).toContain("duplicate");
+		expect(graded.failures.join(" ")).toContain("stale");
 	});
 });
