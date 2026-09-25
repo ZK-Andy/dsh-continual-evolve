@@ -5,9 +5,10 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementResult } from "./types.js";
-import { ARCHIVED_AT_KEY } from "./types.js";
+import { ARCHIVED_AT_KEY, MEMORY_TYPE_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
+import { compactText } from "./render.js";
 import { planWithLlm } from "./planner.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,6 +28,7 @@ import { projectKeyOf } from "./project.js";
 import { loadUsage, getUsageCount } from "./usage.js";
 import { loadGateRuntime, saveGateRuntime } from "./runtime.js";
 import { planConsolidation } from "./consolidate.js";
+import { formatRecallResult, recallMemories, RECALL_MEMORY_TYPES } from "./recall.js";
 import { loadTokenUsage, renderTokenUsageReport } from "./token-usage.js";
 
 const USAGE = `Usage:
@@ -40,6 +42,12 @@ const USAGE = `Usage:
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
   /evolve demote <id>             hide a (global) entry from injection, keep data
+  /evolve recall <query...> [scope] targeted memory recall: full content with version,
+                                   source, and staleness (same engine as the evolve_recall tool)
+  /evolve remember <type> [scope] <text...>
+                                   immediately persist one memory (type = user|feedback|project|reference;
+                                   feedback/project text must carry Why + How; default scope local)
+  /evolve forget [scope] <query...> locate one memory by query and archive it (restorable via /evolve unarchive)
   /evolve consolidate [apply] [merge]
                                   report (or apply) a batch archive of conflict-hinted
                                   and stale zero-use global entries; "merge" folds
@@ -251,6 +259,108 @@ async function executeEvolveCommand(
 					{ scope },
 				);
 				return success(renderResult(result));
+			}
+			case "recall": {
+				// Human counterpart of the evolve_recall tool: same engine,
+				// same filters (memory kind, one scope or all three).
+				const { scope, rest: after } = scopeArg(rest);
+				const explicitScope = rest.length > 0 && (rest[0] === "global" || rest[0] === "project" || rest[0] === "local");
+				const query = after.join(" ");
+				const result = recallMemories(
+					engine,
+					{ sessionId, projectKey: projectKeyOf(invocation.agent) ?? undefined },
+					{ kinds: ["memory"], ...(explicitScope ? { scopes: [scope] } : {}), ...(query ? { query } : {}), limit: 10 },
+				);
+				return success(formatRecallResult(result, query || undefined));
+			}
+			case "remember": {
+				// Immediate manual memory path (P1 §6.6): one fact, explicit
+				// type, straight into the engine — validation, snapshot,
+				// versioning, and approval behave exactly like any other
+				// write. feedback/project text must already carry Why + How;
+				// the engine rejects it loudly otherwise.
+				const type = rest[0] ?? "";
+				if (!(RECALL_MEMORY_TYPES as readonly string[]).includes(type)) {
+					return error(`remember requires a memory type: user|feedback|project|reference.\nExample: /evolve remember feedback local 对方偏好深色主题。Why：…… How to apply：……\n${USAGE}`);
+				}
+				const maybeScope = rest[1] ?? "";
+				const scoped = maybeScope === "global" || maybeScope === "project" || maybeScope === "local";
+				const scope: HarnessScope = scoped ? (maybeScope as HarnessScope) : "local";
+				const text = (scoped ? rest.slice(2) : rest.slice(1)).join(" ").trim();
+				if (!text) {
+					return error(`remember requires the memory text after the type.\n${USAGE}`);
+				}
+				const storeId = storeIdForCommand(scope, invocation);
+				if ((scope === "global" || scope === "project") && opts.requireGlobalApproval) {
+					await requireGlobalApproval(ctx, invocation.agent, invocation.signal, `/evolve remember ${type} → ${scope} store: ${compactText(text, 120)}`);
+				}
+				const result = engine.apply(
+					scope,
+					storeId,
+					{
+						summary: `remember: ${compactText(text, 80)}`,
+						rationale: "Human-invoked immediate memory via /evolve remember.",
+						expectedOutcome: "The fact is persisted as a typed memory entry.",
+						edits: [{
+							action: "create",
+							kind: "memory",
+							title: compactText(text, 80),
+							content: text,
+							metadata: { [MEMORY_TYPE_KEY]: type },
+						}],
+					},
+					{ scope },
+				);
+				return success(renderResult(result));
+			}
+			case "forget": {
+				// Manual forget path (P1 §6.6): locate by query, archive the
+				// single match (restorable via unarchive). An ambiguous query
+				// lists candidates instead of archiving — a silent multi-
+				// archive would look like success while hiding too much.
+				const { scope, rest: after } = scopeArg(rest);
+				const explicitScope = rest.length > 0 && (rest[0] === "global" || rest[0] === "project" || rest[0] === "local");
+				const query = after.join(" ").trim();
+				if (!query) {
+					return error(`forget requires a query to locate the memory.\n${USAGE}`);
+				}
+				const recalled = recallMemories(
+					engine,
+					{ sessionId, projectKey: projectKeyOf(invocation.agent) ?? undefined },
+					{ query, kinds: ["memory"], ...(explicitScope ? { scopes: [scope] } : {}), limit: 6, includeArchived: false },
+				);
+				if (recalled.hits.length === 0) {
+					return error(`no memory matches "${query}"${recalled.notes.length > 0 ? ` (${recalled.notes.join("; ")})` : ""} — try fewer words, or /evolve list to browse.`);
+				}
+				if (recalled.hits.length > 1) {
+					const list = recalled.hits.map((hit) => `- [${hit.scope}:${hit.id}] ${hit.title}`).join("\n");
+					return success(`"${query}" matches ${recalled.hits.length} memories — refine the query so exactly one matches, then forget archives it:\n${list}`);
+				}
+				const hit = recalled.hits[0]!;
+				const state = engine.load(hit.scope, hit.scope === "local" ? sessionId : hit.scope === "project" ? (projectKeyOf(invocation.agent) ?? undefined) : undefined);
+				const entry = state.entries.memory[hit.id];
+				if (!entry) {
+					return error(`memory ${hit.scope}:${hit.id} vanished since recall — run /evolve forget again.`);
+				}
+				const result = engine.apply(
+					hit.scope,
+					hit.scope === "local" ? sessionId : hit.scope === "project" ? (projectKeyOf(invocation.agent) ?? undefined) : undefined,
+					{
+						summary: `forget: archive memory ${hit.scope}:${hit.id}`,
+						rationale: `Human-invoked forget via /evolve forget "${query}".`,
+						expectedOutcome: "The entry is hidden from injection (data kept; restorable via /evolve unarchive).",
+						edits: [{
+							action: "update",
+							kind: "memory",
+							id: hit.id,
+							title: entry.title,
+							content: entry.content,
+							metadata: { ...entry.metadata, [ARCHIVED_AT_KEY]: new Date().toISOString() },
+						}],
+					},
+					{ scope: hit.scope },
+				);
+				return success(`forgot [${hit.scope}:${hit.id}] ${hit.title} (archived — restore with /evolve unarchive ${hit.id}${hit.scope === "local" ? "" : ` ${hit.scope}`})\n${renderResult(result)}`);
 			}
 			case "consolidate": {
 				// R3: deterministic global-store hygiene. Report by default;

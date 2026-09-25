@@ -13,6 +13,7 @@ import { formatHarnessStateForPrompt } from "./render.js";
 import { requireGlobalApproval } from "./approval.js";
 import { CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry } from "./promotion.js";
 import { entrySourceOf } from "./source.js";
+import { formatRecallResult, recallMemories } from "./recall.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
 import { DEFAULT_REVIEWS_RETAIN } from "./store.js";
@@ -135,6 +136,53 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 					return textResult(`${text}\n\n# Injection Usage\n${usageLines.join("\n")}`);
 				}
 				return textResult(text);
+			},
+		}),
+	);
+
+	ctx.tools.register(
+		defineTool({
+			name: "evolve_recall",
+			description:
+				"Targeted recall over the harness stores: filter memories (or other kinds) by query, kind, scope, and memory type, and read back full content with version, source, and staleness signals. Read-only — it never mutates a store. Prefer this over evolve_list when looking for something specific.",
+			parameters: {
+				query: { type: "string", description: "Free-text relevance query. Empty means most-recently-updated first." },
+				kinds: {
+					type: "array",
+					items: { type: "string" },
+					description: "Entry kinds to search (default memory only).",
+				},
+				scopes: {
+					type: "array",
+					items: { type: "string" },
+					description: "Stores to search (default local, project, and global).",
+				},
+				memoryTypes: {
+					type: "array",
+					items: { type: "string" },
+					description: "Memory-type filter: user, feedback, project, reference (memory entries only).",
+				},
+				limit: { type: "number", description: "Maximum hits (default 10, at most 50)." },
+				includeArchived: { type: "boolean", description: "Include archived entries (default false)." },
+			},
+			output: {
+				schema: { type: "object", additionalProperties: false, properties: { text: { type: "string", required: true } } },
+				render: (_args, value) => [{ type: "text", text: value.text ?? "" }],
+			},
+			execute: async (args, exec) => {
+				const result = recallMemories(
+					engine,
+					{ sessionId: sessionIdOf(exec), projectKey: projectKeyOf(exec.agent) ?? undefined },
+					{
+						...(typeof args.query === "string" ? { query: args.query } : {}),
+						...(Array.isArray(args.kinds) ? { kinds: args.kinds as RefinementKind[] } : {}),
+						...(Array.isArray(args.scopes) ? { scopes: args.scopes as HarnessScope[] } : {}),
+						...(Array.isArray(args.memoryTypes) ? { memoryTypes: args.memoryTypes as ("user" | "feedback" | "project" | "reference")[] } : {}),
+						...(typeof args.limit === "number" ? { limit: args.limit } : {}),
+						...(typeof args.includeArchived === "boolean" ? { includeArchived: args.includeArchived } : {}),
+					},
+				);
+				return textResult(formatRecallResult(result, typeof args.query === "string" ? args.query : undefined));
 			},
 		}),
 	);

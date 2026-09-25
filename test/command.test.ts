@@ -491,3 +491,67 @@ describe("executeEvolveCommand — usage (#21 P0)", () => {
 		expect(result.text).toContain("(none yet");
 	}));
 });
+
+describe("executeEvolveCommand — recall / remember / forget", () => {
+	it("recalls a memory by query with full content", withDir(async (h) => {
+		await seedMemory(h);
+		const result = await h.run("recall seed entry");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("1 hit(s)");
+		expect(result.text).toContain("seed entry");
+	}));
+
+	it("remember persists one typed memory immediately", withDir(async (h) => {
+		const result = await h.run("remember user 偏好深色主题");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("1 applied");
+		const recalled = await h.run("recall 深色");
+		expect(recalled.text).toContain("偏好深色主题");
+	}));
+
+	it("remember rejects a missing type and empty text", withDir(async (h) => {
+		const noType = await h.run("remember 偏好深色主题");
+		expect(noType.kind).toBe("error");
+		expect(noType.text).toContain("requires a memory type");
+		const noText = await h.run("remember user");
+		expect(noText.kind).toBe("error");
+		expect(noText.text).toContain("requires the memory text");
+	}));
+
+	it("remember surfaces engine validation for feedback without Why/How", withDir(async (h) => {
+		// Engine validation failures land per-edit (0 applied), not as a
+		// command error — same contract as /evolve plan.
+		const result = await h.run("remember feedback 纯事实无依据");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("0 applied, 1 failed");
+		expect(result.text).toContain("Why and a How");
+	}));
+
+	it("forget archives the single match and stays restorable", withDir(async (h) => {
+		const { entryId } = await seedMemory(h);
+		const result = await h.run("forget seed entry");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("forgot");
+		const unarchive = await h.run(`unarchive ${entryId}`);
+		expect(unarchive.kind).toBe("success");
+	}));
+
+	it("forget lists candidates instead of archiving an ambiguous query", withDir(async (h) => {
+		// Titles carry ASCII-distinctive slugs: CJK-only titles all slug
+		// to the kind fallback id and would collide (engine slug boundary).
+		await h.run("remember user 深色偏好 dark-one");
+		await h.run("remember user 深色偏好 dark-two");
+		const result = await h.run("forget 深色");
+		expect(result.kind).toBe("success");
+		expect(result.text).toContain("matches 2 memories");
+		// Nothing was archived: both are still recallable.
+		const recalled = await h.run("recall 深色");
+		expect(recalled.text).toContain("2 hit(s)");
+	}));
+
+	it("forget reports no match instead of failing silently", withDir(async (h) => {
+		const result = await h.run("forget 不存在的记忆主题xyz");
+		expect(result.kind).toBe("error");
+		expect(result.text).toContain("no memory matches");
+	}));
+});

@@ -344,3 +344,39 @@ describe("memory shape + project scope at the tool surface (2026-09-23)", () => 
 		}
 	});
 });
+
+describe("evolve_recall", () => {
+	it("is registered and reads back full memory content", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await addMemory(harness);
+			const result = await harness.byName("evolve_recall").execute({ query: "lint" }, agentExec);
+			expect(result.text).toContain("1 hit(s)");
+			expect(result.text).toContain("Run lint before committing");
+			expect(result.text).toContain("v1");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports skipped scopes instead of hiding them", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await addMemory(harness);
+			// agentExec has no project cwd: the project store is skipped with a note.
+			const result = await harness.byName("evolve_recall").execute({ query: "lint", scopes: ["local", "project"] }, agentExec);
+			expect(result.text).toContain("note: project store skipped");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("fails loud on unknown filters", async () => {
+		const harness = toolHarness({ requireGlobalApproval: false });
+		try {
+			await expect(harness.byName("evolve_recall").execute({ kinds: ["nope"] }, agentExec)).rejects.toThrow("unknown kind");
+		} finally {
+			rmSync(harness.dir, { recursive: true, force: true });
+		}
+	});
+});
