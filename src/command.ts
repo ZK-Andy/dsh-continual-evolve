@@ -88,7 +88,7 @@ export interface CommandRuntimeOptions {
 export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
 	ctx.commands.register({
 		name: "evolve",
-		description: "inspect and evolve the continual harness state (memories, skills, prompt notes, subagent specs)",
+		description: "自进化：检查并演进 harness 状态（记忆/技能/提示词/子代理） | Inspect and evolve the continual harness state (memories, skills, prompt notes, subagent specs)",
 		input: { hint: "[list [global] | history [global] | rollback <id> [global] | plan [msg]]" },
 		handler: (invocation) => executeEvolveCommand(ctx, engine, invocation, opts, runtime),
 	});
