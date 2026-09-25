@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { rollbackProposal } from "./rollback.js";
 import { loadHarnessState, saveHarnessState } from "./state.js";
 import { appendResult, loadResults, pruneJsonlFile, pruneSnapshots, resolveHistoryRetention, snapshotBefore, storePaths } from "./store.js";
+import { materializeMemoryProjection } from "./projection.js";
 import type { HistoryRetention } from "./store.js";
 import { CONFLICT_BLOCK_SCORE, CONFLICT_WARN_SCORE, buildConflictNotice, mostSimilarEntry, secretLeakReason, type SimilarEntryHit } from "./promotion.js";
 
@@ -168,6 +169,18 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 			pruneJsonlFile(paths.resultsPath, retention.refinements);
 		} catch {
 			// ignored — the next apply retries
+		}
+		// Readable Markdown projection (P1): rewritten from the post-apply
+		// state whenever a memory edit landed, so rollback and archive stay
+		// in sync through this same apply path. The model has no writer for
+		// these files — only this engine entry point materializes them.
+		if (result.appliedEdits.some((edit) => edit.applied && edit.kind === "memory")) {
+			try {
+				materializeMemoryProjection(paths.stateDir, state);
+			} catch {
+				// ignored — the projection is derived (JSON stays the source
+				// of truth) and the next memory apply retries
+			}
 		}
 		try {
 			hooks.onApplied?.(result);
