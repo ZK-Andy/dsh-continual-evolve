@@ -358,7 +358,7 @@ describe("consultLocalFates", () => {
 		const text = JSON.stringify(questions);
 		expect(text).toContain("拆出提升");
 		expect(text).toContain("干净部分");
-		expect(text).toContain("归档（未被全局覆盖且源自真实对话，需确认）");
+		expect(text).toContain("【归档（本地隐藏，可恢复）】");
 	});
 });
 

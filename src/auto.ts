@@ -946,8 +946,11 @@ export async function consultSkillEdits(
 			questions: [
 				{
 					id: "evolve-skill-consult",
-					question: `自进化检测到反复出现的流程/技能候选，建议沉淀：\n\n${description}\n\n是否固化？`,
-					options: [{ label: "固化" }, { label: "不固化" }],
+					question: `发现可复用的流程，建议固化为技能\n${description}\n\n固化后以后同类任务自动复用，可回滚。是否固化？`,
+					options: [
+						{ label: "固化", description: "生成技能，以后复用" },
+						{ label: "不固化", description: "本次跳过，10 回合内不再打扰" },
+					],
 				},
 			],
 			agent,

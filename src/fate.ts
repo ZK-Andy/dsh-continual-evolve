@@ -176,7 +176,10 @@ export async function consultLocalFates(
 				{
 					id: "evolve-fate-consult",
 					question: consultQuestion(plan),
-					options: [{ label: "执行" }, { label: "不执行" }],
+					options: [
+						{ label: "执行", description: "提升写全局，归档隐藏本地（均可恢复）" },
+						{ label: "不执行", description: "全部保留，10 回合内不再打扰" },
+					],
 				},
 			],
 			agent,
@@ -196,7 +199,7 @@ function consultQuestion(plan: FatePlan): string {
 	const byKey = new Map(plan.candidates.map((candidate) => [candidateKey(candidate.kind, candidate.id), candidate]));
 	const lines: string[] = [];
 	if (plan.promotable.length > 0 || plan.splits.length > 0) {
-		lines.push("【提升到跨会话全局 store】");
+		lines.push("【提升到全局（写入全局 store）】");
 		for (const item of plan.promotable) {
 			lines.push(`- ${item.key}「${byKey.get(item.key)?.title ?? item.key}」 — ${item.reason}`);
 		}
@@ -205,15 +208,15 @@ function consultQuestion(plan: FatePlan): string {
 		}
 	}
 	if (plan.reviewArchives.length > 0) {
-		lines.push("【归档（未被全局覆盖且源自真实对话，需确认）】");
+		lines.push("【归档（本地隐藏，可恢复）】");
 		for (const item of plan.reviewArchives) {
 			lines.push(`- ${item.key}「${byKey.get(item.key)?.title ?? item.key}」 — ${item.reason}`);
 		}
 	}
 	return [
-		"自进化门禁检测到本会话的 local 条目需要归宿处理（提升条目将写入跨会话全局 store，归档条目隐藏但可恢复）：",
+		"自进化门禁：本会话 local 条目需要归宿处理",
 		...lines,
-		"是否执行？",
+		"提升写入后所有会话可见，归档隐藏但可恢复。是否执行？",
 	].join("\n");
 }
 

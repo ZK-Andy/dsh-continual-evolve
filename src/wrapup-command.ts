@@ -217,8 +217,11 @@ export async function executeWrapupCommand(
 				questions: [
 					{
 						id: questionId,
-						question: `wrapup：条目「${candidate.title}」未被全局覆盖且源自真实对话，直接归档会隐藏它（数据保留、可恢复）。确认归档？`,
-						options: [{ label: "归档" }, { label: "保留" }],
+						question: `wrapup 确认归档：条目「${candidate.title}」\n未被全局覆盖且源自真实对话。归档后不再注入，数据保留、可恢复。`,
+						options: [
+							{ label: "归档", description: "隐藏但可恢复" },
+							{ label: "保留", description: "继续注入" },
+						],
 					},
 				],
 				agent: invocation.agent,
