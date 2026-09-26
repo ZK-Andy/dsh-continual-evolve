@@ -15,6 +15,7 @@ import { sessionEventsOf } from "./inject.js";
 import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type PrefixCacheOptions } from "./prefix-cache.js";
 import { asLlmSessionId, streamText } from "./llm-text.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
+import { recordLanguageInstruction, resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
 
 export interface AutoRefineReview {
 	shouldRefine: boolean;
@@ -52,6 +53,12 @@ export interface ReviewOptions {
 	prefixCache?: PrefixCacheOptions;
 	/** Direct-call token ledger destination; the review phase is fixed by this module. */
 	tokenUsage?: TokenUsageTarget;
+	/**
+	 * Authoring language for the rationale. Absent → resolved per call
+	 * (explicit config upstream, else durable client preference, else
+	 * trajectory detection, else `en`).
+	 */
+	language?: RecordLanguage;
 }
 
 export const AUTO_REVIEW_SYSTEM_PROMPT = `You are the automatic /evolve review gate.
@@ -183,7 +190,7 @@ export async function reviewAutoRefine(ctx: Context, options: ReviewOptions): Pr
 		provider,
 		model,
 		sessionId: asLlmSessionId(agent.id),
-		system: AUTO_REVIEW_SYSTEM_PROMPT,
+		system: `${AUTO_REVIEW_SYSTEM_PROMPT}\n\n${recordLanguageInstruction(options.language ?? resolveRecordLanguage({ ctx, trajectoryText: options.trajectory }))}`,
 		prompt: userPrompt,
 		maxTokens: options.budgetTokens ?? 8000,
 		signal: options.signal,

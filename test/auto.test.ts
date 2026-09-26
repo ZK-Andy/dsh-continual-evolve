@@ -805,7 +805,7 @@ describe("registerAutoReview wiring", () => {
 		const userQuestions = {
 			ask: async (request: { questions: { question: string }[] }) => {
 				const question = request.questions[0]?.question ?? "";
-				if (question.includes("本项目")) {
+				if (question.includes("本项目") || question.includes("project cross-session store")) {
 					projectAsks += 1;
 					return { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
 				}

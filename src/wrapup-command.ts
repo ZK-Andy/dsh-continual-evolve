@@ -5,6 +5,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { EvolutionEngine } from "./service.js";
 import { questionServiceOf, requireGlobalApproval } from "./approval.js";
+import { resolveDialogLanguage, wrapupArchiveCopy } from "./copy.js";
 import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, valenceStampProposal, wholePromoteProposals } from "./wrapup.js";
 import { DEFAULT_PROMOTION_POLICY, type PromotionPolicy } from "./promotion.js";
 import type { WrapupCandidate, WrapupItem } from "./wrapup.js";
@@ -213,21 +214,20 @@ export async function executeWrapupCommand(
 		const questionId = "evolve-wrapup-archive-review";
 		let archiveConfirmed = false;
 		try {
+			const copy = wrapupArchiveCopy(candidate.title, resolveDialogLanguage(ctx));
 			const answer = await userQuestions.ask({
 				questions: [
 					{
 						id: questionId,
-						question: `wrapup 确认归档：条目「${candidate.title}」\n未被全局覆盖且源自真实对话。归档后不再注入，数据保留、可恢复。`,
-						options: [
-							{ label: "归档", description: "隐藏但可恢复" },
-							{ label: "保留", description: "继续注入" },
-						],
+						question: copy.question,
+						options: copy.options,
 					},
 				],
 				agent: invocation.agent,
 				signal: invocation.signal,
 			});
-			archiveConfirmed = answer.answers?.find((entry) => entry.id === questionId)?.selected?.includes("归档") ?? false;
+			const selected = answer.answers?.find((entry) => entry.id === questionId)?.selected ?? [];
+			archiveConfirmed = selected.includes("归档") || selected.includes("Archive");
 		} catch {
 			archiveConfirmed = false;
 		}

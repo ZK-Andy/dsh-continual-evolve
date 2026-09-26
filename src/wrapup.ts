@@ -28,6 +28,7 @@ import { compactText } from "./render.js";
 import { asLlmSessionId, streamText } from "./llm-text.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
+import { recordLanguageInstruction, resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
 import { recencyScore } from "./inject.js";
 import { DEFAULT_PROMOTION_POLICY, mostSimilarGlobalEntry, projectScopedReason, secretLeakReason, type PromotionPolicy } from "./promotion.js";
 
@@ -656,6 +657,12 @@ export interface AssessOptions {
 	tokenUsage?: TokenUsageTarget;
 	/** Ledger phase for this classifier call (manual wrapup or automatic fate). */
 	tokenUsagePhase?: "wrapup" | "fate";
+	/**
+	 * Authoring language for verdict reasons. Absent → resolved per call
+	 * (durable client preference, else `en`; the assessor sees candidate
+	 * snapshots, not user text, so there is no detection tier here).
+	 */
+	language?: RecordLanguage;
 }
 
 /**
@@ -698,7 +705,7 @@ export async function assessLocalEntries(
 		provider: agent.options.provider,
 		model: agent.options.model,
 		sessionId: asLlmSessionId(agent.id),
-		system: WRAPUP_ASSESS_SYSTEM_PROMPT,
+		system: `${WRAPUP_ASSESS_SYSTEM_PROMPT}\n\n${recordLanguageInstruction(options.language ?? resolveRecordLanguage({ ctx }))}`,
 		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 4096,
 		signal: options.signal,

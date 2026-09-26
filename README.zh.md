@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1051%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1075%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-92%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
@@ -126,7 +126,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（1051 例）
+pnpm test                    # vitest（1075 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm coverage:gaps           # 定位各文件未覆盖行（只读）
 pnpm lint                    # oxlint src test
@@ -136,7 +136,7 @@ pnpm lint                    # oxlint src test
 
 ```
 ├── src/                   # 引擎、工具、命令、memory Agent、召回、投影、门禁、fate、benchmark、注入 + token 用量…
-├── test/                  # vitest 测试套件（56 个文件）
+├── test/                  # vitest 测试套件（58 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
 │   ├── design.md          # 完整设计文档（硬化矩阵）

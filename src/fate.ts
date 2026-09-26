@@ -38,6 +38,8 @@ import type { AutoRefineReason } from "./review.js";
 import type { AutoReviewConfig, GateState, ReviewRecord } from "./auto.js";
 import { DEFAULT_PROMOTION_POLICY, type PromotionPolicy } from "./promotion.js";
 import { questionServiceOf } from "./approval.js";
+import { fateConsultCopy, resolveDialogLanguage, type FateConsultSections } from "./copy.js";
+import { resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
 import {
 	assessLocalEntries,
 	candidateKey,
@@ -156,6 +158,7 @@ export async function consultLocalFates(
 	agent: Agent,
 	plan: FatePlan,
 	gate: GateState,
+	language?: RecordLanguage,
 ): Promise<FateConsultResult> {
 	const needsDialog = plan.promotable.length + plan.splits.length + plan.reviewArchives.length > 0;
 	if (!needsDialog) {
@@ -170,21 +173,21 @@ export async function consultLocalFates(
 	if (!userQuestions) {
 		return { approved: false, asked: false, reason: "unavailable" };
 	}
+	const lang = language ?? resolveDialogLanguage(ctx);
 	try {
+		const copy = fateConsultCopy(sectionsOf(plan, lang), lang);
 		const answer = await userQuestions.ask({
 			questions: [
 				{
 					id: "evolve-fate-consult",
-					question: consultQuestion(plan),
-					options: [
-						{ label: "执行", description: "提升写全局，归档隐藏本地（均可恢复）" },
-						{ label: "不执行", description: "全部保留，10 回合内不再打扰" },
-					],
+					question: copy.question,
+					options: copy.options,
 				},
 			],
 			agent,
 		});
-		const approved = answer.answers?.find((entry) => entry.id === "evolve-fate-consult")?.selected?.includes("执行") ?? false;
+		const selected = answer.answers?.find((entry) => entry.id === "evolve-fate-consult")?.selected ?? [];
+		const approved = selected.includes("执行") || selected.includes("Proceed");
 		if (!approved) {
 			gate.fateRejects.set(setKey, gate.turns);
 		}
@@ -194,30 +197,26 @@ export async function consultLocalFates(
 	}
 }
 
-/** The user-visible fate proposal: every governed action, with real titles. */
-function consultQuestion(plan: FatePlan): string {
+/** Split a fate plan into pre-rendered per-group lines for the dialog copy. */
+function sectionsOf(plan: FatePlan, lang: RecordLanguage): FateConsultSections {
 	const byKey = new Map(plan.candidates.map((candidate) => [candidateKey(candidate.kind, candidate.id), candidate]));
-	const lines: string[] = [];
-	if (plan.promotable.length > 0 || plan.splits.length > 0) {
-		lines.push("【提升到全局（写入全局 store）】");
-		for (const item of plan.promotable) {
-			lines.push(`- ${item.key}「${byKey.get(item.key)?.title ?? item.key}」 — ${item.reason}`);
-		}
-		for (const { item } of plan.splits) {
-			lines.push(`- ${item.key} → 拆出提升「${item.promote?.title}」（原条目随之归档）`);
-		}
+	const promotable: string[] = [];
+	const splits: string[] = [];
+	const reviewArchives: string[] = [];
+	for (const item of plan.promotable) {
+		promotable.push(`- ${item.key}「${byKey.get(item.key)?.title ?? item.key}」 — ${item.reason}`);
 	}
-	if (plan.reviewArchives.length > 0) {
-		lines.push("【归档（本地隐藏，可恢复）】");
-		for (const item of plan.reviewArchives) {
-			lines.push(`- ${item.key}「${byKey.get(item.key)?.title ?? item.key}」 — ${item.reason}`);
-		}
+	for (const { item } of plan.splits) {
+		splits.push(
+			lang === "zh"
+				? `- ${item.key} → 拆出提升「${item.promote?.title}」（原条目随之归档）`
+				: `- ${item.key} → split-promote "${item.promote?.title}" (original archived alongside)`,
+		);
 	}
-	return [
-		"自进化门禁：本会话 local 条目需要归宿处理",
-		...lines,
-		"提升写入后所有会话可见，归档隐藏但可恢复。是否执行？",
-	].join("\n");
+	for (const item of plan.reviewArchives) {
+		reviewArchives.push(`- ${item.key}「${byKey.get(item.key)?.title ?? item.key}」 — ${item.reason}`);
+	}
+	return { promotable, splits, reviewArchives };
 }
 
 export type FateApplyMode = "full" | "silent-only";
@@ -329,8 +328,9 @@ export async function runLocalFatePhase(
 	const turnsSinceFate = state.turns - state.lastFateAt;
 	state.lastFateAt = state.turns;
 	let assessment: WrapupAssessment;
+	const fateLanguage = resolveRecordLanguage({ configured: config.recordLanguage, ctx });
 	try {
-		assessment = await assessLocalEntries(ctx, agent, candidates, { tokenUsage, tokenUsagePhase: "fate" });
+		assessment = await assessLocalEntries(ctx, agent, candidates, { tokenUsage, tokenUsagePhase: "fate", language: fateLanguage });
 	} catch (cause) {
 		const message = cause instanceof Error ? cause.message : String(cause);
 		logger.warn(`auto-review local-fate failed for ${sessionId}: ${message}`);
@@ -351,7 +351,7 @@ export async function runLocalFatePhase(
 	// a dialog — governed actions are deferred to `/evolve wrapup`. Only an
 	// explicit goal_blocked signal (own streak counter) may consult.
 	if (reason === "goal_blocked" && needsDialog) {
-		consent = await consultLocalFates(ctx, agent, plan, state);
+		consent = await consultLocalFates(ctx, agent, plan, state, fateLanguage);
 	}
 
 	if (consent.approved) {

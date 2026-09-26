@@ -17,6 +17,7 @@ import { buildPrefixMessages, detectPlannerRoute, resolvePrefixCache, type Prefi
 import { skillQualityGuide } from "./skillquality.js";
 import { asLlmSessionId, streamText } from "./llm-text.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
+import { recordLanguageInstruction, resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the /evolve continual harness subsystem.
 
@@ -135,6 +136,12 @@ export interface PlanOptions {
 	prefixCache?: PrefixCacheOptions;
 	/** Direct-call token ledger destination; the planner phase is fixed by this module. */
 	tokenUsage?: TokenUsageTarget;
+	/**
+	 * Authoring language for the proposal. Absent → resolved per call
+	 * (explicit config upstream, else durable client preference, else
+	 * trajectory detection, else `en`).
+	 */
+	language?: RecordLanguage;
 }
 
 export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<RefinementProposal> {
@@ -162,6 +169,7 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		});
 	}
 	const trajectory = prefixMessages.length > 0 ? (options.trajectory ?? "") : (options.trajectory ?? recentUserText(agent));
+	const language = options.language ?? resolveRecordLanguage({ ctx, trajectoryText: trajectory });
 
 	// The skill quality standard is always present: the skill-creator
 	// template facts when installed, the builtin distilled guide otherwise
@@ -185,7 +193,7 @@ export async function planWithLlm(ctx: Context, options: PlanOptions): Promise<R
 		provider: agent.options.provider,
 		model: agent.options.model,
 		sessionId: asLlmSessionId(agent.id),
-		system: PLANNER_SYSTEM_PROMPT,
+		system: `${PLANNER_SYSTEM_PROMPT}\n\n${recordLanguageInstruction(language)}`,
 		prompt: userPrompt,
 		maxTokens: options.maxOutputTokens ?? 8000,
 		signal: options.signal,

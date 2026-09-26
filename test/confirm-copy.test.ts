@@ -1,8 +1,8 @@
 /**
- * Regression tests for the confirmation-dialog copy refresh (headline →
- * details → impact + option descriptions). Labels and question ids stay
- * literal so the existing parsers keep working; guidance lives in
- * `description`.
+ * Regression tests for confirmation dialogs: the headline → details →
+ * impact copy in both shipped languages, literal labels per language, and
+ * bilingual parser acceptance. Dialogs without an explicit language resolve
+ * per call (durable client preference, else `en`).
  */
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -30,19 +30,29 @@ interface CapturedQuestion {
 	options?: { label: string; description?: string }[];
 }
 
-function capturingCtx(answer: { id: string; selected: string[] }): { ctx: Context; captured: CapturedQuestion[] } {
+function baseCtx(
+	ask: (request: { questions: CapturedQuestion[] }) => Promise<{ answers: { id: string; selected: string[] }[] }>,
+	settingsRows?: unknown,
+): { ctx: Context; captured: CapturedQuestion[] } {
 	const captured: CapturedQuestion[] = [];
 	const ctx = {
 		logger: () => ({ info: () => {}, warn: () => {}, error: () => {} }),
 		get: () => undefined,
+		...(settingsRows !== undefined ? { settings: { describe: () => settingsRows } } : {}),
 		userQuestions: {
 			ask: async (request: { questions: CapturedQuestion[] }) => {
 				captured.push(...request.questions);
-				return { answers: [answer] };
+				return ask(request);
 			},
 		},
 	} as unknown as Context;
 	return { ctx, captured };
+}
+
+const ZH_SETTINGS = [{ ns: "locale", value: { preference: "zh" } }];
+
+function capturingCtx(answer: { id: string; selected: string[] }): { ctx: Context; captured: CapturedQuestion[] } {
+	return baseCtx(async () => ({ answers: [answer] }), ZH_SETTINGS);
 }
 
 function freshGate(): GateState {
@@ -57,7 +67,7 @@ function tmpBase(): string {
 	return mkdtempSync(join(base, "/"));
 }
 
-describe("confirmation copy refresh", () => {
+describe("confirmation copy refresh (zh via durable preference)", () => {
 	it("approval global: headline + impact + descriptions, labels unchanged", async () => {
 		const { ctx, captured } = capturingCtx({ id: "approve-global-evolve", selected: ["批准"] });
 		const decision = await requestScopeApproval(ctx, undefined, undefined, "global", "evolve_add memory \"x\" → global store");
@@ -161,5 +171,60 @@ describe("confirmation copy refresh", () => {
 		} finally {
 			rmSync(base, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("confirmation copy follows the resolved language", () => {
+	it("approval en: headline + labels, parser accepts Approve/Decline", async () => {
+		const { ctx, captured } = baseCtx(
+			async () => ({ answers: [{ id: "approve-global-evolve", selected: ["Approve"] }] }),
+		);
+		const decision = await requestScopeApproval(ctx, undefined, undefined, "global", "evolve_add memory \"x\" → global store", "en");
+		expect(decision).toBe("approved");
+		expect(captured).toHaveLength(1);
+		expect(captured[0]!.question.split("\n")[0]).toBe("Write to the global cross-session store?");
+		expect(captured[0]!.options?.map((o) => o.label)).toEqual(["Approve", "Decline"]);
+	});
+
+	it("approval parser accepts both zh and en labels", async () => {
+		const { ctx: zhCtx } = baseCtx(async () => ({ answers: [{ id: "approve-global-evolve", selected: ["批准"] }] }), ZH_SETTINGS);
+		expect(await requestScopeApproval(zhCtx, undefined, undefined, "global", "w", "zh")).toBe("approved");
+		const { ctx: enCtx } = baseCtx(async () => ({ answers: [{ id: "approve-global-evolve", selected: ["Decline"] }] }));
+		expect(await requestScopeApproval(enCtx, undefined, undefined, "global", "w", "en")).toBe("declined");
+	});
+
+	it("fate consult en: Proceed label and parser", async () => {
+		const { ctx, captured } = baseCtx(async () => ({ answers: [{ id: "evolve-fate-consult", selected: ["Proceed"] }] }));
+		const plan = {
+			candidates: [{ kind: "memory", id: "m1", title: "m1", content: "c", path: "general", version: 1, metadata: {}, coveredGlobally: false, globalHints: [] }],
+			promotable: [{ key: "memory:m1", verdict: "promote" as const, reason: "durable" }],
+			splits: [],
+			silentArchives: [],
+			reviewArchives: [],
+			skipped: [],
+			splitSkipped: [],
+		};
+		const result = await consultLocalFates(ctx, fakeAgent, plan, freshGate(), "en");
+		expect(result).toMatchObject({ approved: true, reason: "consented" });
+		expect(captured[0]!.options?.map((o) => o.label)).toEqual(["Proceed", "Skip"]);
+	});
+
+	it("skill consult en: Solidify label and parser", async () => {
+		const { ctx, captured } = baseCtx(async () => ({ answers: [{ id: "evolve-skill-consult", selected: ["Solidify"] }] }));
+		const ok = await consultSkillEdits(
+			ctx,
+			fakeAgent,
+			[{ action: "create", kind: "skill", title: "handoff", content: "body", skill_kind: "guidance" }],
+			freshGate(),
+			"en",
+		);
+		expect(ok).toBe(true);
+		expect(captured[0]!.options?.map((o) => o.label)).toEqual(["Solidify", "Skip"]);
+	});
+
+	it("dialogs fall back to en without a durable preference (DSH fallback)", async () => {
+		const { ctx, captured } = baseCtx(async () => ({ answers: [{ id: "approve-global-evolve", selected: ["Approve"] }] }));
+		expect(await requestScopeApproval(ctx, undefined, undefined, "global", "w")).toBe("approved");
+		expect(captured[0]!.options?.map((o) => o.label)).toEqual(["Approve", "Decline"]);
 	});
 });

@@ -50,6 +50,9 @@ import {
 import type { PromotionPolicy } from "./promotion.js";
 import { asLlmSessionId } from "./llm-text.js";
 import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
+import { resolveRecordLanguage, type RecordLanguagePreference } from "./record-language.js";
+import { resolveDialogLanguage, skillConsultCopy, skillEditLine } from "./copy.js";
+import type { RecordLanguage } from "./record-language.js";
 
 export interface AutoReviewConfig {
 	/** Legacy fate cadence; successful turns are no longer gated by this value. */
@@ -87,6 +90,12 @@ export interface AutoReviewConfig {
 	reviewModel?: string;
 	/** Dedicated memory-agent writes to project/global require the normal human approval boundary. */
 	requireGlobalApproval?: boolean;
+	/**
+	 * Authoring language for this run's records. Absent/`auto` resolves per
+	 * call through the record-language chain (durable client preference,
+	 * then trajectory detection, then `en`); `zh`/`en` pin it.
+	 */
+	recordLanguage?: RecordLanguagePreference;
 	/**
 	 * Prefix-cache routing for the gate input (see reviewAutoRefine).
 	 * Absent mode → auto-detect; absent budget → the default prefix budget.
@@ -636,6 +645,7 @@ export async function runMemoryExtractionPhase(
 		maxOutputTokens: config.budgetTokens,
 		...(signal ? { signal } : {}),
 		tokenUsage,
+		language: resolveRecordLanguage({ configured: config.recordLanguage, ctx, trajectoryText: memorySnapshot.trajectory }),
 		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
 			? {
 					prefixCache: {
@@ -764,6 +774,9 @@ async function runReviewPhase(
 	const history = engine.history("local", sessionId);
 	// Gap C1: resolve optional review model override.
 	const reviewRoute = parseReviewModel(config.reviewModel, agent.options.provider);
+	// Records follow the client language: explicit config first, else the
+	// durable DSH preference, else this run's own trajectory.
+	const recordLanguage = resolveRecordLanguage({ configured: config.recordLanguage, ctx, trajectoryText: trajectory });
 	const review = await reviewAutoRefine(ctx, {
 		agent,
 		state: harnessState,
@@ -774,6 +787,7 @@ async function runReviewPhase(
 		context: { reason, turnsSinceLastReview },
 		budgetTokens: config.budgetTokens,
 		tokenUsage,
+		language: recordLanguage,
 		...(reviewRoute ? { overrideProvider: reviewRoute.provider, overrideModel: reviewRoute.model } : {}),
 		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
 			? {
@@ -805,6 +819,7 @@ async function runReviewPhase(
 		// guide) so skill proposals follow the standard.
 		skillsRoot: join(engine.baseDir, "skills"),
 		tokenUsage,
+		language: recordLanguage,
 		...((config.prefixCacheMode !== undefined || config.prefixMaxChars !== undefined
 			? {
 					prefixCache: {
@@ -821,7 +836,7 @@ async function runReviewPhase(
 	// writes a skill silently. Without consent the skill edits are withheld
 	// and the rest of the proposal proceeds as usual.
 	const { skillEdits, otherEdits } = splitSkillEdits(proposal);
-	const skillConsented = await consultSkillEdits(ctx, agent, skillEdits, state);
+	const skillConsented = await consultSkillEdits(ctx, agent, skillEdits, state, recordLanguage);
 	const finalProposal = skillConsented
 		? proposal
 		: {
@@ -924,6 +939,7 @@ export async function consultSkillEdits(
 	agent: Agent,
 	skillEdits: RefinementEdit[],
 	gate: GateState,
+	language?: RecordLanguage,
 ): Promise<boolean> {
 	if (skillEdits.length === 0) return true;
 	const key = skillEdits.map((edit) => edit.id ?? slug(edit.title ?? edit.kind, edit.kind)).join("|");
@@ -935,28 +951,25 @@ export async function consultSkillEdits(
 	if (!userQuestions) {
 		return false;
 	}
+	const lang = language ?? resolveDialogLanguage(ctx);
 	const description = skillEdits
-		.map((edit) => {
-			const form = edit.skill_kind === "guidance" ? "guidance 技能（SKILL.md 文档）" : "可执行技能";
-			return `- ${edit.action}「${edit.title ?? edit.id}」(${form})`;
-		})
+		.map((edit) => skillEditLine(edit.action, edit.title ?? edit.id ?? edit.kind, edit.skill_kind, lang))
 		.join("\n");
 	try {
+		const copy = skillConsultCopy(description, lang);
 		const answer = await userQuestions.ask({
 			questions: [
 				{
 					id: "evolve-skill-consult",
-					question: `发现可复用的流程，建议固化为技能\n${description}\n\n固化后以后同类任务自动复用，可回滚。是否固化？`,
-					options: [
-						{ label: "固化", description: "生成技能，以后复用" },
-						{ label: "不固化", description: "本次跳过，10 回合内不再打扰" },
-					],
+					question: copy.question,
+					options: copy.options,
 				},
 			],
 			agent,
 		});
 		const item = answer.answers?.find((entry) => entry.id === "evolve-skill-consult");
-		const consented = item?.selected?.includes("固化") ?? false;
+		const selected = item?.selected ?? [];
+		const consented = selected.includes("固化") || selected.includes("Solidify");
 		if (!consented) {
 			gate.skillRejects.set(key, gate.turns);
 		}

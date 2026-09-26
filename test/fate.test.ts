@@ -346,6 +346,7 @@ describe("consultLocalFates", () => {
 		const ctx = {
 			llm: llmStreaming("{}"),
 			logger: noopLogger,
+			settings: { describe: () => [{ ns: "locale", value: { preference: "zh" } }] },
 			userQuestions: {
 				ask: async (request: unknown) => {
 					questions.push(request);

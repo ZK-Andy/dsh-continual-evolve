@@ -64,6 +64,13 @@ export const Config = z.object({
 	notifyOnAutoReview: z.boolean().default(true),
 	/** Cross-session (global) edits require an explicit human approval. */
 	requireGlobalApproval: z.boolean().default(true),
+	/**
+	 * Authoring language for evolution records (refinement summaries,
+	 * rationales, entry titles/content, review and wrap-up verdicts).
+	 * `auto` follows the DSH client language (durable `locale.preference`,
+	 * then trajectory detection, then `en`); `zh`/`en` pin it.
+	 */
+	recordLanguage: z.union([z.const("auto"), z.const("zh"), z.const("en")]).default("auto"),
 	/** Skills root for materialized skill entries; defaults to <dshHome>/skills. */
 	skillsDir: z.string(),
 	/** Passphrase for rubric encryption; falls back to DSH_EVOLVE_RUBRIC_KEY, then a local key file. */
@@ -237,6 +244,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		requireGlobalApproval: config.requireGlobalApproval ?? true,
 		...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
 		...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
+		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
 	});
 	ctx.logger("continual-evolve").info(
 		"continual-evolve automatic listener registered (Memory Agent only; generic review/planner/fate disconnected)",

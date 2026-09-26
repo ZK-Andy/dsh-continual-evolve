@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1051%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1075%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-92%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
@@ -142,7 +142,7 @@ before aborting.
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (1051 tests)
+pnpm test                    # vitest (1075 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm coverage:gaps           # locate uncovered lines per file (read-only)
 pnpm lint                    # oxlint src test
@@ -152,7 +152,7 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, memory agent, recall, projection, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (56 files)
+├── test/                  # vitest suites (58 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)

@@ -35,6 +35,7 @@ import { buildConflictNotice, CONFLICT_WARN_SCORE, mostSimilarEntry } from "./pr
 import { EvolutionApplyPostCommitError, type EvolutionEngine } from "./service.js";
 import { tokenize } from "./search.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
+import { recordLanguageInstruction, resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
 import type { EntrySource, HarnessEntry, HarnessScope, HarnessState, RefinementEdit, RefinementProposal, RefinementResult } from "./types.js";
 import { isArchived, isMemoryType, MEMORY_TYPE_KEY, slug } from "./types.js";
 import { validateBlastRadiusScope, validateEdit } from "./validate.js";
@@ -231,6 +232,12 @@ export interface MemoryAgentOptions {
 	maxOutputTokens?: number;
 	signal?: AbortSignal;
 	tokenUsage?: TokenUsageTarget;
+	/**
+	 * Authoring language for the proposal. Absent → resolved per call
+	 * (explicit config upstream, else durable client preference, else
+	 * trajectory detection, else `en`).
+	 */
+	language?: RecordLanguage;
 }
 
 /**
@@ -263,13 +270,15 @@ export async function runMemoryAgent(ctx: Context, options: MemoryAgentOptions):
 	];
 
 	let searches = 0;
+	const language = options.language ?? resolveRecordLanguage({ ctx, trajectoryText: options.trajectory });
+	const systemPrompt = `${MEMORY_AGENT_SYSTEM_PROMPT}\n\n${recordLanguageInstruction(language)}`;
 	for (let turn = 1; turn <= MEMORY_AGENT_MAX_TURNS; turn += 1) {
 		options.signal?.throwIfAborted();
 		const blocks = await streamModelTurn(ctx, {
 			provider: options.provider,
 			model: options.model,
 			...(options.sessionId ? { sessionId: options.sessionId } : {}),
-			system: MEMORY_AGENT_SYSTEM_PROMPT,
+			system: systemPrompt,
 			messages,
 			tools: MEMORY_AGENT_TOOL_SCHEMAS,
 			requireTextOrToolCall: true,
