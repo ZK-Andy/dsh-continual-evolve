@@ -54,12 +54,27 @@ export function detectLanguageFromText(text: string): RecordLanguage | undefined
  * service. Fail-open by contract: a missing service, a throwing read, an
  * async-shaped reply, or an unknown value all yield `undefined`.
  *
+ * The service is resolved through `ctx.get("settings")` (the global registry),
+ * which sees services provided by sibling plugin entries. A direct
+ * `ctx.settings` walks only the caller's fiber ancestor chain and throws
+ * "cannot get property \"settings\" without inject" — the same failure mode
+ * documented in `goal.ts` — and a throw here would abort the whole snapshot
+ * gate, so the property access itself is guarded. Plain-object contexts
+ * (tests, non-Cordis hosts) fall back to the direct property.
+ *
  * @param ctx Cordis context that may carry the host settings service.
  * @returns The stored preference (`zh`/`en`, subtag-tolerant) or `undefined`.
  */
 export function durableLocalePreference(ctx: unknown): string | undefined {
 	if (typeof ctx !== "object" || ctx === null) return undefined;
-	const settings = (ctx as { settings?: unknown }).settings;
+	let settings: unknown;
+	try {
+		const get = (ctx as { get?: (name: string) => unknown }).get;
+		settings = typeof get === "function" ? get.call(ctx, "settings") : undefined;
+		if (settings === undefined) settings = (ctx as { settings?: unknown }).settings;
+	} catch {
+		return undefined;
+	}
 	if (typeof settings !== "object" || settings === null) return undefined;
 	const describe = (settings as { describe?: unknown }).describe;
 	if (typeof describe !== "function") return undefined;

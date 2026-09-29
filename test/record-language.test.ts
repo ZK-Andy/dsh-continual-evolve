@@ -56,6 +56,35 @@ describe("durableLocalePreference", () => {
 		expect(durableLocalePreference(settingsCtx([{ ns: "locale", value: { preference: "fr" } }]))).toBeUndefined();
 		expect(durableLocalePreference(settingsCtx([{ ns: "locale", value: null }]))).toBeUndefined();
 	});
+
+	it("resolves the settings service via ctx.get on a Cordis context", () => {
+		// Cordis throws "cannot get property \"settings\" without inject" on a
+		// direct property read for a service outside the caller's fiber chain;
+		// only the global registry (`ctx.get`) reaches it.
+		const cordisLike = {
+			get(name: string) {
+				return name === "settings" ? { describe: () => [{ ns: "locale", value: { preference: "zh" } }] } : undefined;
+			},
+		};
+		Object.defineProperty(cordisLike, "settings", {
+			get() {
+				throw new Error('cannot get property "settings" without inject');
+			},
+		});
+		expect(durableLocalePreference(cordisLike)).toBe("zh");
+	});
+
+	it("still fails open when ctx.get throws on a Cordis context", () => {
+		const hostile = {
+			get() {
+				throw new Error("registry unavailable");
+			},
+			get settings(): undefined {
+				throw new Error('cannot get property "settings" without inject');
+			},
+		};
+		expect(durableLocalePreference(hostile)).toBeUndefined();
+	});
 });
 
 describe("resolveRecordLanguage", () => {
