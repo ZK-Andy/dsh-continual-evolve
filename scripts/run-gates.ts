@@ -11,10 +11,9 @@ import { spawnSync } from "node:child_process";
 const MODES = ["docs", "all"] as const;
 type Mode = (typeof MODES)[number];
 
-function run(label: string, args: string[], cmd = process.execPath): void {
+function run(label: string, args: string[]): void {
 	console.log(`== gate: ${label} ==`);
-	// 非 node 门禁（python3）直接以给定命令运行；node 门禁经 tsx（沙箱 /home 只读下 pnpm 直跑会炸，直调语义等价）。
-	const r = spawnSync(cmd, cmd === process.execPath ? ["./node_modules/tsx/dist/cli.mjs", ...args] : args, { stdio: "inherit" });
+	const r = spawnSync(process.execPath, ["./node_modules/tsx/dist/cli.mjs", ...args], { stdio: "inherit" });
 	if (r.status !== 0) {
 		console.error(`gate FAILED: ${label}`);
 		process.exit(r.status ?? 1);
@@ -32,7 +31,7 @@ function main(): void {
 	run("verify-md-links", ["scripts/verify-md-links.ts"]);
 	run("verify-governance", ["scripts/verify-governance.ts"]);
 	// 工作区根 HANDOFF 家庭（入口/待办/冷归档）：干净检出下文件缺席即跳过（clean-CI 语义）
-	run("verify-handoff-structure", ["scripts/verify-handoff-structure.py"], "python3");
+	run("verify-handoff-structure", ["scripts/verify-handoff-structure.ts"]);
 	console.log("run-gates OK");
 }
 

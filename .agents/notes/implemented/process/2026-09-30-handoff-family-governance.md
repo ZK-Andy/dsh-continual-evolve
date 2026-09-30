@@ -18,13 +18,13 @@ HANDOFF 家庭三件制，全部位于工作区根（仓库外，本地工作文
 
 加载锚点：工作区根新增 `AGENTS.md`（ZCode/DSH 进入工作区即自动加载），强制会话开场读 HANDOFF 家庭、收尾走"滚动窗追加 + 待办对账 + 门禁"三步。原 `~/.dsh/skills/session-handoff` 技能已不存在，其职责由该锚点与仓库 session-open/close 卡承接。
 
-机器门禁：`scripts/verify-handoff-structure.py`（自本仓 scripts/ 运行，默认按 `WORKSPACE_ROOT = 仓库父目录` 解析家庭三件；`--self-test` 15 个离线夹具自检）。强制面：必备小节存在、滚动窗条数/字数、待办 `[ ]`/`[x]` 预算与压缩、归档指针双向配对（入口必须指名冷归档；被指名必须存在；存在必须被指名）。工作区文件缺席时跳过（clean-CI 语义，同桌面原版）。接线三处：`run-gates.ts` docs 模式（故 CI `pnpm check:docs` 自动覆盖）、`.githooks/pre-push`、`package.json` `check:handoff`（自测+实检）。session-close 卡同步改写：条目格式化、结论落 durable 家、越窗归档、门禁收尾。
+机器门禁：`scripts/verify-handoff-structure.ts`（TS，同本仓其余门禁语言；自本仓 scripts/ 运行，默认按 `WORKSPACE_ROOT = 仓库父目录` 解析家庭三件；`--self-test` 15 个离线夹具自检）。强制面：必备小节存在、滚动窗条数/字数、待办 `[ ]`/`[x]` 预算与压缩、归档指针双向配对（入口必须指名冷归档；被指名必须存在；存在必须被指名）。工作区文件缺席时跳过（clean-CI 语义，同桌面原版）。接线三处：`run-gates.ts` docs 模式（故 CI `pnpm check:docs` 自动覆盖）、`.githooks/pre-push`、`package.json` `check:handoff`（自测+实检）；均走 tsx，无 Python 运行时依赖。session-close 卡同步改写：条目格式化、结论落 durable 家、越窗归档、门禁收尾。
 
 ## Alternatives considered
 
 - **照抄 desktop 的按月分卷（journal/ + todos-archive/<月>.md）**：本工作区是单项目低频节奏，归档量远小于桌面仓（其单月卷已达 89 条）；单文件冷归档 + 年内再分卷即可，避免两卷指针的维护面。落败原因：过度设计。
 - **把 HANDOFF 家庭搬进仓库内（gitignore 本地工作文档，同桌面仓）**：HANDOFF 同时覆盖仓库外的横切物（OBSERVATION.md、profile 接线、工作区脚本），搬进仓库会把仓库边界外的状态锚进仓库。落败原因：工作区≠仓库，家庭放工作区根语义更真；锚点问题由根 AGENTS.md 解决，不依赖文件位置。
-- **把门禁改写成 TS 并入现有四门禁（延续 gate-ts-migration 方向）**：新门禁与桌面原版保持同构（同 Python 同函数面）便于上游修复互搬，且它不进 `tsconfig.scripts` 编译面。落败原因：一致性收益小于移植保真收益；若未来门禁面统一再迁。
+- **保持 Python（与桌面原版同构，便于上游修复互搬）**：初版曾以 Python 落地；本仓门禁面自 gate-ts-migration 起已是 TS 单一语言，Python 门禁游离在 `tsconfig.scripts` 编译面与既有 run-gates 通道之外，双语言维护面大于互搬收益。落败原因：门禁语言单一化优先，TS 重写语义逐条对等（15 夹具自检同套）。
 
 ## Consequences
 

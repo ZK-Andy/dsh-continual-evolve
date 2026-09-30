@@ -8,4 +8,4 @@
 4. **未推送提醒**：本地领先 origin 的提交数如实告知用户；是否推送由用户定或按既定惯例（本项目惯例：完成即推）。
 5. **工作树确认**：`git status` 干净；仓库内不应有未跟踪文件（HANDOFF 家庭与 OBSERVATION 在工作区根，仓库外）。
 6. **交接条目**：HANDOFF.md 滚动窗顶部追加一条——`日期｜类型｜commit/ADR 指针｜一句话结论`（≤260 字）；越过窗口上限（12 条）整批移入冷归档。
-7. **结构门禁**：`python3 scripts/verify-handoff-structure.py` 全绿（越窗/超长/断指针即 FAIL 并指名归档路径）；已并入 pre-push 与 `pnpm check:docs`。
+7. **结构门禁**：`tsx scripts/verify-handoff-structure.ts` 全绿（越窗/超长/断指针即 FAIL 并指名归档路径）；已并入 pre-push 与 `pnpm check:docs`。
