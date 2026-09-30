@@ -56,6 +56,7 @@
     "lint": "oxlint src test",
     "clean": "rm -rf lib",
     "check:docs": "tsx scripts/run-gates.ts docs",
+    "check:handoff": "python3 scripts/verify-handoff-structure.py --self-test && python3 scripts/verify-handoff-structure.py",
     "check:governance": "tsx scripts/verify-governance.ts"
   },
   "peerDependencies": {

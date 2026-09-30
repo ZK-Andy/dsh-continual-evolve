@@ -33,5 +33,6 @@ echo "-> 文档门禁"
 ./node_modules/.bin/tsx scripts/verify-adr-format.ts
 ./node_modules/.bin/tsx scripts/verify-doc-budgets.ts --manifest scripts/doc-budgets.manifest.json
 ./node_modules/.bin/tsx scripts/verify-md-links.ts
+python3 scripts/verify-handoff-structure.py
 
 echo "pre-push OK"
