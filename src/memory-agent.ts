@@ -35,7 +35,7 @@ import { buildConflictNotice, CONFLICT_WARN_SCORE, mostSimilarEntry } from "./pr
 import { EvolutionApplyPostCommitError, type EvolutionEngine } from "./service.js";
 import { tokenize } from "./search.js";
 import { createTokenUsageObserver, type TokenUsageTarget } from "./token-usage.js";
-import { recordLanguageInstruction, resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
+import { recordLanguageInstruction, resolveRecordLanguage, type RecordLanguage, type RecordLanguagePreference } from "./record-language.js";
 import type { EntrySource, HarnessEntry, HarnessScope, HarnessState, RefinementEdit, RefinementProposal, RefinementResult } from "./types.js";
 import { isArchived, isMemoryType, MEMORY_TYPE_KEY, slug } from "./types.js";
 import { validateBlastRadiusScope, validateEdit } from "./validate.js";
@@ -352,6 +352,8 @@ export interface ApplyMemoryProposalOptions {
 	scopeDecisions?: Readonly<Record<string, ScopeApprovalDecision>>;
 	/** Persist each decision before a later scope can fail. */
 	onScopeDecision?: (key: string, decision: ScopeApprovalDecision) => void;
+	/** Plugin `recordLanguage` preference for the approval dialog copy. */
+	recordLanguage?: RecordLanguagePreference;
 }
 
 /**
@@ -472,6 +474,7 @@ export async function applyMemoryExtractionProposal(
 			options.signal,
 			scope,
 			renderMemoryApprovalDetails(proposal, scope, baseline),
+			options.recordLanguage,
 		);
 		if (decisionKey !== undefined) options.onScopeDecision?.(decisionKey, approved);
 		if (approved === "approved") approvedScopes.add(scope);

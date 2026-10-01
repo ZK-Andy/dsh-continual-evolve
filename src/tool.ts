@@ -4,6 +4,7 @@
  * the engine. `global: true` is required explicitly for cross-session edits.
  */
 import type { Context } from "@deepseek-ai/cordis";
+import type { RecordLanguagePreference } from "./record-language.js";
 import { defineTool, type ToolRunContext } from "@deepseek-ai/dsh-tools";
 import type { HarnessScope, RefinementEdit, RefinementKind } from "./types.js";
 import { MEMORY_TYPE_KEY } from "./types.js";
@@ -98,6 +99,12 @@ function textResult(text: string) {
 
 export interface ToolGateOptions {
 	requireGlobalApproval: boolean;
+	/**
+	 * Plugin `recordLanguage` preference for the approval dialog copy;
+	 * `auto`/absent defers to the durable client preference and the session's
+	 * own user text (see `approval.ts`).
+	 */
+	recordLanguage?: RecordLanguagePreference;
 }
 
 export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts: ToolGateOptions): void {
@@ -219,7 +226,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 					const targetState = engine.load(scope, storeId);
 					const hit = mostSimilarEntry(Object.values(targetState.entries[args.kind as RefinementKind]), args.title ?? "", args.content ?? "", CONFLICT_WARN_SCORE);
 					const conflictNote = hit ? ` ⚠️ ${buildConflictNotice(hit)}——建议改用 evolve_update` : "";
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_add ${args.kind} "${args.title}" → ${storeLabel(scope)}${conflictNote}`);
+					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_add ${args.kind} "${args.title}" → ${storeLabel(scope)}${conflictNote}`, opts.recordLanguage);
 				}
 				const edit: RefinementEdit = {
 					action: "create",
@@ -260,7 +267,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				const scope = scopeOf(args.scope ?? args.global, "local");
 				const storeId = storeIdFor(scope, exec);
 				if (needsApproval(scope) && opts.requireGlobalApproval) {
-					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_update ${args.kind}:${args.id} → ${storeLabel(scope)}`);
+					await requireGlobalApproval(ctx, exec.agent, exec.signal, `evolve_update ${args.kind}:${args.id} → ${storeLabel(scope)}`, opts.recordLanguage);
 				}
 				const edit: RefinementEdit = { action: "update", kind: args.kind as RefinementKind, id: args.id };
 				if (args.title !== undefined) edit.title = args.title;
@@ -301,6 +308,7 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 						exec.agent,
 						exec.signal,
 						`evolve_delete ${args.kind}:${ids.length > 1 ? `${ids.length} entries (${ids.join(", ")})` : ids[0]} → ${storeLabel(scope)}`,
+						opts.recordLanguage,
 					);
 				}
 				const edits: RefinementEdit[] = ids.map((id) => ({ action: "delete", kind: args.kind as RefinementKind, id }));

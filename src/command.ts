@@ -28,6 +28,7 @@ import { loadUsage, getUsageCount } from "./usage.js";
 import { loadGateRuntime, saveGateRuntime } from "./runtime.js";
 import { planConsolidation } from "./consolidate.js";
 import { loadTokenUsage, renderTokenUsageReport } from "./token-usage.js";
+import type { RecordLanguagePreference } from "./record-language.js";
 
 const USAGE_COMMON = `Usage:
   /evolve                  show this help and the current local store
@@ -81,6 +82,8 @@ export interface CommandRuntimeOptions {
 	 * registered; this is not a registration gate.
 	 */
 	autoReview?: boolean;
+	/** Plugin `recordLanguage` preference for dialog copy (see `approval.ts`). */
+	recordLanguage?: RecordLanguagePreference;
 }
 
 export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opts: CommandGateOptions, runtime: CommandRuntimeOptions): void {
@@ -425,6 +428,7 @@ async function executeEvolveCommand(
 						invocation.agent,
 						invocation.signal,
 						`/evolve plan ${scope} 将应用 ${proposal.edits.length} 条编辑到${scope === "project" ? "本项目" : "跨会话"} store：${proposal.summary}`,
+						runtime.recordLanguage,
 					);
 				}
 				const result = engine.apply(scope, storeIdForCommand(scope, invocation), proposal, {
@@ -435,7 +439,7 @@ async function executeEvolveCommand(
 				return success(renderResult(result));
 			}
 			case "wrapup": {
-				return await executeWrapupCommand(ctx, engine, invocation, runtime.promotionPolicy);
+				return await executeWrapupCommand(ctx, engine, invocation, runtime.promotionPolicy, runtime.recordLanguage);
 			}
 			case "pause":
 			case "resume": {

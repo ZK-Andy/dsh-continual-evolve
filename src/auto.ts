@@ -681,6 +681,7 @@ export async function runMemoryExtractionPhase(
 		decisionCursor: memorySnapshot.cursor,
 		scopeDecisions: state.memoryDecisions,
 		onScopeDecision: (key, decision) => rememberMemoryDecision(state, key, decision),
+		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
 		...(signal ? { signal } : {}),
 	});
 	for (const result of application.results) {

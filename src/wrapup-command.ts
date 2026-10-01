@@ -5,9 +5,11 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { EvolutionEngine } from "./service.js";
 import { questionServiceOf, requireGlobalApproval } from "./approval.js";
-import { resolveDialogLanguage, wrapupArchiveCopy } from "./copy.js";
+import { wrapupArchiveCopy } from "./copy.js";
 import { assessLocalEntries, candidateKey, filterPromotable, listLocalCandidates, splitArchiveGuards, splitPromoteBlocked, splitPromoteProposals, valenceStampProposal, wholePromoteProposals } from "./wrapup.js";
 import { DEFAULT_PROMOTION_POLICY, type PromotionPolicy } from "./promotion.js";
+import { normalizeRecordLanguage, resolveRecordLanguage, type RecordLanguagePreference } from "./record-language.js";
+import { recentUserText, type AgentLike } from "./inject.js";
 import type { WrapupCandidate, WrapupItem } from "./wrapup.js";
 
 function success(text: string): CommandResult {
@@ -19,6 +21,7 @@ export async function executeWrapupCommand(
 	engine: EvolutionEngine,
 	invocation: CommandInvocation,
 	policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
+	recordLanguage?: RecordLanguagePreference,
 ): Promise<CommandResult> {
 	const sessionId = invocation.agent.id;
 	const localState = engine.load("local", sessionId);
@@ -125,7 +128,7 @@ export async function executeWrapupCommand(
 		].join("\n")}`;
 		let promoteAllowed = true;
 		try {
-			await requireGlobalApproval(ctx, invocation.agent, invocation.signal, what);
+			await requireGlobalApproval(ctx, invocation.agent, invocation.signal, what, recordLanguage);
 		} catch (cause) {
 			promoteAllowed = false;
 			const message = `global 写入未批准 — 整条提升与拆解提升均未写入 (${cause instanceof Error ? cause.message : String(cause)})`;
@@ -214,7 +217,11 @@ export async function executeWrapupCommand(
 		const questionId = "evolve-wrapup-archive-review";
 		let archiveConfirmed = false;
 		try {
-			const copy = wrapupArchiveCopy(candidate.title, resolveDialogLanguage(ctx));
+			const copy = wrapupArchiveCopy(
+				candidate.title,
+				normalizeRecordLanguage(recordLanguage) ??
+					resolveRecordLanguage({ ctx, trajectoryText: recentUserText(invocation.agent as AgentLike | undefined) }),
+			);
 			const answer = await userQuestions.ask({
 				questions: [
 					{

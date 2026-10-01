@@ -242,7 +242,10 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		});
 	}
 
-	const gate = { requireGlobalApproval: config.requireGlobalApproval ?? true };
+	const gate = {
+		requireGlobalApproval: config.requireGlobalApproval ?? true,
+		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
+	};
 	const promotionPolicy = resolvePromotionPolicy({
 		blockPatterns: config.promotionBlockPatterns,
 		minPromoteChars: config.promotionMinChars,
@@ -255,6 +258,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		autoCase: config.autoCase ?? true,
 		promotionPolicy,
 		autoReview: config.autoReview ?? false,
+		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
 	});
 
 	// Plugin-owned file logging: every cordis log message lands in
