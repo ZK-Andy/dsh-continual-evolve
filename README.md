@@ -91,6 +91,7 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `reviewBudgetTokens` | `4096` | output budget for the gate call |
 | `notifyOnAutoReview` | `true` | visible follow-up notice after an applied gate run |
 | `requireGlobalApproval` | `true` | global and project edits ask for explicit approval |
+| `recordLanguage` | `auto` | authoring **and dialog** language: `auto` follows the DSH client preference, then the session's own user text, then `en`; `zh`/`en` pin it |
 | `localFate` | `false` | optional local-entry promote/archive fate assessment; unreachable while the listener runs memory-only, so it only affects direct/full callers |
 | `fateIntervalTurns` | follows `reviewIntervalTurns` | minimum turns between fate assessments |
 | `goalBlockedWrapupTurns` | `3` | consecutive blocked-goal gate runs trigger one fate assessment (`0` disables) |

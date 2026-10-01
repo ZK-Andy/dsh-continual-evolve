@@ -175,3 +175,20 @@ await ctx.llm.stream({
 - 多个 `complete: true` 的 section 也会抛错（`multiple complete prompt sections are active`）。
 
 **要点**：想让内容排在行为策略之前（身份/记忆类信息宜早），取 0–499 内的值即可；名字带命名空间前缀避免撞车。顺序值进 schemastery 配置（如 `memoryIndex.order`），别硬编码。
+
+## 15. 审批弹窗是英文 / 在输入框里打字回复被判空（`invalid decision: []`）
+
+**症状**：`evolve_add`/`evolve_update`/`/evolve plan`/wrapup 写 global 时弹窗**是英文**；或者在输入框里打字回复"批准"，结果报 `evolution approval returned an invalid decision: []`，什么都没写入。
+
+**原因（两个独立缺陷，2026-10-01 一次真实使用同时暴露）**：
+
+- **英文**：审批弹窗的语言只走 `resolveDialogLanguage(ctx)` —— **只读持久 locale 偏好、没有轨迹层**，而四个调用点（tool / command plan / wrapup / memory-agent）**没有一个把 `recordLanguage` 配置传下去**，所以配置项对审批弹窗完全无效。持久偏好来自 DSH settings 文档 `<profile.home>/settings.yaml`；dotnet-desktop 下**该文件不存在**（从未在 GUI 里改过语言）→ 读不到 → 兜底 `en`。注意：profile `cordis.patch.yml` 里 `dsh-client-locale: preference: zh` 是**部署默认值**，跟 settings 文档里的**用户偏好**不是同一来源——UI 走前者，插件读后者。
+- **判空**：上游 `AskUserQuestionAnswerItem` 是 `selected: string[]` **加 `custom?: string`（自由文本 "Other"）**。输入框文字落进 `custom`，`selected` 是 `[]`，而解析只认 `selected` 的标签 → 抛错。这本身是刻意 fail-loud（丢失/歧义回答绝不记为持久拒绝，见 #13），但旧错误文案没说明"必须点按钮"。
+
+**修复（v0.10.6）**：审批弹窗改用**与记录语言同一条链**（显式 `recordLanguage` → 持久偏好 → **会话自身最近用户文本** → `en`），并把 `recordLanguage` 逐层穿透到四个调用点；`selected` 为空时接受**精确匹配标签**的打字回复（`批准`/`approve`/`拒绝`/`decline`，容忍首尾空白、引号、尾随标点与"吧/了"）；其余情况抛可操作错误：`needs one clicked option (批准/Approve or 拒绝/Decline) — a typed reply cannot serve as a decision`。
+
+**要点**：
+
+- 打字只在**精确等于标签**时算决策（"不批准"这类否定式**故意**不放行——误读一次决策比让用户点一下按钮严重得多）。
+- 想让弹窗立刻变中文，正规路径是 **GUI 设置 → 通用 → 语言** 选一次（写入持久 settings 文档）；修链之后即使不设置，中文会话也会得到中文弹窗。
+- 排查口诀：弹窗语言不对 → 看 `recordLanguage` 配置、`<profile.home>/settings.yaml` 是否存在、会话最近用户文本是否为中文。

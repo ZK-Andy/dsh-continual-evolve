@@ -91,6 +91,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `reviewBudgetTokens` | `4096` | 门禁调用输出预算 |
 | `notifyOnAutoReview` | `true` | 门禁应用后发可见跟进通知 |
 | `requireGlobalApproval` | `true` | 全局与项目写入需明确批准 |
+| `recordLanguage` | `auto` | 记录**与弹窗**语言：`auto` 依次跟随 DSH 客户端偏好 → 会话自身用户文本 → `en`；`zh`/`en` 固定 |
 | `localFate` | `false` | 可选的本地条目晋升/归档 fate 评估；listener 以 memory-only 运行时不可达，只对直接/完整调用者生效 |
 | `fateIntervalTurns` | 跟随 `reviewIntervalTurns` | 归宿评估的最小回合间隔 |
 | `goalBlockedWrapupTurns` | `3` | 连续阻塞目标的门禁轮数触发一次归宿评估（`0` 关闭） |
