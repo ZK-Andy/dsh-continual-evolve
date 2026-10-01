@@ -30,7 +30,7 @@
 │ 契约层（模型可见）                                              │
 │  · evolve 工具（evolve_add/update/delete/list/rollback）        │
 │  · /evolve 命令（人工触发）                                    │
-│  · system prompt 段落（order ~118，教进化姿态 + 何时该长）        │
+│  · system prompt 段落（118/119 指南与条目；400 记忆正文索引）      │
 └─────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────────┐
 │ 状态层（文件即数据库，照抄 prime-agent）                          │
@@ -164,6 +164,7 @@ prime-agent 用 `validateEdit` 做代码校验，但提案是**主 agent 自己�
 - [x] global scope 开启，带人工审批门禁
 - [x] skill 条目可执行化（对齐 prime-agent 的 python reference 契约，物化 `$DSH_HOME/skills/<kebab>/SKILL.md`）
 - [x] **prompt 条目真正注入系统提示词**（additive section，封顶 6 条/类）——`src/inject.ts` 的 `entriesSectionText` 在 `index.ts` 注册为 `tool:continual-evolve:entries` 动态 section（order 118+1）：text 是 provider，每次 assembly 用 `context.agent` 定位会话，读 global + 沿 `SessionHeader.parentSession` 链最近非空 local store 合并渲染；空 store 渲染为 "" 被 prompt renderer 丢弃，零 token 成本；全量仍由 `evolve_list` 提供
+- [x] **memory 正文在会话开场注入**（evolve v2）——`src/memory-index.ts` 在 `index.ts` 注册 `evolve:memory-index` section（order 400，上游 1–499 空档；与 118/119 不争命名槽位）：按 `project > feedback > user > reference` 排序吃硬预算（默认 6000 字符，放不下先降级为索引行、再折叠计数），when_to_save 指南（`src/memory-guide.ts`）随 section 注入（空 store 也注入，否则写路径永远学不会写）；按 `agent.id` **会话内冻结**，system prompt 整场逐字节稳定以守 prompt cache——中途写入的记忆下个会话生效，`evolve_recall` 兜底即时性；memory 因此不再列入 entry directory（一个事实一个家）。配置 `memoryIndex.{enabled,guide,order,maxChars}`
 - [x] **subagent 条目生成可复用委派规格**——同一 section 把 subagent 条目渲染为 Delegation Specs 块（"委派时按规格组装子代理提示"）；子代理组装系统提示词时沿 parentSession 链继承父会话的 prompt/subagent 条目，无需包装 provider——委派接缝即全局 section + 链继承
 
 ### Phase 3 —— 验证闭环（penguin 硬化版，可选）

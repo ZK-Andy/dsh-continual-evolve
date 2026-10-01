@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1075%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1108%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-92%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
@@ -34,7 +34,7 @@ Agents accumulate reusable experience (repeated failures, durable facts, reusabl
 2. **Capability-aware auxiliary calls** — the memory loop, review, planner, wrapup, and fate resolve exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts), use the lowest advertised enabled reasoning effort (falling back to a closing effort only when no enabled level exists), and forward the host session id for provider routing; models without reasoning metadata use their provider default.
 3. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
 4. **Approve** — global and project writes require explicit human approval; the dialog shows the bounded structured edit diff and conflict warnings, while malformed/lost responses remain retryable rather than counting as rejection.
-5. **Apply & inject** — memory batches preflight every persistent approval, recheck abort before writes, and compensate earlier scope writes if a later batch fails; every successful scope still passes through snapshot + audit. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memories/skills appear as a relevance-ordered capped directory index (`- [memory:type:id] title` hooks, full text one `evolve_list` away).
+5. **Apply & inject** — memory batches preflight every persistent approval, recheck abort before writes, and compensate earlier scope writes if a later batch fails; every successful scope still passes through snapshot + audit. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memory CONTENT injects at session start under a hard character budget, frozen per session, with the when_to_save guide riding along; skills still appear as a relevance-ordered capped directory index.
 6. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically and are captured as draft regression cases (`auto_regression` benchmark).
 
 ## Install
@@ -79,7 +79,7 @@ For third-party consumers: every applied evolution (gate or manual) appends a st
 
 `/evolve usage` also reads `evolve/token-usage.jsonl`: exact provider-reported input/cache/output/total tokens for the plugin's direct memory-agent, review, planner, manual-wrapup, and automatic-fate calls. The report covers a retained tail rather than lifetime usage, distinguishes missing provider samples, and explicitly excludes host benchmark subagents, their agent-loop calls, and per-entry injection attribution.
 
-Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories and skills appear as a relevance-ordered directory index (`[memory:type:id] title` hooks, capped at 15 lines with a fold counter) — full text via `evolve_recall` (targeted) or `evolve_list`. Every memory apply also refreshes a readable `MEMORY.md` index plus one fact file per entry in the store directory. Empty store = zero injected tokens.
+Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories inject as CONTENT at session start: the `evolve:memory-index` section (order 400) carries the when_to_save guide plus every memory body the budget allows, ranked `project > feedback > user > reference`, with overflow degraded to `[memory:type:id] title` hooks and the remainder counted (hard cap `memoryIndex.maxChars`, default 6000 chars; `evolve_recall` reads anything not shown). The section is computed once per session and reused byte-for-byte, so the system prompt stays stable and prompt-cache reads keep hitting — a memory written mid-session appears in the next session. Skills still appear as a relevance-ordered directory index (capped at 15 lines with a fold counter); memories no longer do. Every memory apply also refreshes a readable `MEMORY.md` index plus one fact file per entry in the store directory. With `memoryIndex.guide` off and an empty store, injection is zero tokens.
 
 ## Configuration
 
@@ -100,7 +100,11 @@ Injection shape: prompt notes and delegation specs inject with content (≤6/kin
 | `promotionBlockPatterns` | POSIX paths, session ids, `~/.dsh` | content matching these is project-scoped and never promoted to global |
 | `promotionMinChars` | `100` | whole promotions below this length stay local |
 | `injectionDirectoryLines` | `15` | entry-directory lines per build before folding into a counter |
-| `sectionOrder` | `118` | system-prompt section order |
+| `sectionOrder` | `118` | system-prompt section order for the guidance + entries sections |
+| `memoryIndex.enabled` | `true` | register the `evolve:memory-index` content section |
+| `memoryIndex.guide` | `true` | include the when_to_save guide (with the store empty and this off, the section renders nothing) |
+| `memoryIndex.order` | `400` | section order (upstream named slots start at `PLAN_POLICY=500`; the plugin's other sections sit at 118/119) |
+| `memoryIndex.maxChars` | `6000` | hard character budget for the injected memories block |
 | `skillsDir` | `<dshHome>/skills` | where skill entries materialize as SKILL.md bundles |
 | `rubricKey` | auto-generated key file | AES-256-GCM passphrase for benchmark rubrics (`DSH_EVOLVE_RUBRIC_KEY` overrides) |
 | `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | plugin-owned JSONL file log with rotation |
@@ -142,7 +146,7 @@ before aborting.
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (1075 tests)
+pnpm test                    # vitest (1108 tests)
 pnpm test:coverage           # v8 coverage, thresholds enforced in CI
 pnpm coverage:gaps           # locate uncovered lines per file (read-only)
 pnpm lint                    # oxlint src test
@@ -152,7 +156,7 @@ Project layout:
 
 ```
 ├── src/                   # engine, tools, commands, memory agent, recall, projection, gate, fate, benchmark, injection + token usage…
-├── test/                  # vitest suites (58 files)
+├── test/                  # vitest suites (59 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
 │   ├── design.md          # full design doc (hardening matrix)

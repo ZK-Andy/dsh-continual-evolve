@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1075%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1108%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-92%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
@@ -34,7 +34,7 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 2. **能力感知的辅助调用**——memory loop、review、planner、wrapup、fate 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
 3. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 4. **审批**——全局与项目写入需明确人工批准；弹窗展示有界结构化编辑 diff 与冲突提示，弹窗丢失/响应畸形会重试，不会被误记为拒绝。
-5. **应用与注入**——memory 批次先完成所有持久化审批，写前重查 abort；后续 scope 失败时补偿回滚先前写入，成功 scope 仍保留快照与审计。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；memory/skill 以按相关性排序的目录索引出现（`[memory:type:id] 标题`钩子）。
+5. **应用与注入**——memory 批次先完成所有持久化审批，写前重查 abort；后续 scope 失败时补偿回滚先前写入，成功 scope 仍保留快照与审计。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；**memory 正文**在会话开场按硬预算注入（会话内冻结，when_to_save 指南随行）；skill 仍以按相关性排序的目录索引出现。
 6. **验证与回滚**——benchmark 用冻结用例为候选打分；被拒候选确定性回滚，并自动沉淀为 draft 回归用例（`auto_regression` 基准）。
 
 ## 安装
@@ -79,7 +79,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 `/evolve usage` 还会读取 `evolve/token-usage.jsonl`：插件直属 memory Agent、review、planner、手动 wrapup 与自动 fate 调用的 provider 精确 input/cache/output/total token。报告只覆盖保留尾部而非终身累计，单独显示 provider 未返回 usage 的调用，并明确排除宿主 benchmark 子代理、其 agent-loop 调用与逐条 memory 注入归因。
 
-注入形态：prompt 补充与委派规格带内容注入（每 kind ≤6 条 × 180 字符，按相关性排序）。memory/skill 以按相关性排序的目录索引出现（`[memory:type:id] 标题`钩子，15 行封顶 + 折叠计数行）——全文经 `evolve_recall`（精确）或 `evolve_list` 获取。每次 memory 落盘同时刷新 store 目录下的可读 `MEMORY.md` 索引 + 单事实文件。空 store = 零注入 token。
+注入形态：prompt 补充与委派规格带内容注入（每 kind ≤6 条 × 180 字符，按相关性排序）。memory 以**正文**在会话开场注入：`evolve:memory-index` section（order 400）承载 when_to_save 指南 + 预算内的全部记忆正文，排序 `project > feedback > user > reference`，放不下的降级为 `[memory:type:id] 标题`钩子、其余折叠计数（硬上限 `memoryIndex.maxChars`，默认 6000 字符；未展示的用 `evolve_recall` 读）。该 section 每会话只算一次并逐字节复用，system prompt 因此稳定、prompt cache 持续命中——会话中途写入的记忆下个会话生效。skill 仍以按相关性排序的目录索引出现（15 行封顶 + 折叠计数行），memory 不再列入。每次 memory 落盘同时刷新 store 目录下的可读 `MEMORY.md` 索引 + 单事实文件。`memoryIndex.guide` 关闭且 store 为空时 = 零注入 token。
 
 ## 配置
 
@@ -100,7 +100,11 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `promotionBlockPatterns` | POSIX 路径、session id、`~/.dsh` | 内容命中即判定项目专属，永不晋升全局 |
 | `promotionMinChars` | `100` | 低于此长度的整体晋升留在本地 |
 | `injectionDirectoryLines` | `15` | 每次构建的目录行数上限，超出折叠为计数行 |
-| `sectionOrder` | `118` | 系统提示词 section 顺序 |
+| `sectionOrder` | `118` | 指南与条目两个 section 的系统提示词顺序 |
+| `memoryIndex.enabled` | `true` | 是否注册 `evolve:memory-index` 内容 section |
+| `memoryIndex.guide` | `true` | 是否注入 when_to_save 指南（关闭且 store 为空时该 section 不渲染） |
+| `memoryIndex.order` | `400` | section 顺序（上游命名槽位自 `PLAN_POLICY=500` 起；本插件另两段在 118/119） |
+| `memoryIndex.maxChars` | `6000` | 注入记忆块的硬字符预算 |
 | `skillsDir` | `<dshHome>/skills` | 技能条目物化为 SKILL.md 的根目录 |
 | `rubricKey` | 自动生成本地密钥文件 | benchmark rubric 的 AES-256-GCM 口令（`DSH_EVOLVE_RUBRIC_KEY` 可覆盖） |
 | `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | 插件自带 JSONL 文件日志带轮转 |
@@ -126,7 +130,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（1075 例）
+pnpm test                    # vitest（1108 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm coverage:gaps           # 定位各文件未覆盖行（只读）
 pnpm lint                    # oxlint src test
@@ -136,7 +140,7 @@ pnpm lint                    # oxlint src test
 
 ```
 ├── src/                   # 引擎、工具、命令、memory Agent、召回、投影、门禁、fate、benchmark、注入 + token 用量…
-├── test/                  # vitest 测试套件（58 个文件）
+├── test/                  # vitest 测试套件（59 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
 │   ├── design.md          # 完整设计文档（硬化矩阵）

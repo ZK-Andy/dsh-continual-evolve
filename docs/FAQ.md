@@ -162,3 +162,16 @@ await ctx.llm.stream({
 **原因**：审批对话框关闭、丢失 `answers`、没有 `selected` 或返回未知选项，都不是用户明确拒绝；若把它们折叠成 `false`，scheduler 会把失败当 no-op 并推进边界。另一方面，local/project/global 是三个独立 store，逐 scope 写入时若后续 `engine.apply()` 抛错或出现 per-edit failure，先前 scope 已落盘，简单重试会造成重复版本或重复询问。
 
 **修复**：`requestScopeApproval()` 只接受唯一明确的 `批准` / `拒绝`，缺失、重复、未知或畸形响应抛错并保留 cursor。memory apply 先完成所有持久化审批，再在每次写前检查 abort；任一 scope 失败、per-edit failure 或 history/post-commit hook 失败时，用带 refinement result 的 `EvolutionApplyPostCommitError` 携带当前批次并调用 `engine.rollback()` 补偿本批次已写 scope。审批文案先列每个 action/scope/id（id 用 JSON 转义）再放有界 title/path/content/memoryType 与冲突提示，不能只展示模型自写 summary。memory agent 另有 phase checkpoint：memory 成功/no-op/显式拒绝后即推进，后续 review/fate 失败不会重放旧 memory 决策；memory 自身失败/abort 不推进。
+
+## 14. 加系统提示词 section 时踩到的上游事实（顺序槽位 / 重名 / 并列）
+
+**症状**：新 section 插错位置（掉到工具指导后面），或启动直接抛 `prompt section "xxx" is already registered`。
+
+**上游事实**（`@deepseek-ai/dsh-system-prompt`，2026-10-01 核对）：
+
+- `SECTION_ORDERS` 的命名槽位只有 `HARNESS_IDENTITY: -1000`、`DEPLOYMENT_PERSONA_PREFIX: 0`，然后直接跳到 `PLAN_POLICY: 500` —— **1–499 是空档**。本插件自用的 118/119（指南 + 条目）与 400（记忆正文索引）都住在里面，不会挤占上游命名槽位。
+- 排序是 `a.order - b.order || compareNames(name)`：**同 order 不报错**，按名字字典序并列。
+- **同名 section 直接 fail-loud 抛错**（`NamedEntries` 的报错信息形如 `prompt section "x" is already registered`），所以加新 section 前先查现有注册名（本插件现有三个：`tool:continual-evolve`、`tool:continual-evolve:entries`、`evolve:memory-index`）。
+- 多个 `complete: true` 的 section 也会抛错（`multiple complete prompt sections are active`）。
+
+**要点**：想让内容排在行为策略之前（身份/记忆类信息宜早），取 0–499 内的值即可；名字带命名空间前缀避免撞车。顺序值进 schemastery 配置（如 `memoryIndex.order`），别硬编码。
