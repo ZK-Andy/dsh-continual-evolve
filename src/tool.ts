@@ -104,13 +104,12 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 	ctx.tools.register(
 		defineTool({
 			name: "evolve_list",
-			description:
-				"List the continual harness state (prompt notes, memories, skills, subagent specs) for the current session (local), the current project (project), or across projects (global).",
+			description: "List the harness state (prompt notes, memories, skills, subagent specs) for one store.",
 			parameters: {
 				scope: {
 					type: "string",
 					enum: SCOPES,
-					description: "Which store to list: 'local' (default), 'project', or 'global'.",
+					description: "'local' (default), 'project', or 'global'.",
 				},
 			},
 			output: {
@@ -144,25 +143,25 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 		defineTool({
 			name: "evolve_recall",
 			description:
-				"Targeted recall over the harness stores: filter memories (or other kinds) by query, kind, scope, and memory type, and read back full content with version, source, and staleness signals. Read-only — it never mutates a store. Prefer this over evolve_list when looking for something specific.",
+				"Read-only targeted recall across the harness stores: filter by query, kind, scope, and memory type; returns full content with version, source, and staleness signals. Prefer this over evolve_list when looking for something specific.",
 			parameters: {
-				query: { type: "string", description: "Free-text relevance query. Empty means most-recently-updated first." },
+				query: { type: "string", description: "Free-text relevance query. Empty → most-recently-updated first." },
 				kinds: {
 					type: "array",
 					items: { type: "string" },
-					description: "Entry kinds to search (default memory only).",
+					description: "Entry kinds (default memory only).",
 				},
 				scopes: {
 					type: "array",
 					items: { type: "string" },
-					description: "Stores to search (default local, project, and global).",
+					description: "Stores to search (default all three).",
 				},
 				memoryTypes: {
 					type: "array",
 					items: { type: "string" },
-					description: "Memory-type filter: user, feedback, project, reference (memory entries only).",
+					description: "Memory types: user, feedback, project, reference.",
 				},
-				limit: { type: "number", description: "Maximum hits (default 10, at most 50)." },
+				limit: { type: "number", description: "Max hits (default 10, max 50)." },
 				includeArchived: { type: "boolean", description: "Include archived entries (default false)." },
 			},
 			output: {
@@ -191,18 +190,18 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 		defineTool({
 			name: "evolve_add",
 			description:
-				"Create one harness entry (prompt/memory/skill/subagent). Executable skills require reference {type:python, import, callable} and an arguments contract; guidance skills (skill_kind=guidance) are SKILL.md documents — recurring multi-step workflows — and must NOT carry a reference. Snapshot, version, and history are handled automatically.",
+				"Create one harness entry (prompt/memory/skill/subagent). Snapshots, versioning, and audit are automatic.",
 			parameters: {
 				kind: { type: "string", enum: ["prompt", "memory", "skill", "subagent"], required: true, description: "Entry kind." },
 				title: { type: "string", required: true, description: "Stable title." },
 				content: { type: "string", required: true, description: "Entry body." },
 				path: { type: "string", description: "Optional grouping path." },
-				skill_kind: { type: "string", enum: ["executable", "guidance"], description: "For skills: executable (python reference, default) or guidance (SKILL.md document, no reference)." },
-				reference: { type: "object", additionalProperties: true, description: "For executable skills: {type:'python', import, callable}." },
-				arguments: { type: "object", additionalProperties: true, description: "For executable skills: accepted input contract." },
-				memoryType: { type: "string", enum: ["user", "feedback", "project", "reference"], description: "Required for memory: one fact per entry (feedback/project must carry Why + How to apply)." },
-				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
-				global: { type: "boolean", description: "Set true to write the cross-session store (requires human approval; only for durable, reusable lessons)." },
+				skill_kind: { type: "string", enum: ["executable", "guidance"], description: "Skills: executable (default, needs reference) or guidance (SKILL.md, no reference)." },
+				reference: { type: "object", additionalProperties: true, description: "Executable skills: {type:'python', import, callable}." },
+				arguments: { type: "object", additionalProperties: true, description: "Executable skills: accepted input contract." },
+				memoryType: { type: "string", enum: ["user", "feedback", "project", "reference"], description: "Required for memory (feedback/project need Why + How to apply)." },
+				scope: { type: "string", enum: SCOPES, description: "'local' (default), 'project', or 'global'." },
+				global: { type: "boolean", description: "Shorthand for scope='global' (requires human approval)." },
 			},
 			output: {
 				schema: { type: "object", additionalProperties: false, properties: { text: { type: "string", required: true } } },
@@ -249,9 +248,9 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 				id: { type: "string", required: true, description: "Existing entry id." },
 				title: { type: "string" },
 				content: { type: "string" },
-				memoryType: { type: "string", enum: ["user", "feedback", "project", "reference"], description: "For memory: (re)classify the entry's recall type." },
-				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
-				global: { type: "boolean", description: "Set true to edit the cross-session store (requires human approval)." },
+				memoryType: { type: "string", enum: ["user", "feedback", "project", "reference"], description: "Memory: (re)classify the recall type." },
+				scope: { type: "string", enum: SCOPES, description: "'local' (default), 'project', or 'global'." },
+				global: { type: "boolean", description: "Shorthand for scope='global' (requires human approval)." },
 			},
 			output: {
 				schema: { type: "object", additionalProperties: false, properties: { text: { type: "string", required: true } } },
@@ -276,17 +275,17 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 		defineTool({
 			name: "evolve_delete",
 			description:
-				"Delete harness entries by id. Pass `id` for one entry or `ids` for several — a batch lands as one refinement behind one approval. Literal ids win: entries whose stored id itself carries a scope-like prefix (e.g. a legacy `local:…` id) are addressed verbatim.",
+				"Delete harness entries: `id` for one, `ids` for a batch (one refinement, one approval). Ids are addressed verbatim, scope-prefixed or not.",
 			parameters: {
 				kind: { type: "string", enum: ["prompt", "memory", "skill", "subagent"], required: true },
-				id: { type: "string", description: "Existing entry id (single delete; combine with ids or use ids for a batch)." },
+				id: { type: "string", description: "One entry id (or use ids for a batch)." },
 				ids: {
 					type: "array",
 					items: { type: "string" },
-					description: "Existing entry ids for one batch delete (one refinement, one approval).",
+					description: "Entry ids for one batch delete.",
 				},
-				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
-				global: { type: "boolean", description: "Set true to edit the cross-session store (requires human approval)." },
+				scope: { type: "string", enum: SCOPES, description: "'local' (default), 'project', or 'global'." },
+				global: { type: "boolean", description: "Shorthand for scope='global' (requires human approval)." },
 			},
 			output: {
 				schema: { type: "object", additionalProperties: false, properties: { text: { type: "string", required: true } } },
@@ -313,11 +312,11 @@ export function registerEvolveTools(ctx: Context, engine: EvolutionEngine, opts:
 	ctx.tools.register(
 		defineTool({
 			name: "evolve_rollback",
-			description: "Deterministically revert a previous refinement by its id (from evolve_list history or the /evolve command).",
+			description: "Deterministically revert a previous refinement by its id (from evolve_list history or /evolve).",
 			parameters: {
-				refinementId: { type: "string", required: true, description: "The refinement id to roll back." },
-				scope: { type: "string", enum: SCOPES, description: "Target store: 'local' (default), 'project', or 'global'. Wins over the legacy global flag." },
-				global: { type: "boolean", description: "Set true to roll back a cross-session refinement." },
+				refinementId: { type: "string", required: true, description: "Refinement id to roll back." },
+				scope: { type: "string", enum: SCOPES, description: "'local' (default), 'project', or 'global'." },
+				global: { type: "boolean", description: "Shorthand for scope='global'." },
 			},
 			output: {
 				schema: { type: "object", additionalProperties: false, properties: { text: { type: "string", required: true } } },
