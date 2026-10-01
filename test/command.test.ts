@@ -200,6 +200,28 @@ describe("executeEvolveCommand — help / dispatch", () => {
 		expect(global.kind).toBe("success");
 		expect(global.text).toContain("# Continual Harness State");
 	}));
+
+	it("shows the short listing by default and the advanced half with `help all`", withDir(async (h) => {
+		const short = await h.run("help");
+		expect(short.kind).toBe("success");
+		expect(short.text).toContain("/evolve help all");
+		expect(short.text).not.toContain("/evolve benchmark");
+		const all = await h.run("help all");
+		expect(all.kind).toBe("success");
+		expect(all.text).toContain("Advanced:");
+		expect(all.text).toContain("/evolve benchmark");
+		expect(all.text).toContain("/evolve consolidate");
+	}));
+
+	// 2026-10-01 pruning: these four moved into the conversation — the model's
+	// evolve_* tools and the injected when_to_save guide own them now.
+	it("no longer offers the four pruned subcommands", withDir(async (h) => {
+		for (const input of ["remember user x", "forget x", "recall x", "demote seed"]) {
+			const result = await h.run(input);
+			expect(result.kind).toBe("error");
+			expect(result.text).toContain("unknown subcommand");
+		}
+	}));
 });
 
 describe("executeEvolveCommand — history / rollback", () => {
@@ -379,30 +401,6 @@ describe("executeEvolveCommand — plan", () => {
 	}));
 });
 
-describe("executeEvolveCommand — demote (2026-08-22)", () => {
-	it("archives a global entry in place and reports the restore path", withDir(async (h) => {
-		const id = seedGlobal(h);
-		const demoted = await h.run(`demote ${id}`);
-		expect(demoted.kind).toBe("success");
-		expect(demoted.text).toContain(`demoted memory:${id} from the global store`);
-		const entry = h.engine.load("global").entries.memory[id];
-		expect(entry?.metadata[ARCHIVED_AT_KEY]).toBeTruthy(); // data kept
-	}));
-
-	it("falls back to the local store when global lacks the id", withDir(async (h) => {
-		await seedMemory(h);
-		const demoted = await h.run("demote seed_entry");
-		expect(demoted.kind).toBe("success");
-		expect(demoted.text).toContain("from the local store");
-	}));
-
-	it("errors when the id exists nowhere", withDir(async (h) => {
-		const missing = await h.run("demote nope");
-		expect(missing.kind).toBe("error");
-		expect(missing.text).toContain("not found in the global, project, or local store");
-	}));
-});
-
 describe("executeEvolveCommand — pause / resume / status (#21 P2)", () => {
 	it("pauses and resumes the gate, idempotently", withDir(async (h) => {
 		const paused = await h.run("pause");
@@ -504,76 +502,6 @@ describe("executeEvolveCommand — usage (#21 P0)", () => {
 	}));
 });
 
-describe("executeEvolveCommand — recall / remember / forget", () => {
-	it("recalls a memory by query with full content", withDir(async (h) => {
-		await seedMemory(h);
-		const result = await h.run("recall seed entry");
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("1 hit(s)");
-		expect(result.text).toContain("seed entry");
-	}));
-
-	it("remember persists one typed memory immediately", withDir(async (h) => {
-		const result = await h.run("remember user 偏好深色主题");
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("1 applied");
-		const recalled = await h.run("recall 深色");
-		expect(recalled.text).toContain("偏好深色主题");
-	}));
-
-	it("remember rejects a missing type and empty text", withDir(async (h) => {
-		const noType = await h.run("remember 偏好深色主题");
-		expect(noType.kind).toBe("error");
-		expect(noType.text).toContain("requires a memory type");
-		const noText = await h.run("remember user");
-		expect(noText.kind).toBe("error");
-		expect(noText.text).toContain("requires the memory text");
-	}));
-
-	it("remember surfaces engine validation for feedback without Why/How", withDir(async (h) => {
-		// Engine validation failures land per-edit (0 applied), not as a
-		// command error — same contract as /evolve plan.
-		const result = await h.run("remember feedback 纯事实无依据");
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("0 applied, 1 failed");
-		expect(result.text).toContain("Why and a How");
-	}));
-
-	it("forget archives the single match and stays restorable", withDir(async (h) => {
-		const { entryId } = await seedMemory(h);
-		const result = await h.run("forget seed entry");
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("forgot");
-		const unarchive = await h.run(`unarchive ${entryId}`);
-		expect(unarchive.kind).toBe("success");
-	}));
-
-	it("forget lists candidates instead of archiving an ambiguous query", withDir(async (h) => {
-		// Pure-Chinese titles take hashed ids since the 2026-09-25 slug
-		// fix, so both memories land instead of colliding on "memory".
-		await h.run("remember user 深色主题偏好一");
-		await h.run("remember user 深色主题偏好二");
-		const result = await h.run("forget 深色");
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("matches 2 memories");
-		// Nothing was archived: both are still recallable.
-		const recalled = await h.run("recall 深色");
-		expect(recalled.text).toContain("2 hit(s)");
-	}));
-
-	it("forget reports no match instead of failing silently", withDir(async (h) => {
-		const result = await h.run("forget 不存在的记忆主题xyz");
-		expect(result.kind).toBe("error");
-		expect(result.text).toContain("no memory matches");
-	}));
-
-	it("forget requires a query", withDir(async (h) => {
-		const result = await h.run("forget");
-		expect(result.kind).toBe("error");
-		expect(result.text).toContain("forget requires a query");
-	}));
-});
-
 describe("executeEvolveCommand — project scope", () => {
 	const cwdAgent = { id: "session-cmd", session: { header: { cwd: "/mnt/work/app" } } } as never;
 
@@ -588,19 +516,6 @@ describe("executeEvolveCommand — project scope", () => {
 		expect(result.text).toContain("project scope needs the session cwd");
 	}));
 
-	it("remembers directly into the project store", withDir(async (h) => {
-		const result = await h.run("remember user project 偏好深色主题项目级", "session-cmd", cwdAgent);
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("1 applied");
-	}));
-
-	it("asks approval before remembering into the global store", withDir(async (h) => {
-		const result = await h.run("remember user global 偏好深色主题跨会话");
-		expect(result.kind).toBe("success");
-		expect(result.text).toContain("1 applied");
-		const recalled = await h.run("recall 深色", "session-cmd", { id: "other-session" } as never);
-		expect(recalled.text).toContain("偏好深色主题跨会话");
-	}, {}, { requireGlobalApproval: true, userQuestions: { ask: async () => ({ answers: [{ id: "approve-global-evolve", selected: ["批准"] }] }) } }));
 });
 
 describe("executeEvolveCommand — consolidate", () => {

@@ -5,10 +5,9 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementResult } from "./types.js";
-import { ARCHIVED_AT_KEY, MEMORY_TYPE_KEY } from "./types.js";
+import { ARCHIVED_AT_KEY } from "./types.js";
 import type { EvolutionEngine } from "./service.js";
 import { formatHarnessStateForPrompt, historyForPrompt } from "./render.js";
-import { compactText } from "./render.js";
 import { planWithLlm } from "./planner.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,10 +27,9 @@ import { projectKeyOf } from "./project.js";
 import { loadUsage, getUsageCount } from "./usage.js";
 import { loadGateRuntime, saveGateRuntime } from "./runtime.js";
 import { planConsolidation } from "./consolidate.js";
-import { formatRecallResult, recallMemories, RECALL_MEMORY_TYPES } from "./recall.js";
 import { loadTokenUsage, renderTokenUsageReport } from "./token-usage.js";
 
-const USAGE = `Usage:
+const USAGE_COMMON = `Usage:
   /evolve                  show this help and the current local store
   /evolve list [project|global]    list entries (default local staging; "project" = this project's cross-session store, "global" = cross-project store)
   /evolve history [global] show applied refinements (rollback ids)
@@ -41,19 +39,17 @@ const USAGE = `Usage:
                            to the global store (approval required), archive one-offs
   /evolve archive <id> [global]   hide an entry from injection (data kept, restorable)
   /evolve unarchive <id> [global] restore an archived entry
-  /evolve demote <id>             hide a (global) entry from injection, keep data
-  /evolve recall <query...> [scope] targeted memory recall: full content with version,
-                                   source, and staleness (same engine as the evolve_recall tool)
-  /evolve remember <type> [scope] <text...>
-                                   immediately persist one memory (type = user|feedback|project|reference;
-                                   feedback/project text must carry Why + How; default scope local)
-  /evolve forget [scope] <query...> locate one memory by query and archive it (restorable via /evolve unarchive)
+  /evolve pause | resume   pause/resume the automatic Memory Agent (manual tools and commands keep working)
+  /evolve status           automatic Memory Agent state plus store entry counts
+  /evolve help all         every subcommand, including the advanced ones below`;
+
+const USAGE_ADVANCED = `Advanced:
   /evolve consolidate [apply] [merge]
-                                  report (or apply) a batch archive of conflict-hinted
-                                  and stale zero-use global entries; "merge" folds
-                                  near-duplicate content into the surviving original
-  /evolve log [tail N]            show the recent plugin log (default 50 lines)
+                                   report (or apply) a batch archive of conflict-hinted
+                                   and stale zero-use global entries; "merge" folds
+                                   near-duplicate content into the surviving original
   /evolve failures               aggregated failure counts (gate + benchmark, by class)
+  /evolve log [tail N]            show the recent plugin log (default 50 lines)
   /evolve export [global] <path>  backup a store to a JSON file
   /evolve import [global] <path>  restore a store from an export file
   /evolve mount <skillId>    hot-mount a skill entry as a live cordis plugin
@@ -62,9 +58,11 @@ const USAGE = `Usage:
   /evolve goal               show the evolution goal (round-driven auto-review)
   /evolve goal <objective>   create/update the evolution goal
   /evolve goal done          complete the evolution goal
-  /evolve pause | resume     pause/resume the automatic Memory Agent (manual tools and commands keep working)
-  /evolve status             automatic Memory Agent state plus store entry counts
+  /evolve benchmark ...      case lifecycle, runs, acceptance
   /evolve usage              injection counts + exact direct-call token usage (benchmark subagents excluded)`;
+
+/** Default help (`/evolve`, `/evolve help`): the commands worth knowing. */
+const USAGE = USAGE_COMMON;
 
 export interface CommandGateOptions {
 	requireGlobalApproval: boolean;
@@ -89,7 +87,7 @@ export function registerEvolveCommand(ctx: Context, engine: EvolutionEngine, opt
 	ctx.commands.register({
 		name: "evolve",
 		description: "自进化：检查并演进 harness 状态（记忆/技能/提示词/子代理） | Inspect and evolve the continual harness state (memories, skills, prompt notes, subagent specs)",
-		input: { hint: "[list [global] | history [global] | rollback <id> [global] | plan [msg]]" },
+		input: { hint: "[list [global] | history [global] | rollback <id> [global] | plan [msg] | help all]" },
 		handler: (invocation) => executeEvolveCommand(ctx, engine, invocation, opts, runtime),
 	});
 }
@@ -204,7 +202,11 @@ async function executeEvolveCommand(
 		switch (sub) {
 			case "":
 			case "help":
-				return success(`${USAGE}\n\n${formatHarnessStateForPrompt(engine.load("local", sessionId))}`);
+				// Layered help (2026-10-01): the default listing stays short;
+				// `help all` expands the advanced half.
+				return success(
+					`${rest[0] === "all" ? `${USAGE_COMMON}\n\n${USAGE_ADVANCED}` : USAGE_COMMON}\n\n${formatHarnessStateForPrompt(engine.load("local", sessionId))}`,
+				);
 			case "list": {
 				const { scope } = scopeArg(rest);
 				return success(formatHarnessStateForPrompt(engine.load(scope, storeIdForCommand(scope, invocation))));
@@ -224,15 +226,11 @@ async function executeEvolveCommand(
 				return success(renderResult(result));
 			}
 			case "archive":
-			case "unarchive":
-			case "demote": {
+			case "unarchive": {
 				const { scope, rest: after } = scopeArg(rest);
 				const id = stripAngleBrackets(after[0] ?? "");
 				if (!id) {
 					return error(`${sub} requires an entry id.\n${USAGE}`);
-				}
-				if (sub === "demote") {
-					return demoteEntry(engine, id, sessionId, projectKeyOf(invocation.agent));
 				}
 				const state = engine.load(scope, storeIdForCommand(scope, invocation));
 				const found = findEntryById(state, id);
@@ -259,108 +257,6 @@ async function executeEvolveCommand(
 					{ scope },
 				);
 				return success(renderResult(result));
-			}
-			case "recall": {
-				// Human counterpart of the evolve_recall tool: same engine,
-				// same filters (memory kind, one scope or all three).
-				const { scope, rest: after } = scopeArg(rest);
-				const explicitScope = rest.length > 0 && (rest[0] === "global" || rest[0] === "project" || rest[0] === "local");
-				const query = after.join(" ");
-				const result = recallMemories(
-					engine,
-					{ sessionId, projectKey: projectKeyOf(invocation.agent) ?? undefined },
-					{ kinds: ["memory"], ...(explicitScope ? { scopes: [scope] } : {}), ...(query ? { query } : {}), limit: 10 },
-				);
-				return success(formatRecallResult(result, query || undefined));
-			}
-			case "remember": {
-				// Immediate manual memory path (P1 §6.6): one fact, explicit
-				// type, straight into the engine — validation, snapshot,
-				// versioning, and approval behave exactly like any other
-				// write. feedback/project text must already carry Why + How;
-				// the engine rejects it loudly otherwise.
-				const type = rest[0] ?? "";
-				if (!(RECALL_MEMORY_TYPES as readonly string[]).includes(type)) {
-					return error(`remember requires a memory type: user|feedback|project|reference.\nExample: /evolve remember feedback local 对方偏好深色主题。Why：…… How to apply：……\n${USAGE}`);
-				}
-				const maybeScope = rest[1] ?? "";
-				const scoped = maybeScope === "global" || maybeScope === "project" || maybeScope === "local";
-				const scope: HarnessScope = scoped ? (maybeScope as HarnessScope) : "local";
-				const text = (scoped ? rest.slice(2) : rest.slice(1)).join(" ").trim();
-				if (!text) {
-					return error(`remember requires the memory text after the type.\n${USAGE}`);
-				}
-				const storeId = storeIdForCommand(scope, invocation);
-				if ((scope === "global" || scope === "project") && opts.requireGlobalApproval) {
-					await requireGlobalApproval(ctx, invocation.agent, invocation.signal, `/evolve remember ${type} → ${scope} store: ${compactText(text, 120)}`);
-				}
-				const result = engine.apply(
-					scope,
-					storeId,
-					{
-						summary: `remember: ${compactText(text, 80)}`,
-						rationale: "Human-invoked immediate memory via /evolve remember.",
-						expectedOutcome: "The fact is persisted as a typed memory entry.",
-						edits: [{
-							action: "create",
-							kind: "memory",
-							title: compactText(text, 80),
-							content: text,
-							metadata: { [MEMORY_TYPE_KEY]: type },
-						}],
-					},
-					{ scope },
-				);
-				return success(renderResult(result));
-			}
-			case "forget": {
-				// Manual forget path (P1 §6.6): locate by query, archive the
-				// single match (restorable via unarchive). An ambiguous query
-				// lists candidates instead of archiving — a silent multi-
-				// archive would look like success while hiding too much.
-				const { scope, rest: after } = scopeArg(rest);
-				const explicitScope = rest.length > 0 && (rest[0] === "global" || rest[0] === "project" || rest[0] === "local");
-				const query = after.join(" ").trim();
-				if (!query) {
-					return error(`forget requires a query to locate the memory.\n${USAGE}`);
-				}
-				const recalled = recallMemories(
-					engine,
-					{ sessionId, projectKey: projectKeyOf(invocation.agent) ?? undefined },
-					{ query, kinds: ["memory"], ...(explicitScope ? { scopes: [scope] } : {}), limit: 6, includeArchived: false },
-				);
-				if (recalled.hits.length === 0) {
-					return error(`no memory matches "${query}"${recalled.notes.length > 0 ? ` (${recalled.notes.join("; ")})` : ""} — try fewer words, or /evolve list to browse.`);
-				}
-				if (recalled.hits.length > 1) {
-					const list = recalled.hits.map((hit) => `- [${hit.scope}:${hit.id}] ${hit.title}`).join("\n");
-					return success(`"${query}" matches ${recalled.hits.length} memories — refine the query so exactly one matches, then forget archives it:\n${list}`);
-				}
-				const hit = recalled.hits[0]!;
-				const state = engine.load(hit.scope, hit.scope === "local" ? sessionId : hit.scope === "project" ? (projectKeyOf(invocation.agent) ?? undefined) : undefined);
-				const entry = state.entries.memory[hit.id];
-				if (!entry) {
-					return error(`memory ${hit.scope}:${hit.id} vanished since recall — run /evolve forget again.`);
-				}
-				const result = engine.apply(
-					hit.scope,
-					hit.scope === "local" ? sessionId : hit.scope === "project" ? (projectKeyOf(invocation.agent) ?? undefined) : undefined,
-					{
-						summary: `forget: archive memory ${hit.scope}:${hit.id}`,
-						rationale: `Human-invoked forget via /evolve forget "${query}".`,
-						expectedOutcome: "The entry is hidden from injection (data kept; restorable via /evolve unarchive).",
-						edits: [{
-							action: "update",
-							kind: "memory",
-							id: hit.id,
-							title: entry.title,
-							content: entry.content,
-							metadata: { ...entry.metadata, [ARCHIVED_AT_KEY]: new Date().toISOString() },
-						}],
-					},
-					{ scope: hit.scope },
-				);
-				return success(`forgot [${hit.scope}:${hit.id}] ${hit.title} (archived — restore with /evolve unarchive ${hit.id}${hit.scope === "local" ? "" : ` ${hit.scope}`})\n${renderResult(result)}`);
 			}
 			case "consolidate": {
 				// R3: deterministic global-store hygiene. Report by default;
@@ -586,49 +482,6 @@ async function executeEvolveCommand(
 	} catch (cause) {
 		return error(cause instanceof Error ? cause.message : String(cause));
 	}
-}
-
-/**
- * Demote (2026-08-22): hide an entry from injection WITHOUT deleting it —
- * the one-command remedy for store pollution. Searches the global store
- * first (the primary target: cross-project noise), then the project store,
- * then the session's local store. The data stays; `/evolve unarchive` restores it.
- */
-function demoteEntry(engine: EvolutionEngine, id: string, sessionId: string, projectKey?: string): CommandResult {
-	const targets: { scope: HarnessScope; storeId: string | undefined }[] = [
-		{ scope: "global", storeId: undefined },
-		...(projectKey ? [{ scope: "project" as const, storeId: projectKey }] : []),
-		{ scope: "local", storeId: sessionId },
-	];
-	for (const { scope, storeId } of targets) {
-		const state = engine.load(scope, storeId);
-		const found = findEntryById(state, id);
-		if (!found) continue;
-		const [kind, entry] = found;
-		const result = engine.apply(
-			scope,
-			storeId,
-			{
-				summary: `demote: archive ${kind}:${id} from the ${scope} store`,
-				rationale: "Human-invoked demote via the /evolve command.",
-				expectedOutcome: "The entry is hidden from injection in every scope it touched; data is kept and restorable.",
-				edits: [
-					{
-						action: "update",
-						kind,
-						id,
-						title: entry.title,
-						content: entry.content,
-						metadata: { ...entry.metadata, [ARCHIVED_AT_KEY]: new Date().toISOString() },
-					},
-				],
-			},
-			{ scope },
-		);
-		const restoreScope = scope === "global" ? " global" : scope === "project" ? " project" : "";
-		return success(`demoted ${kind}:${id} from the ${scope} store (archived — restore with /evolve unarchive ${id}${restoreScope})\n${renderResult(result)}`);
-	}
-	return error(`entry ${id} not found in the global, project, or local store`);
 }
 
 /**

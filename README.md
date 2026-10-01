@@ -55,14 +55,11 @@ Commands (in-session):
 
 | Command | Effect |
 |---|---|
-| `/evolve` | help + current local store |
+| `/evolve` | short help + current local store (`/evolve help all` lists every subcommand) |
 | `/evolve list · history · rollback <id>` | inspect and revert (add `project` for this project's store, `global` for the cross-project store) |
 | `/evolve plan [msg]` | run the LLM planner against the store |
 | `/evolve wrapup` | assess this session's local entries: promote / archive / keep |
-| `/evolve archive · unarchive · demote <id>` | hide from injection (data kept, restorable) — `demote` targets global noise |
-| `/evolve recall [scope] <query…>` | targeted memory recall: full content with version, source, and staleness |
-| `/evolve remember <type> [scope] <text…>` | immediately persist one typed memory (`user|feedback|project|reference`) |
-| `/evolve forget [scope] <query…>` | locate one memory and archive it (restorable); ambiguous queries only list |
+| `/evolve archive · unarchive <id>` | hide from injection (data kept, restorable) |
 | `/evolve consolidate [apply] [merge]` | report (or apply) one batch archive of conflict-hinted + stale zero-use global entries; `merge` folds near-duplicate content into the survivors |
 | `/evolve failures` | aggregated failure classes (gate + benchmark) |
 | `/evolve log [tail N] [session <id>]` | plugin log |
@@ -73,7 +70,7 @@ Commands (in-session):
 | `/evolve pause · resume · status` | pause/resume the auto-review gate (manual tools keep working), gate state |
 | `/evolve usage` | per-entry injection counts + exact provider-reported tokens for direct memory/review/planner/wrapup/fate calls (benchmark host subagents excluded) |
 
-Model tools: `evolve_list / add / update / delete / rollback / recall` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval; `evolve_recall` filters by query, kinds, scopes, memory types, and limit, and returns full content with version, source, and staleness).
+Model tools: `evolve_list / add / update / delete / rollback / recall` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval; `evolve_recall` filters by query, kinds, scopes, memory types, and limit, and returns full content with version, source, and staleness). Memory reads and writes live in the conversation — the model carries the injected memory index plus `evolve_recall`/`evolve_add` — so there are no `/evolve remember · forget · recall` counterparts: ask in chat.
 
 For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
 

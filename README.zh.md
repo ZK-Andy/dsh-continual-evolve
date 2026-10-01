@@ -55,14 +55,11 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 | 命令 | 效果 |
 |---|---|
-| `/evolve` | 帮助 + 当前 local store |
+| `/evolve` | 简短帮助 + 当前 local store（`/evolve help all` 列全部子命令） |
 | `/evolve list · history · rollback <id>` | 查看与回滚（加 `project` 操作本项目库，`global` 操作跨项目库） |
 | `/evolve plan [msg]` | 对 store 运行 LLM 规划器 |
 | `/evolve wrapup` | 收尾本会话 local 条目：晋升 / 归档 / 保留 |
-| `/evolve archive · unarchive · demote <id>` | 从注入中隐藏（数据保留可恢复）——`demote` 针对全局噪声 |
-| `/evolve recall [scope] <query…>` | 定向记忆召回：全文 + 版本 + 来源 + 过时信号 |
-| `/evolve remember <type> [scope] <text…>` | 立即持久化一条类型化记忆（`user|feedback|project|reference`） |
-| `/evolve forget [scope] <query…>` | 按 query 定位一条记忆并归档（可恢复）；多义只列候选不写 |
+| `/evolve archive · unarchive <id>` | 从注入中隐藏（数据保留可恢复） |
 | `/evolve consolidate [apply] [merge]` | 报告（或应用）冲突提示 + 零使用陈旧全局条目的批量归档；`merge` 将近重复内容并入幸存原条目 |
 | `/evolve failures` | 失败类聚合（门禁 + benchmark） |
 | `/evolve log [tail N] [session <id>]` | 插件日志 |
@@ -73,7 +70,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve pause · resume · status` | 暂停/恢复自动门禁（手动工具不受影响）、门禁状态 |
 | `/evolve usage` | 每条目注入次数 + memory/review/planner/wrapup/fate 直属调用的 provider 精确 token（不含 benchmark 宿主子代理） |
 
-模型工具：`evolve_list / add / update / delete / rollback / recall`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批；`evolve_recall` 按 query/kind/scope/memoryType/limit 过滤，返回全文 + 版本 + 来源 + 过时信号）。
+模型工具：`evolve_list / add / update / delete / rollback / recall`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批；`evolve_recall` 按 query/kind/scope/memoryType/limit 过滤，返回全文 + 版本 + 来源 + 过时信号）。记忆的读写都在对话里完成——模型手里有注入的记忆索引 + `evolve_recall`/`evolve_add`——因此不再有 `/evolve remember · forget · recall` 对应命令：直接在对话里说。
 
 第三方消费：每次进化落地（门禁或手动）都会向 `reviews.jsonl` 追加结构化 `evolve_complete` 事件（shape 见 `src/evolve-event.ts`），与人类可读的审计记录并存。
 
