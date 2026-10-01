@@ -25,6 +25,7 @@
 6. **核验**：`npm view dsh-continual-evolve version` 与 `dist-tags.latest` 命中新版本；GitHub tag 已在远端；GitHub Release 已发布（notes 双语、作者、compare 链接齐全）；README 徽章数据与本版一致。
    - **`npm view` 同样要带 `--cache=/mnt/work/work/.npm-cache`**（读也会写 `~/.npm/_cacache`，裸跑报 EROFS）；核验命令因此为
      `npm view dsh-continual-evolve dist-tags --json --cache=/mnt/work/work/.npm-cache --userconfig=/mnt/work/work/.npmrc`。
+   - **该缓存会返回过期 packument**（2026-10-01 v0.10.5 实证）：publish 成功后 `npm view` 连续 3 分钟仍报旧版本，误判为"没发上去"。核验要加 `--prefer-online`，或直接 `curl -s https://registry.npmjs.org/<pkg> | python3 -m json.tool` 看 `dist-tags`/`time`——**别以带缓存的 `npm view` 结果判定发布失败**。
    - npm 会先回 `+ <pkg>@X.Y.Z` 再提示"being processed"，**dist-tags 传播有延迟**：`version` 与 `latest` 要轮询到命中为止（实测约 1 分钟），不要以 publish 退出码或首次 `npm view` 为准。
 7. **收尾**：HANDOFF 记录版本号、提交哈希与发布日期；遗留项进待办。
 
