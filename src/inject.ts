@@ -420,6 +420,25 @@ export function nearestLocalStateWithEntries(engine: EvolutionEngine, agent: Age
 }
 
 /**
+ * The single three-store merge every injection path reads from: the global
+ * store merged with this project's store (when the session cwd resolves one)
+ * and the nearest carrying local store (precedence global < project < local —
+ * see {@link mergeHarnessStates}). One home, so the memory section and the
+ * entry directory can never disagree about what the model can see.
+ */
+export function mergedInjectionState(
+	engine: EvolutionEngine,
+	agent: AgentLike,
+	opts?: { projectKey?: string },
+): HarnessState {
+	const globalState = engine.load("global", undefined);
+	const projectKey = opts?.projectKey ?? projectKeyOf(agent);
+	const projectState = projectKey ? engine.load("project", projectKey) : undefined;
+	const localState = nearestLocalStateWithEntries(engine, agent);
+	return mergeHarnessStates(globalState, localState, projectState ? { projectState } : undefined);
+}
+
+/**
  * Compose the full injected block for one assembling agent: global entries
  * merged with this project's store (when the session cwd resolves one) and
  * the nearest carrying local store (precedence global < project < local).
@@ -432,6 +451,9 @@ export function nearestLocalStateWithEntries(engine: EvolutionEngine, agent: Age
  * `opts.directoryLines` caps the entry-directory index (2026-08-22 throttle);
  * `opts.projectKey` pins the project layer explicitly (tests, tools) —
  * otherwise it is derived from the agent's session cwd, best-effort.
+ * `opts.includeMemoryDirectory` (default true) drops memory lines from the
+ * directory when the memory section already carries them (evolve v2) — one
+ * fact, one home, so the same memories are never paid for twice.
  * Usage recording covers ALL kinds — memories and skills appear as directory
  * lines, prompts/subagents as content — and is deduped per session so the
  * counts read "how many sessions saw this", not "how many prompt builds".
@@ -440,16 +462,12 @@ export function entriesSectionText(
 	engine: EvolutionEngine,
 	agent: AgentLike | undefined,
 	query?: string,
-	opts?: { directoryLines?: number; projectKey?: string },
+	opts?: { directoryLines?: number; projectKey?: string; includeMemoryDirectory?: boolean },
 ): string {
 	if (!agent) {
 		return "";
 	}
-	const globalState = engine.load("global", undefined);
-	const projectKey = opts?.projectKey ?? projectKeyOf(agent);
-	const projectState = projectKey ? engine.load("project", projectKey) : undefined;
-	const localState = nearestLocalStateWithEntries(engine, agent);
-	const merged = mergeHarnessStates(globalState, localState, projectState ? { projectState } : undefined);
+	const merged = mergedInjectionState(engine, agent, opts);
 	const promptEntries = Object.values(merged.entries.prompt);
 	const subagentEntries = Object.values(merged.entries.subagent);
 	const relevanceQuery = (query ?? recentUserText(agent)).trim();
@@ -474,7 +492,9 @@ export function entriesSectionText(
 	const directoryLines = opts?.directoryLines ?? DEFAULT_DIRECTORY_LINES;
 	const promptKind = Object.values(merged.entries.prompt);
 	const subagentKind = Object.values(merged.entries.subagent);
-	const memoryKind = Object.values(merged.entries.memory);
+	// v2: memories live in their own content-carrying section, so the directory
+	// stops listing them (passing [] keeps the positional contract intact).
+	const memoryKind = (opts?.includeMemoryDirectory ?? true) ? Object.values(merged.entries.memory) : [];
 	const skillKind = Object.values(merged.entries.skill);
 	const directoryText = formatEntriesDirectoryRanked(directoryLines, relevanceQuery, promptKind, subagentKind, memoryKind, skillKind);
 

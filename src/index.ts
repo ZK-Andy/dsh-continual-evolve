@@ -8,6 +8,10 @@
  * initial default when `evolve/runtime.json` does not exist yet, and
  * `/evolve pause|resume` own it afterwards. Generic review/planner/fate are
  * not reachable from this listener.
+ *
+ * evolve v2 registers a third section (`evolve:memory-index`) that injects
+ * memory content plus the when_to_save guide, frozen per session — see
+ * memory-index.ts.
  */
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
@@ -19,6 +23,13 @@ import { registerEvolveCommand } from "./command.js";
 import { registerAutoReview } from "./auto.js";
 import { syncSkillsFromResult } from "./skill.js";
 import { entriesSectionText } from "./inject.js";
+import {
+	createFrozenMemorySection,
+	DEFAULT_MEMORY_INDEX_MAX_CHARS,
+	DEFAULT_MEMORY_SECTION_ORDER,
+	MEMORY_SECTION_NAME,
+	memoryIndexSectionText,
+} from "./memory-index.js";
 import { resolveRubricKey } from "./rubric.js";
 import { restoreMounted } from "./mount.js";
 import { registerFileLogger } from "./logfile.js";
@@ -125,6 +136,19 @@ export const Config = z.object({
 	/** Entry-directory lines injected per build before folding into a counter. */
 	injectionDirectoryLines: z.natural().default(15),
 	/**
+	 * evolve v2 memory index: the section that injects memory CONTENT (not just
+	 * an id/title directory) at session start, frozen per session to keep the
+	 * system prompt byte-stable (prompt cache). `enabled`/`guide`/`order`/
+	 * `maxChars` default to true/true/400/6000; with `guide` off and an empty
+	 * store the section renders to "" and costs no tokens.
+	 */
+	memoryIndex: z.object({
+		enabled: z.boolean(),
+		guide: z.boolean(),
+		order: z.natural(),
+		maxChars: z.natural(),
+	}),
+	/**
 	 * Storage hygiene (#20): how much append-only past each write keeps.
 	 * `snapshots` = full-state copies per store, `refinements` = tail lines
 	 * per store history, `reviews` = tail lines of the shared audit trail,
@@ -183,11 +207,40 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 	// entries real delegation specs. The text is a provider evaluated at every
 	// assembly with the assembling agent; a store without prompt/subagent
 	// entries renders to "" and the prompt renderer drops the section.
+	//
+	// evolve v2: when the memory index section carries memory content, the
+	// directory stops listing memories so the same entries are never paid for
+	// twice (one fact, one home).
+	const memoryIndexEnabled = config.memoryIndex?.enabled ?? true;
 	ctx.systemPrompt.section({
 		name: "tool:continual-evolve:entries",
 		order: (config.sectionOrder ?? 118) + 1,
-		text: (context) => entriesSectionText(engine, context.agent, undefined, { directoryLines: config.injectionDirectoryLines ?? 15 }),
+		text: (context) =>
+			entriesSectionText(engine, context.agent, undefined, {
+				directoryLines: config.injectionDirectoryLines ?? 15,
+				includeMemoryDirectory: !memoryIndexEnabled,
+			}),
 	});
+
+	// evolve v2 passive read path: memory content in the prompt at session
+	// start, frozen per session (see memory-index.ts) so the whole system
+	// prompt stays byte-stable within a session and prompt-cache reads keep
+	// hitting. Registered in the empty 1–499 order slot — the two sections
+	// above sit at 118/119, upstream's named slots start at PLAN_POLICY=500.
+	if (memoryIndexEnabled) {
+		const frozenMemories = createFrozenMemorySection();
+		const memoryIndexOrder = config.memoryIndex?.order ?? DEFAULT_MEMORY_SECTION_ORDER;
+		const memoryIndexMaxChars = config.memoryIndex?.maxChars ?? DEFAULT_MEMORY_INDEX_MAX_CHARS;
+		const memoryIndexGuide = config.memoryIndex?.guide ?? true;
+		ctx.systemPrompt.section({
+			name: MEMORY_SECTION_NAME,
+			order: memoryIndexOrder,
+			text: (context) =>
+				frozenMemories.textFor(context.agent, (agent) =>
+					memoryIndexSectionText(engine, agent, { maxChars: memoryIndexMaxChars, guide: memoryIndexGuide }),
+				),
+		});
+	}
 
 	const gate = { requireGlobalApproval: config.requireGlobalApproval ?? true };
 	const promotionPolicy = resolvePromotionPolicy({
