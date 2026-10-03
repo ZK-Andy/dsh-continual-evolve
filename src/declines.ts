@@ -202,6 +202,11 @@ export interface DeclinedCheckpointHit {
  * @param checkpointTokens - tokens of the pending checkpoint trajectory.
  * @returns the strongest hit, or undefined when nothing clears the floor.
  */
+/** Convenience: load the declined ledger and match one trajectory slice. */
+export function matchDeclinedTrajectory(baseDir: string, trajectory: string) {
+	return matchDeclinedCheckpoint(loadDeclinedMemory(baseDir), tokenize(trajectory));
+}
+
 export function matchDeclinedCheckpoint(
 	entries: readonly DeclinedMemoryBatch[],
 	checkpointTokens: readonly string[],

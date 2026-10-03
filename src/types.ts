@@ -280,3 +280,9 @@ export function cloneEntry(entry: HarnessEntry | undefined): HarnessEntry | unde
  */
 export const DEFAULT_REFINEMENTS_RETAIN = 500;
 export const DEFAULT_REVIEWS_RETAIN = 500;
+
+/** Prefix-cache routing modes for extractor/planner inputs (see prefix-cache.ts). */
+export type PlannerPrefixCacheMode = "auto" | "session" | "off";
+
+/** The only two durable outcomes a scope-approval dialog may produce. */
+export type ScopeApprovalDecision = "approved" | "declined";

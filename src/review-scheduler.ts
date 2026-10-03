@@ -8,13 +8,6 @@
  */
 
 /** Compare two scheduler cursors; undefined means the cursor families differ. */
-export function compareReviewCursors(left: string, right: string): number | undefined {
-	if (left === right) return 0;
-	const leftMatch = /^(seq|index):(\d+)$/.exec(left);
-	const rightMatch = /^(seq|index):(\d+)$/.exec(right);
-	if (!leftMatch || !rightMatch || leftMatch[1] !== rightMatch[1]) return undefined;
-	return Number(leftMatch[2]) - Number(rightMatch[2]);
-}
 
 /** Terminal state of one scheduled snapshot. */
 export type ReviewSchedulerStatus = "success" | "no-op" | "error" | "aborted";
@@ -221,3 +214,5 @@ function waitForSnapshotAcquisitionOrShutdown<TSnapshot>(
 		});
 	});
 }
+export { compareReviewCursors } from "./turn-snapshot.js";
+import { compareReviewCursors } from "./turn-snapshot.js";

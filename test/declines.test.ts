@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import {
-	applyMemoryExtractionProposal,
-	type MemoryExtractionProposal,
-} from "../src/memory-agent.js";
+import { applyMemoryExtractionProposal } from "../src/memory-apply.js";
+import { type MemoryExtractionProposal } from "../src/memory-agent.js";
 import {
 	declinedContentTokens,
 	declinedMemoryPath,

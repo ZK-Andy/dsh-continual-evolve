@@ -290,3 +290,16 @@ function readNestedString(value: unknown, keys: readonly string[]): string | und
 	}
 	return undefined;
 }
+
+/**
+ * Durable-boundary ordering shared by the scheduler and the extraction
+ * phase: returns a positive number when `left` is newer than `right`,
+ * negative when older, and undefined when the two shapes are incomparable.
+ */
+export function compareReviewCursors(left: string, right: string): number | undefined {
+	if (left === right) return 0;
+	const leftMatch = /^(seq|index):(\d+)$/.exec(left);
+	const rightMatch = /^(seq|index):(\d+)$/.exec(right);
+	if (!leftMatch || !rightMatch || leftMatch[1] !== rightMatch[1]) return undefined;
+	return Number(leftMatch[2]) - Number(rightMatch[2]);
+}

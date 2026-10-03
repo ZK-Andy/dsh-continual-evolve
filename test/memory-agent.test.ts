@@ -6,17 +6,14 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { GenerateOptions, StreamChunk, ToolCallId } from "@deepseek-ai/dsh-llm";
 import {
-	applyMemoryExtractionProposal,
-	buildMemoryManifest,
-	formatMemoryManifest,
 	MEMORY_AGENT_TOOL_NAMES,
 	MEMORY_AGENT_TOOL_SCHEMAS,
 	parseMemoryExtractionProposal,
-	renderMemoryApprovalDetails,
 	runMemoryAgent,
-	searchMemoryManifest,
 	type MemoryExtractionProposal,
 } from "../src/memory-agent.js";
+import { applyMemoryExtractionProposal, renderMemoryApprovalDetails } from "../src/memory-apply.js";
+import { buildMemoryManifest, formatMemoryManifest, searchMemoryManifest } from "../src/memory-manifest.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { loadTokenUsage } from "../src/token-usage.js";
 import { saveHarnessState } from "../src/state.js";

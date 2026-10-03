@@ -10,7 +10,8 @@ import { approvalCopy } from "./copy.js";
 import { normalizeRecordLanguage, resolveRecordLanguage, type RecordLanguage, type RecordLanguagePreference } from "./record-language.js";
 import { recentUserText, type AgentLike } from "./inject.js";
 
-export type ScopeApprovalDecision = "approved" | "declined";
+export { type ScopeApprovalDecision } from "./types.js";
+import type { ScopeApprovalDecision } from "./types.js";
 
 /** Labels the approval dialog offers for each decision (parser contract). */
 export const APPROVE_LABELS = ["批准", "Approve"] as const;

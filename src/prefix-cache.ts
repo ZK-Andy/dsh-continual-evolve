@@ -20,7 +20,8 @@ import { createAssistantMessage, createUserMessage, type AssistantMessage, type 
 export type PlannerRoute = "A" | "B";
 
 /** Routing mode: auto-detect from cache evidence, always prefix, or never. */
-export type PlannerPrefixCacheMode = "auto" | "session" | "off";
+export { type PlannerPrefixCacheMode } from "./types.js";
+import type { PlannerPrefixCacheMode } from "./types.js";
 
 /** Per-call routing overrides; absent fields fall back to the resolved defaults. */
 export interface PrefixCacheOptions {

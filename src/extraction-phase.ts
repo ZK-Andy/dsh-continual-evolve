@@ -7,7 +7,6 @@
  * Triggered only by the low-frequency moments wired in `listener.ts`;
  * per-turn extraction was removed with the 2026-10-03 B verdict.
  */
-import type { ScopeApprovalDecision } from "./approval.js";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { EvolutionEngine } from "./service.js";
@@ -15,20 +14,17 @@ import { notifyMemoryExtraction } from "./notify.js";
 import { mergeHarnessStates } from "./state.js";
 import { projectKeyOf } from "./project.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
-import { compareReviewCursors } from "./review-scheduler.js";
-import { sliceTurnSnapshot, type TurnSnapshot } from "./turn-snapshot.js";
-import { loadDeclinedMemory, matchDeclinedCheckpoint } from "./declines.js";
-import { tokenize } from "./search.js";
+import { compareReviewCursors, sliceTurnSnapshot, type TurnSnapshot } from "./turn-snapshot.js";
+import { matchDeclinedTrajectory } from "./declines.js";
 import {
-	applyMemoryExtractionProposal,
-	buildMemoryManifest,
 	runMemoryAgent,
 	type MemoryScopeBaselines,
 } from "./memory-agent.js";
-import type { HarnessState } from "./types.js";
+import { applyMemoryExtractionProposal } from "./memory-apply.js";
+import { buildMemoryManifest } from "./memory-manifest.js";
+import type { HarnessState, ScopeApprovalDecision } from "./types.js";
 import { DEFAULT_REVIEWS_RETAIN } from "./types.js";
-import { asLlmSessionId } from "./llm-text.js";
-import type { PlannerPrefixCacheMode } from "./prefix-cache.js";
+import type { PlannerPrefixCacheMode } from "./types.js";
 import { resolveRecordLanguage, type RecordLanguagePreference } from "./record-language.js";
 
 export interface GateState {
@@ -219,7 +215,7 @@ export async function runMemoryExtractionPhase(
 		});
 		return;
 	}
-	const declinedHit = matchDeclinedCheckpoint(loadDeclinedMemory(engine.baseDir), tokenize(memorySnapshot.trajectory));
+	const declinedHit = matchDeclinedTrajectory(engine.baseDir, memorySnapshot.trajectory);
 	if (declinedHit !== undefined) {
 		advanceMemoryCheckpoint(state, memorySnapshot.cursor);
 		ctx.logger("continual-evolve").info(
@@ -260,7 +256,7 @@ export async function runMemoryExtractionPhase(
 	const run = await runMemoryAgent(ctx, {
 		provider,
 		model,
-		sessionId: asLlmSessionId(sessionId),
+		sessionId,
 		manifest,
 		trajectory: memorySnapshot.trajectory,
 		trajectoryEvents: memorySnapshot.events,
