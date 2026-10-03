@@ -137,7 +137,7 @@ pnpm lint                    # oxlint src test
 ├── test/                  # vitest 测试套件（59 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/
-│   ├── design.md          # 完整设计文档（硬化矩阵）
+│   ├── design.md          # 一条循环的设计叙事
 │   ├── FAQ.md             # 真实踩坑记录
 │   ├── gap-analysis.md    # 对照 prime-agent /refine + penguin-harness
 │   ├── research/pi-dsh-competitor-gap-analysis.md  # pi/dsh 生态竞品差距分析

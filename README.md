@@ -150,7 +150,7 @@ Project layout:
 ├── test/                  # vitest suites (57 files)
 ├── lib/                   # build output (tsc)
 ├── docs/
-│   ├── design.md          # full design doc (hardening matrix)
+│   ├── design.md          # the one-loop design narrative
 │   ├── FAQ.md             # real failure/fix records
 │   ├── gap-analysis.md    # vs prime-agent /refine + penguin-harness
 │   ├── research/pi-dsh-competitor-gap-analysis.md  # pi/dsh ecosystem competitors

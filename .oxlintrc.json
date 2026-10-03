@@ -1,7 +1,7 @@
 {
   "plugins": [],
   "categories": {
-    "correctness": "warn"
+    "correctness": "error"
   },
   "options": {
     "reportUnusedDisableDirectives": "warn"
