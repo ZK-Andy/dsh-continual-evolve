@@ -3,7 +3,7 @@
  * Every mutation path goes through here so snapshot-before-write, apply
  * accounting, persistence, and result history are enforced in one place.
  */
-import type { EntrySource, HarnessScope, RefinementProposal, RefinementResult } from "./types.js";
+import type { EntrySource, HarnessEntry, HarnessScope, HarnessState, RefinementKind, RefinementProposal, RefinementResult } from "./types.js";
 import { CONFLICT_HINT_KEY } from "./types.js";
 import { applyRefinementProposal } from "./apply.js";
 import { randomUUID } from "node:crypto";
@@ -215,7 +215,92 @@ export function createEvolutionEngine(baseDir: string, hooks: EvolutionHooks = {
 		return loadResults(storePaths(baseDir, scope, sessionId));
 	}
 
-	return { load, apply, rollback, rollbackResult, history, baseDir, retention };
+	/** Serialize one store (entries + refinement history) for `/evolve export`. */
+	function exportStore(scope: HarnessScope, sessionId: string | undefined): ExportedStore {
+		const state = load(scope, sessionId);
+		return {
+			version: 1,
+			scope,
+			schema: state.schema,
+			entries: state.entries,
+			refinements: state.refinements,
+			history: history(scope, sessionId),
+		};
+	}
+
+	/**
+	 * Replace one store from an export payload (raw state write — the same
+	 * semantics the command always had: no snapshot, no per-edit validation,
+	 * the payload is trusted because a human handed over the file).
+	 */
+	function importStore(scope: HarnessScope, sessionId: string | undefined, payload: unknown): { entries: number; refinements: number } {
+		if (!isValidExport(payload)) {
+			throw new Error("invalid export file shape: expected {version, entries: {prompt, memory, skill, subagent}, refinements, history}");
+		}
+		const entriesBlock = payload["entries"] as Record<string, unknown>;
+		const state: HarnessState = {
+			schema: typeof payload["schema"] === "number" ? (payload["schema"] as number) : 1,
+			entries: {
+				prompt: toEntryRecord(entriesBlock["prompt"]),
+				memory: toEntryRecord(entriesBlock["memory"]),
+				skill: toEntryRecord(entriesBlock["skill"]),
+				subagent: toEntryRecord(entriesBlock["subagent"]),
+			},
+			refinements: Array.isArray(payload["refinements"]) ? (payload["refinements"] as HarnessState["refinements"]) : [],
+		};
+		const paths = storePaths(baseDir, scope, sessionId);
+		saveHarnessState(paths.stateDir, state);
+		let refinements = 0;
+		if (Array.isArray(payload["history"])) {
+			for (const result of payload["history"]) {
+				if (isResultRecord(result)) {
+					appendResult(paths, result);
+					refinements += 1;
+				}
+			}
+			// Storage hygiene (#20): an imported history obeys the same tail
+			// budget as a live one.
+			try {
+				pruneJsonlFile(paths.resultsPath, retention.refinements);
+			} catch {
+				// ignored — the next apply retries
+			}
+		}
+		const entries = Object.values(state.entries).reduce((n, byKind) => n + Object.keys(byKind).length, 0);
+		return { entries, refinements };
+	}
+
+	return { load, apply, rollback, rollbackResult, history, exportStore, importStore, baseDir, retention };
+}
+
+/** The on-disk shape `/evolve export` writes and `/evolve import` reads. */
+export interface ExportedStore {
+	version: number;
+	scope: HarnessScope;
+	schema: number;
+	entries: HarnessState["entries"];
+	refinements: HarnessState["refinements"];
+	history: RefinementResult[];
+}
+
+function toEntryRecord(value: unknown): Record<string, HarnessEntry> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return {};
+	}
+	return value as Record<string, HarnessEntry>;
+}
+
+function isValidExport(payload: unknown): payload is Record<string, unknown> & { entries: Record<string, unknown> } {
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+	const record = payload as Record<string, unknown>;
+	const entries = record["entries"];
+	if (typeof entries !== "object" || entries === null || Array.isArray(entries)) return false;
+	const kinds: RefinementKind[] = ["prompt", "memory", "skill", "subagent"];
+	return kinds.every((kind) => Object.prototype.hasOwnProperty.call(entries, kind));
+}
+
+function isResultRecord(value: unknown): boolean {
+	return typeof value === "object" && value !== null && "id" in value && "appliedEdits" in value;
 }
 
 export type EvolutionEngine = ReturnType<typeof createEvolutionEngine>;

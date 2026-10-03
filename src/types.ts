@@ -273,3 +273,10 @@ export function emptyHarnessState(): HarnessState {
 export function cloneEntry(entry: HarnessEntry | undefined): HarnessEntry | undefined {
 	return entry ? (JSON.parse(JSON.stringify(entry)) as HarnessEntry) : undefined;
 }
+
+/**
+ * Storage-hygiene defaults (#20): JSONL tail lines kept per store history
+ * and per shared audit trail when no explicit `historyRetain` is set.
+ */
+export const DEFAULT_REFINEMENTS_RETAIN = 500;
+export const DEFAULT_REVIEWS_RETAIN = 500;

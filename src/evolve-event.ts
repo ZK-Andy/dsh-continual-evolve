@@ -12,7 +12,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { RefinementResult } from "./types.js";
-import { DEFAULT_REVIEWS_RETAIN, pruneJsonlFile, reviewsPath } from "./store.js";
+import { DEFAULT_REVIEWS_RETAIN } from "./types.js";
+import { pruneJsonlFile, reviewsPath } from "./store.js";
 
 /** The structured event payload emitted after every successful refinement. */
 export interface EvolveCompleteEvent {

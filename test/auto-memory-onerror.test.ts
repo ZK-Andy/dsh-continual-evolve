@@ -10,8 +10,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createEvolutionEngine } from "../src/service.js";
-import { runMemoryExtractionPhase } from "../src/auto.js";
-import type { AutoReviewConfig, GateState } from "../src/auto.js";
+import { runMemoryExtractionPhase } from "../src/extraction-phase.js";
+import type { AutoReviewConfig, GateState } from "../src/extraction-phase.js";
 import type { MemoryAgentOptions } from "../src/memory-agent.js";
 import type { TurnSnapshot } from "../src/turn-snapshot.js";
 

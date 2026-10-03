@@ -14,6 +14,7 @@
  * no way to skip it — it runs inside the service, not in a prompt.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { DEFAULT_REFINEMENTS_RETAIN, DEFAULT_REVIEWS_RETAIN } from "./types.js";
 import { join } from "node:path";
 import type { HarnessScope, RefinementResult } from "./types.js";
 import { sanitizeProjectKey } from "./project.js";
@@ -29,9 +30,7 @@ export const EVOLVE_DIR = "evolve";
  * full past. Tunable via the `historyRetain` plugin config.
  */
 export const DEFAULT_SNAPSHOT_RETAIN = 20;
-export const DEFAULT_REFINEMENTS_RETAIN = 500;
-export const DEFAULT_REVIEWS_RETAIN = 500;
-export const DEFAULT_TOKEN_USAGE_RETAIN = 500;
+export { DEFAULT_REFINEMENTS_RETAIN, DEFAULT_REVIEWS_RETAIN } from "./types.js";export const DEFAULT_TOKEN_USAGE_RETAIN = 500;
 
 /** Resolved retention set: how many snapshots / JSONL tail lines to keep. */
 export interface HistoryRetention {

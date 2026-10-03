@@ -20,7 +20,7 @@ import { expandHomePath, resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { createEvolutionEngine, type EvolutionEngine } from "./service.js";
 import { registerEvolveTools } from "./tool.js";
 import { registerEvolveCommand } from "./command.js";
-import { registerAutoReview } from "./auto.js";
+import { registerAutoReview } from "./listener.js";
 import { syncSkillsFromResult } from "./skill.js";
 import { entriesSectionText } from "./inject.js";
 import {

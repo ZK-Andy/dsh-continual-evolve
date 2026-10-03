@@ -6,7 +6,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type { EvolutionEngine } from "./service.js";
 import { loadLedger, mountSkill, unmountSkill } from "./mount.js";
-import { stripAngleBrackets } from "./command.js";
+import { stripAngleBrackets } from "./command-util.js";
 
 function success(text: string): CommandResult {
 	return { kind: "success", text };

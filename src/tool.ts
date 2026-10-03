@@ -17,7 +17,7 @@ import { entrySourceOf } from "./source.js";
 import { formatRecallResult, recallMemories } from "./recall.js";
 import { getUsageCount, loadUsage } from "./usage.js";
 import { buildEvolveCompleteEvent, emitEvolveComplete } from "./evolve-event.js";
-import { DEFAULT_REVIEWS_RETAIN } from "./store.js";
+import { DEFAULT_REVIEWS_RETAIN } from "./types.js";
 
 const SCOPES: HarnessScope[] = ["local", "project", "global"];
 

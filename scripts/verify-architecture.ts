@@ -23,22 +23,25 @@ const LAYER: Record<string, number> = {
 	// L0
 	types: 0, plan: 0, "memory-guide": 0, project: 0,
 	// L1 pure engine
+	"audit-log": 1,
 	state: 1, validate: 1, apply: 1, rollback: 1, store: 1, service: 1,
 	projection: 1, promotion: 1, search: 1, render: 1, usage: 1,
 	consolidate: 1, recall: 1, "evolve-event": 1, runtime: 1, failures: 1,
 	declines: 1, pool: 1, "memory-benchmark": 1, "skill-render": 1, skillquality: 1,
 	// L2 host adapters
+	"command-util": 2,
 	"llm-text": 2, "message-source": 2, "token-usage": 2, "turn-snapshot": 2,
 	"prefix-cache": 2, inject: 2, "memory-index": 2, source: 2, skill: 2,
 	mount: 2, logfile: 2, approval: 2, notify: 2, rubric: 2,
 	"record-language": 2, copy: 2,
 	// L3 domain flows
-	"memory-agent": 3, planner: 3, wrapup: 3,
+	"memory-agent": 3, "extraction-phase": 3, planner: 3, wrapup: 3,
 	benchmark: 3, evaluate: 3, autocase: 3, goal: 3, score: 3,
 	"review-scheduler": 3,
 	// L4 interface
-	tool: 4, command: 4, "wrapup-command": 4, "benchmark-command": 4,
-	"mount-command": 4, "goal-command": 4, index: 4, auto: 4,
+	tool: 4, command: 4, "plan-command": 4, "maintenance-commands": 4,
+	"runtime-commands": 4, "wrapup-command": 4, "benchmark-command": 4,
+	"mount-command": 4, "goal-command": 4, index: 4, listener: 4,
 };
 
 const LAYER_NAME = ["L0", "L1", "L2", "L3", "L4"];
@@ -49,15 +52,13 @@ const MAX_OUT_DEGREE_ROOT = 14;
 
 /** Known violations, each cleared by a named refactor phase. */
 const WHITELIST = {
-	/** Phase 2 turns command into a pure router and extracts shared helpers. */
-	cycles: ["benchmark-command,command,mount-command"],
+	cycles: [] as string[],
 	upward: [] as string[],
-	/** Phase 2: interface modules receive engine reads via the service facade. */
-	bypass: ["auto->state", "auto->store", "command->state", "command->store", "tool->store"],
-	/** Phase 2 splits command/auto; Phase 3 splits inject/wrapup/memory-agent. */
-	overlines: ["auto", "command", "inject", "memory-agent", "wrapup"],
-	/** Phase 1 shrinks memory-agent; Phase 2 turns command into a pure router and splits auto. */
-	overdegree: ["auto", "command", "memory-agent"],
+	bypass: [] as string[],
+	/** Phase 3 splits inject/wrapup/memory-agent; listener/extraction-phase stay under budget. */
+	overlines: ["inject", "memory-agent", "wrapup"],
+	/** Phase 1 shrinks memory-agent; Phase 3 splits it and extraction-phase. */
+	overdegree: ["memory-agent", "extraction-phase"],
 };
 
 /** host-API single-point boundaries (docs/architecture-standard.md §2). */

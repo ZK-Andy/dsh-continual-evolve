@@ -13,15 +13,17 @@ import { join } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
 	drainSchedulerOnDispose,
-	loadGateHarnessView,
-	parseReviewModel,
 	registerAutoReview,
 	resolveSessionCloseDrainMs,
-	runMemoryExtractionPhase,
 	SESSION_CLOSE_DRAIN_MS_DEFAULT,
+} from "../src/listener.js";
+import {
+	loadGateHarnessView,
+	parseReviewModel,
+	runMemoryExtractionPhase,
 	type AutoReviewConfig,
 	type GateState,
-} from "../src/auto.js";
+} from "../src/extraction-phase.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { recordDeclinedMemory } from "../src/declines.js";
 import { saveHarnessState } from "../src/state.js";
