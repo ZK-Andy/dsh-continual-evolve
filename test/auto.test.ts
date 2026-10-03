@@ -1,27 +1,24 @@
 /**
- * Tests for the gate turn counter, the review-model override parser, the
- * event wiring of registerAutoReview (armed marker, interval check,
- * goal-driven override, compaction trigger, failure containment), and the
- * D3 goal-blocked fate trigger.
+ * Tests for the moment-driven memory extraction listener: the armed marker,
+ * the review-model override parser, the event wiring of registerAutoReview
+ * (compaction moment, goal-blocked streak, runtime switch, failure
+ * containment), and the extraction phase receipts.
+ *
+ * Per-turn extraction and the general review/planner/fate phases were
+ * removed with the 2026-10-03 B verdict; their tests went with them.
  */
 import { describe, expect, it, vi } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
-	consultSkillEdits,
 	drainSchedulerOnDispose,
 	loadGateHarnessView,
-	isDedicatedMemoryOnlyProposal,
 	parseReviewModel,
 	registerAutoReview,
 	resolveSessionCloseDrainMs,
-	runGoalBlockedFate,
 	runMemoryExtractionPhase,
 	SESSION_CLOSE_DRAIN_MS_DEFAULT,
-	SKILL_CONSULT_COOLDOWN_TURNS,
-	splitSkillEdits,
-	stripDedicatedMemoryEdits,
 	type AutoReviewConfig,
 	type GateState,
 } from "../src/auto.js";
@@ -29,23 +26,16 @@ import { createEvolutionEngine } from "../src/service.js";
 import { recordDeclinedMemory } from "../src/declines.js";
 import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
-import { emptyHarnessState, type HarnessEntry, type RefinementProposal } from "../src/types.js";
+import { emptyHarnessState, type HarnessEntry } from "../src/types.js";
 import type { Context } from "@deepseek-ai/cordis";
 import type { GenerateOptions, StreamChunk } from "@deepseek-ai/dsh-llm";
 import { loadTokenUsage } from "../src/token-usage.js";
 
-function fresh(): GateState {
-	return { turns: 0, completedTurn: 0, lastSnapshotTurn: 0, memoryDecisions: {}, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
-}
-
 function baseConfig(overrides: Partial<AutoReviewConfig> = {}): AutoReviewConfig {
 	return {
-		intervalTurns: 3,
 		maxInputChars: 2000,
 		budgetTokens: 512,
 		notifyOnAutoReview: false,
-		localFate: false,
-		fateIntervalTurns: 5,
 		goalBlockedWrapupTurns: 0,
 		...overrides,
 	};
@@ -68,7 +58,6 @@ function fullEntry(id: string, kind: HarnessEntry["kind"], title: string): Harne
 		version: 1,
 	};
 }
-
 
 describe("loadGateHarnessView", () => {
 	it("merges global entries into the gate's view with their real scope", () => {
@@ -116,125 +105,6 @@ describe("loadGateHarnessView", () => {
 	});
 });
 
-function proposalWith(edits: RefinementProposal["edits"]): RefinementProposal {
-	return { summary: "s", rationale: "r", expectedOutcome: "o", edits };
-}
-
-const skillEdit = {
-	action: "create",
-	kind: "skill" as const,
-	title: "会话交接流程",
-	content: "# 交接流程\n\nbody",
-	skill_kind: "guidance" as const,
-};
-
-const memoryEdit = { action: "create", kind: "memory" as const, title: "m", content: "c" };
-
-describe("splitSkillEdits", () => {
-	it("separates skill edits from the rest of a proposal", () => {
-		const { skillEdits, otherEdits } = splitSkillEdits(proposalWith([skillEdit, memoryEdit]));
-		expect(skillEdits).toHaveLength(1);
-		expect(skillEdits[0]?.kind).toBe("skill");
-		expect(otherEdits).toHaveLength(1);
-		expect(otherEdits[0]?.kind).toBe("memory");
-	});
-
-	it("handles proposals without skill edits", () => {
-		const { skillEdits, otherEdits } = splitSkillEdits(proposalWith([memoryEdit]));
-		expect(skillEdits).toHaveLength(0);
-		expect(otherEdits).toHaveLength(1);
-	});
-});
-
-describe("stripDedicatedMemoryEdits", () => {
-	it("distinguishes memory-only plans from genuine no-consent plans", () => {
-		expect(isDedicatedMemoryOnlyProposal(proposalWith([memoryEdit]))).toBe(true);
-		expect(isDedicatedMemoryOnlyProposal(proposalWith([memoryEdit, skillEdit]))).toBe(false);
-		expect(isDedicatedMemoryOnlyProposal(proposalWith([skillEdit]))).toBe(false);
-		expect(isDedicatedMemoryOnlyProposal(proposalWith([]))).toBe(false);
-	});
-
-	it("leaves non-memory proposals unchanged", () => {
-		const proposal = proposalWith([skillEdit]);
-		expect(stripDedicatedMemoryEdits(proposal)).toBe(proposal);
-	});
-
-	it("removes memory edits already owned by the dedicated extractor", () => {
-		const stripped = stripDedicatedMemoryEdits(proposalWith([memoryEdit, skillEdit]));
-		expect(stripped.edits).toEqual([skillEdit]);
-		expect(stripped.summary).toContain("dedicated extractor");
-	});
-});
-
-function fakeCtx(answer: "固化" | "不固化" | "throw" | "missing"): {
-	ctx: Context;
-	askCount: () => number;
-} {
-	let calls = 0;
-	const ctx = {
-		userQuestions:
-			answer === "missing"
-				? undefined
-				: {
-						ask: async () => {
-							calls += 1;
-							if (answer === "throw") throw new Error("aborted");
-							return { answers: [{ id: "evolve-skill-consult", selected: [answer] }] };
-						},
-					},
-	} as unknown as Context;
-	return { ctx, askCount: () => calls };
-}
-
-const fakeAgent = { id: "session-consult" } as never;
-
-describe("consultSkillEdits", () => {
-	it("returns true immediately when there are no skill edits", async () => {
-		const { ctx } = fakeCtx("missing");
-		expect(await consultSkillEdits(ctx, fakeAgent, [], fresh())).toBe(true);
-	});
-
-	it("consents when the user chooses 固化, without recording a rejection", async () => {
-		const { ctx, askCount } = fakeCtx("固化");
-		const gate = fresh();
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(true);
-		expect(askCount()).toBe(1);
-		expect(gate.skillRejects.size).toBe(0);
-	});
-
-	it("declines when the user chooses 不固化 and records the cooldown", async () => {
-		const { ctx } = fakeCtx("不固化");
-		const gate = fresh();
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
-		expect(gate.skillRejects.size).toBe(1);
-	});
-
-	it("does not re-ask a candidate rejected within the cooldown window", async () => {
-		const { ctx, askCount } = fakeCtx("不固化");
-		const gate = fresh();
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
-		expect(askCount()).toBe(1);
-		// same candidate again, inside the cooldown: silent skip, no question
-		gate.turns = SKILL_CONSULT_COOLDOWN_TURNS - 1;
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
-		expect(askCount()).toBe(1);
-		// after the cooldown elapses the candidate is offered again
-		gate.turns = SKILL_CONSULT_COOLDOWN_TURNS + 1;
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], gate)).toBe(false);
-		expect(askCount()).toBe(2);
-	});
-
-	it("never writes a skill silently without the question service", async () => {
-		const { ctx } = fakeCtx("missing");
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], fresh())).toBe(false);
-	});
-
-	it("is conservative when the question call fails", async () => {
-		const { ctx } = fakeCtx("throw");
-		expect(await consultSkillEdits(ctx, fakeAgent, [skillEdit], fresh())).toBe(false);
-	});
-});
-
 describe("parseReviewModel", () => {
 	it("returns undefined for empty overrides", () => {
 		expect(parseReviewModel(undefined, "deepseek")).toBeUndefined();
@@ -252,6 +122,18 @@ describe("parseReviewModel", () => {
 	});
 });
 
+/** A scripted noop extraction reply. */
+const MEMORY_NOOP = JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] });
+
+function noopMemoryChunk(text: string): StreamChunk[] {
+	return [
+		{ type: "block-start", index: 0, blockType: "text" },
+		{ type: "text-delta", index: 0, text },
+		{ type: "block-end", index: 0, block: { type: "text", text } },
+		{ type: "finish", reason: { kind: "stop" } },
+	];
+}
+
 /** Wiring harness: captures listeners so tests can fire harness events. */
 function wiringHarness(options: {
 	goals?: { get(agent: unknown): unknown };
@@ -262,7 +144,7 @@ function wiringHarness(options: {
 	config?: Partial<AutoReviewConfig>;
 } = {}): {
 	dir: string;
-	emit: (event: string, payload: unknown) => void;
+	emit: (event: string, ...payload: unknown[]) => void;
 	warnings: string[];
 	infos: string[];
 	reviewsLines: () => string[];
@@ -305,67 +187,71 @@ function wiringHarness(options: {
 
 const wireAgent = { id: "session-wire" };
 
+/** Fire the compaction moment for one agent. */
+function compact(h: ReturnType<typeof wiringHarness>, agent: { id: string }): void {
+	h.emit("session/event", { id: agent.id }, { type: "compaction/start" });
+}
+
 describe("registerAutoReview wiring", () => {
-	it("writes the armed marker with the configured interval on registration", () => {
+	it("writes the moment-driven armed marker on registration", () => {
 		const h = wiringHarness();
 		try {
 			const lines = h.reviewsLines();
 			expect(lines).toHaveLength(1);
 			const record = JSON.parse(lines[0] ?? "{}") as { outcome?: string; rationale?: string };
 			expect(record.outcome).toBe("armed");
-				expect(record.rationale).toContain("per-success-turn snapshots");
+			expect(record.rationale).toContain("moments=compaction/goal-blocked/session-close-drain/manual-wrapup");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
 	it("keeps the listener dormant by default and enables it through runtime.json", async () => {
-		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
-		const h = wiringHarness({ config: { enabledByDefault: false }, sessionQuery: { readSurface: async () => ({ events }) } });
+		const agents = new Map<string, unknown>([[wireAgent.id, wireAgent]]);
+		const h = wiringHarness({ config: { enabledByDefault: false }, agents });
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(1));
+			compact(h, wireAgent);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(h.reviewsLines()).toHaveLength(1);
 
 			const { saveGateRuntime } = await import("../src/runtime.js");
 			saveGateRuntime(h.dir, false, true);
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 2 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
-			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
-			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ reason: "turn_snapshot" });
+			compact(h, wireAgent);
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
+			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string };
+			expect(record.reason).toBe("compact");
+			expect(record.outcome).toBe("skipped");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
-	it("runs only the dedicated memory phase in memory-only mode", async () => {
+
+	it("runs the dedicated memory extraction phase on the compaction moment", async () => {
 		let calls = 0;
 		const llm = {
 			stream: async function* () {
 				calls += 1;
-				if (calls > 1) throw new Error("generic review/planner must not run in memory-only mode");
-				const text = JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] });
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
+				if (calls > 1) throw new Error("no second LLM call is expected on one moment");
+				for (const chunk of noopMemoryChunk(MEMORY_NOOP)) yield chunk;
 			},
 		} as unknown as Context["llm"];
 		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
 		const agent = {
-			id: "session-memory-only",
+			id: "session-moment",
 			options: { provider: "test-provider", model: "test-model" },
 			session: { header: {}, events },
 			followup: () => undefined,
 		};
-		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) }, config: { enabledByDefault: false, memoryOnly: true } });
+		const h = wiringHarness({
+			llm,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
+			sessionQuery: { readSurface: async () => ({ events }) },
+			config: { enabledByDefault: false, prefixCacheMode: "off" },
+		});
 		try {
 			const { saveGateRuntime } = await import("../src/runtime.js");
 			saveGateRuntime(h.dir, false, true);
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
+			compact(h, agent);
 			await vi.waitFor(() => expect(calls).toBe(1));
 			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(1));
 			expect(loadTokenUsage(h.dir).records[0]).toMatchObject({ phase: "memory" });
@@ -384,15 +270,15 @@ describe("registerAutoReview wiring", () => {
 		}
 	});
 
-	it("records a mechanical skip when a successful turn has no new surface rows", async () => {
-		const h = wiringHarness();
+	it("records a mechanical skip when the compacted session has no new surface rows", async () => {
+		const agents = new Map<string, unknown>([[wireAgent.id, wireAgent]]);
+		const h = wiringHarness({ agents });
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			compact(h, wireAgent);
 			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
 			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string; rationale?: string };
 			expect(record.outcome).toBe("skipped");
-			expect(record.reason).toBe("turn_snapshot");
+			expect(record.reason).toBe("compact");
 			expect(record.rationale).toContain("no-new-events");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
@@ -400,35 +286,26 @@ describe("registerAutoReview wiring", () => {
 	});
 
 	it("contains snapshot acquisition failure and leaves the cursor retryable", async () => {
-		const h = wiringHarness({ sessionQuery: { readSurface: async () => { throw new Error("surface unavailable"); } } });
+		const agents = new Map<string, unknown>([[wireAgent.id, wireAgent]]);
+		const h = wiringHarness({ agents, sessionQuery: { readSurface: async () => { throw new Error("surface unavailable"); } } });
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			compact(h, wireAgent);
 			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
 			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string; rationale?: string };
 			expect(record.outcome).toBe("failed");
-			expect(record.reason).toBe("turn_snapshot");
+			expect(record.reason).toBe("compact");
 			expect(record.rationale).toContain("surface unavailable");
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
-	it("records exact provider usage for memory, review, and planner calls", async () => {
-		let call = 0;
+	it("records exact provider usage for the extraction call", async () => {
 		const llm = {
 			stream: async function* () {
-				call += 1;
-				const text = call === 1
-					? JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] })
-					: call === 2
-						? JSON.stringify({ shouldRefine: true, rationale: "useful evidence", instructions: "plan nothing" })
-						: JSON.stringify({ summary: "no edits", rationale: "already covered", expectedOutcome: "none", edits: [] });
 				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "usage", usage: { inputTokens: call * 10, outputTokens: 2, totalTokens: call * 10 + 2 } },
+					...noopMemoryChunk(MEMORY_NOOP).slice(0, 3),
+					{ type: "usage", usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } },
 					{ type: "finish", reason: { kind: "stop" } },
 				];
 				for (const chunk of chunks) yield chunk;
@@ -441,80 +318,24 @@ describe("registerAutoReview wiring", () => {
 			session: { header: {}, events },
 			followup: () => undefined,
 		};
-		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) } });
+		const h = wiringHarness({
+			llm,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
+			sessionQuery: { readSurface: async () => ({ events }) },
+			config: { prefixCacheMode: "off" },
+		});
 		try {
-			for (let i = 0; i < 3; i += 1) h.emit("agent/turn-stopping", { agent, turn: i + 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(3));
+			compact(h, agent);
+			await vi.waitFor(() => expect(loadTokenUsage(h.dir).records).toHaveLength(1));
 			expect(loadTokenUsage(h.dir).records).toEqual([
 				expect.objectContaining({ phase: "memory", usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }),
-				expect.objectContaining({ phase: "review", usage: { inputTokens: 20, outputTokens: 2, totalTokens: 22 } }),
-				expect.objectContaining({ phase: "planner", usage: { inputTokens: 30, outputTokens: 2, totalTokens: 32 } }),
 			]);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
-	it("does not apply or auto-case a memory-only proposal returned by the general planner", async () => {
-		let call = 0;
-		const llm = {
-			stream: async function* () {
-				call += 1;
-				const text = call === 1
-					? JSON.stringify({ summary: "no memory", rationale: "dedicated phase found none", expectedOutcome: "none", edits: [] })
-					: call === 2
-						? JSON.stringify({ shouldRefine: true, rationale: "planner test", instructions: "only memory" })
-						: JSON.stringify({
-								summary: "memory-only general plan",
-								rationale: "should already be covered",
-								expectedOutcome: "none",
-								edits: [{
-									action: "create",
-									kind: "memory",
-									targetScope: "local",
-									blastRadius: "session",
-									title: "不应由通用 planner 写入",
-									content: "这条 memory 归专用 extractor 所有。",
-									metadata: { memoryType: "user" },
-								}],
-							});
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
-			},
-		} as unknown as Context["llm"];
-		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "触发通用 planner memory-only 输出" }], source: { kind: "user" } } }];
-		const agent = {
-			id: "session-memory-only-plan",
-			options: { provider: "test-provider", model: "test-model" },
-			session: { header: {}, events },
-			followup: () => undefined,
-		};
-		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) }, config: { autoCase: true, prefixCacheMode: "off" } });
-		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(call).toBe(3));
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
-			// [armed, memory-noop, review-declined]: the dedicated phase
-			// found nothing, then the review declined the stripped plan.
-			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "noop" });
-			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined" });
-			const statePath = join(h.dir, "evolve", "local", agent.id, "harness_state.json");
-			const stateText = existsSync(statePath) ? readFileSync(statePath, "utf8") : "";
-			expect(stateText).not.toContain("不应由通用 planner 写入");
-			expect(existsSync(join(h.dir, "evolve", "benchmarks", "auto_regression"))).toBe(false);
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-
-	it("keeps a failed memory extraction retryable and advances the shared cursor only after recovery", async () => {
+	it("keeps a failed extraction retryable and advances the shared cursor only after recovery", async () => {
 		let call = 0;
 		const requests: GenerateOptions[] = [];
 		const llm = {
@@ -522,16 +343,7 @@ describe("registerAutoReview wiring", () => {
 				requests.push(request);
 				call += 1;
 				if (call === 1) throw new Error("memory provider unavailable");
-				const text = call % 2 === 0
-					? JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] })
-					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution either" });
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
+				for (const chunk of noopMemoryChunk(MEMORY_NOOP)) yield chunk;
 			},
 		} as unknown as Context["llm"];
 		const events: unknown[] = [{
@@ -547,12 +359,12 @@ describe("registerAutoReview wiring", () => {
 		};
 		const h = wiringHarness({
 			llm,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
 			sessionQuery: { readSurface: async () => ({ events }) },
 			config: { prefixCacheMode: "off" },
 		});
 		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
+			compact(h, agent);
 			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
 			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
 
@@ -561,23 +373,20 @@ describe("registerAutoReview wiring", () => {
 				seq: 2,
 				data: { content: [{ type: "text", text: "第二条恢复后处理的约定" }], source: { kind: "user" } },
 			});
-			h.emit("agent/turn-stopping", { agent, turn: 2 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(call).toBe(3));
+			compact(h, agent);
+			await vi.waitFor(() => expect(call).toBe(2));
 			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "noop" });
-			expect(JSON.parse(h.reviewsLines()[3] ?? "{}")).toMatchObject({ outcome: "declined" });
 
 			events.push({
 				type: "user/message",
 				seq: 3,
 				data: { content: [{ type: "text", text: "第三条只应出现在已推进游标之后" }], source: { kind: "user" } },
 			});
-			h.emit("agent/turn-stopping", { agent, turn: 3 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(call).toBe(5));
+			compact(h, agent);
+			await vi.waitFor(() => expect(call).toBe(3));
 
 			const retriedMemoryInput = JSON.stringify(requests[1]?.messages);
-			const incrementalMemoryInput = JSON.stringify(requests[3]?.messages);
+			const incrementalMemoryInput = JSON.stringify(requests[2]?.messages);
 			expect(retriedMemoryInput).toContain("第一条需要重试的长期约定");
 			expect(retriedMemoryInput).toContain("第二条恢复后处理的约定");
 			expect(incrementalMemoryInput).toContain("第三条只应出现在已推进游标之后");
@@ -587,87 +396,17 @@ describe("registerAutoReview wiring", () => {
 		}
 	});
 
-	it("keeps the memory checkpoint independent when a later review attempt fails", async () => {
-		const requests: GenerateOptions[] = [];
-		let call = 0;
-		const llm = {
-			stream: async function* (request: GenerateOptions) {
-				requests.push(request);
-				call += 1;
-				if (call === 2) throw new Error("review provider unavailable");
-				const text = call % 2 === 1
-					? JSON.stringify({ summary: "no memory", rationale: "nothing new", expectedOutcome: "none", edits: [] })
-					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution" });
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
-			},
-		} as unknown as Context["llm"];
-		const events: unknown[] = [{
-			type: "user/message",
-			data: { content: [{ type: "text", text: "A1 已由 memory 成功处理" }], source: { kind: "user" } },
-		}];
-		const agent = {
-			id: "session-memory-checkpoint",
-			options: { provider: "test-provider", model: "test-model" },
-			session: { header: {}, events },
-			followup: () => undefined,
-		};
-		const h = wiringHarness({ llm, sessionQuery: { readSurface: async () => ({ events }) }, config: { prefixCacheMode: "off" } });
-		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(call).toBe(2));
-			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "noop" });
-			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "failed" });
-
-			events.push({
-				type: "user/message",
-				data: { content: [{ type: "text", text: "A2 是 review 失败后新增的证据" }], source: { kind: "user" } },
-			});
-			h.emit("agent/turn-stopping", { agent, turn: 2 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(call).toBe(4));
-
-			const retriedMemoryInput = JSON.stringify(requests[2]?.messages);
-			expect(retriedMemoryInput).toContain("A2 是 review 失败后新增的证据");
-			expect(retriedMemoryInput).not.toContain("A1 已由 memory 成功处理");
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-
 	it("isolates memory checkpoints and shutdown across interleaved sessions", async () => {
 		const memoryInputs: string[] = [];
-		let aReviews = 0;
-		let bReviews = 0;
 		const llm = {
 			stream: async function* (request: GenerateOptions) {
-				const body = JSON.stringify(request.messages);
 				const memory = request.system?.includes("dedicated background memory extraction agent") === true;
-				let text: string;
 				if (memory) {
-					memoryInputs.push(body);
-					text = JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] });
-				} else if (body.includes("A1") || body.includes("A2")) {
-					aReviews += 1;
-					if (aReviews === 1) throw new Error("A review failed");
-					text = JSON.stringify({ shouldRefine: false, rationale: "A recovered" });
-				} else {
-					bReviews += 1;
-					text = JSON.stringify({ shouldRefine: false, rationale: "B complete" });
+					memoryInputs.push(JSON.stringify(request.messages));
+					for (const chunk of noopMemoryChunk(MEMORY_NOOP)) yield chunk;
+					return;
 				}
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
+				throw new Error("only the dedicated memory phase may call the model");
 			},
 		} as unknown as Context["llm"];
 		const aEvents: unknown[] = [{
@@ -694,25 +433,22 @@ describe("registerAutoReview wiring", () => {
 		};
 		const h = wiringHarness({
 			llm,
+			agents: new Map<string, unknown>([[agentA.id, agentA], [agentB.id, agentB]]),
 			sessionQuery: { readSurface: async (sessionId) => ({ events: sessionId === agentA.id ? aEvents : bEvents }) },
 			config: { prefixCacheMode: "off" },
 		});
 		try {
-			h.emit("agent/turn-stopping", { agent: agentA, turn: 1 });
-			h.emit("agent/turn-stopping", { agent: agentB, turn: 1 });
-			h.emit("agent/status", { agent: agentA, status: "idle" });
-			h.emit("agent/status", { agent: agentB, status: "idle" });
-			await vi.waitFor(() => expect(aReviews).toBe(1));
-			await vi.waitFor(() => expect(bReviews).toBe(1));
+			compact(h, agentA);
+			compact(h, agentB);
+			await vi.waitFor(() => expect(memoryInputs).toHaveLength(2));
 
 			aEvents.push({
 				type: "user/message",
 				seq: 2,
 				data: { content: [{ type: "text", text: "A2 第一会话新增证据" }], source: { kind: "user" } },
 			});
-			h.emit("agent/turn-stopping", { agent: agentA, turn: 2 });
-			h.emit("agent/status", { agent: agentA, status: "idle" });
-			await vi.waitFor(() => expect(aReviews).toBe(2));
+			compact(h, agentA);
+			await vi.waitFor(() => expect(memoryInputs).toHaveLength(3));
 			const aRetry = memoryInputs.find((input) => input.includes("A2"));
 			expect(aRetry).toContain("A2 第一会话新增证据");
 			expect(aRetry).not.toContain("A1 第一会话证据");
@@ -723,9 +459,8 @@ describe("registerAutoReview wiring", () => {
 				seq: 2,
 				data: { content: [{ type: "text", text: "B2 第二会话在 A dispose 后继续" }], source: { kind: "user" } },
 			});
-			h.emit("agent/turn-stopping", { agent: agentB, turn: 2 });
-			h.emit("agent/status", { agent: agentB, status: "idle" });
-			await vi.waitFor(() => expect(bReviews).toBe(2));
+			compact(h, agentB);
+			await vi.waitFor(() => expect(memoryInputs).toHaveLength(4));
 			const bNext = memoryInputs.find((input) => input.includes("B2"));
 			expect(bNext).toContain("B2 第二会话在 A dispose 后继续");
 			expect(bNext).not.toContain("B1 第二会话证据");
@@ -735,7 +470,6 @@ describe("registerAutoReview wiring", () => {
 	});
 
 	it("keeps malformed approval retryable and does not re-ask after an explicit decline", async () => {
-		let call = 0;
 		let asks = 0;
 		const userQuestions = {
 			ask: async () => {
@@ -743,28 +477,23 @@ describe("registerAutoReview wiring", () => {
 				return asks === 1 ? {} : { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
 			},
 		};
+		const globalEditReply = JSON.stringify({
+			summary: "尝试全局记忆",
+			rationale: "用户确认了长期偏好",
+			expectedOutcome: "跨会话召回",
+			edits: [{
+				action: "create",
+				kind: "memory",
+				targetScope: "global",
+				blastRadius: "general",
+				title: "长期偏好",
+				content: "用户明确要求所有项目都使用 pnpm。",
+				metadata: { memoryType: "user" },
+			}],
+		});
 		const llm = {
-			stream: async function* (request: GenerateOptions) {
-				call += 1;
-				const isMemory = request.system?.includes("dedicated background memory extraction agent") === true;
-				const text = isMemory
-					? JSON.stringify({ summary: "尝试全局记忆", rationale: "用户确认了长期偏好", expectedOutcome: "跨会话召回", edits: [{
-						action: "create",
-						kind: "memory",
-						targetScope: "global",
-						blastRadius: "general",
-						title: "长期偏好",
-						content: "用户明确要求所有项目都使用 pnpm。",
-						metadata: { memoryType: "user" },
-					}] })
-					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution" });
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
+			stream: async function* () {
+				for (const chunk of noopMemoryChunk(globalEditReply)) yield chunk;
 			},
 		} as unknown as Context["llm"];
 		const events: unknown[] = [{
@@ -773,10 +502,15 @@ describe("registerAutoReview wiring", () => {
 			data: { content: [{ type: "text", text: "请记住这个长期偏好" }], source: { kind: "user" } },
 		}];
 		const agent = { id: "session-approval-cursor", options: { provider: "test-provider", model: "test-model" }, session: { header: {} } };
-		const h = wiringHarness({ llm, userQuestions, sessionQuery: { readSurface: async () => ({ events }) } });
+		const h = wiringHarness({
+			llm,
+			userQuestions,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
+			sessionQuery: { readSurface: async () => ({ events }) },
+			config: { prefixCacheMode: "off" },
+		});
 		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
+			compact(h, agent);
 			await vi.waitFor(() => expect(asks).toBe(1));
 			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
 			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
@@ -786,12 +520,10 @@ describe("registerAutoReview wiring", () => {
 				seq: 2,
 				data: { content: [{ type: "text", text: "补充一次但不改变偏好" }], source: { kind: "user" } },
 			});
-			h.emit("agent/turn-stopping", { agent, turn: 2 });
-			h.emit("agent/status", { agent, status: "idle" });
+			compact(h, agent);
 			await vi.waitFor(() => expect(asks).toBe(2));
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(4));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
 			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined", rationale: expect.stringContaining("memory scopes declined") });
-			expect(JSON.parse(h.reviewsLines()[3] ?? "{}")).toMatchObject({ outcome: "declined" });
 			expect(asks).toBe(2);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
@@ -799,7 +531,7 @@ describe("registerAutoReview wiring", () => {
 	});
 
 	it("reuses a project decline when a later global approval failed on the same boundary", async () => {
-		let call = 0;
+		let asks = 0;
 		let projectAsks = 0;
 		let globalAsks = 0;
 		const userQuestions = {
@@ -810,47 +542,38 @@ describe("registerAutoReview wiring", () => {
 					return { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
 				}
 				globalAsks += 1;
-				return globalAsks === 1 ? {} : { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
+				asks += 1;
+				return asks === 1 ? {} : { answers: [{ id: "approve-global-evolve", selected: ["拒绝"] }] };
 			},
 		};
+		const twoScopeReply = JSON.stringify({
+			summary: "跨 scope 提案",
+			rationale: "需要两个作用域审批",
+			expectedOutcome: "完整落地",
+			edits: [
+				{
+					action: "create",
+					kind: "memory",
+					targetScope: "project",
+					blastRadius: "project",
+					title: "项目事实",
+					content: "Why: 项目有特殊约束。 How to apply: 发布前执行项目门禁。",
+					metadata: { memoryType: "project" },
+				},
+				{
+					action: "create",
+					kind: "memory",
+					targetScope: "global",
+					blastRadius: "general",
+					title: "全局事实",
+					content: "用户确认了跨项目长期偏好。",
+					metadata: { memoryType: "user" },
+				},
+			],
+		});
 		const llm = {
-			stream: async function* (request: GenerateOptions) {
-				call += 1;
-				const isMemory = request.system?.includes("dedicated background memory extraction agent") === true;
-				const text = isMemory
-					? JSON.stringify({
-							summary: "跨 scope 提案",
-							rationale: "需要两个作用域审批",
-							expectedOutcome: "完整落地",
-							edits: [
-								{
-									action: "create",
-									kind: "memory",
-									targetScope: "project",
-									blastRadius: "project",
-									title: "项目事实",
-									content: "Why: 项目有特殊约束。 How to apply: 发布前执行项目门禁。",
-									metadata: { memoryType: "project" },
-								},
-								{
-									action: "create",
-									kind: "memory",
-									targetScope: "global",
-									blastRadius: "general",
-									title: "全局事实",
-									content: "用户确认了跨项目长期偏好。",
-									metadata: { memoryType: "user" },
-								},
-							],
-						})
-					: JSON.stringify({ shouldRefine: false, rationale: "no general evolution" });
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
+			stream: async function* () {
+				for (const chunk of noopMemoryChunk(twoScopeReply)) yield chunk;
 			},
 		} as unknown as Context["llm"];
 		const events: unknown[] = [{
@@ -859,19 +582,23 @@ describe("registerAutoReview wiring", () => {
 			data: { content: [{ type: "text", text: "请记住项目和全局两个事实" }], source: { kind: "user" } },
 		}];
 		const agent = { id: "session-multi-approval", options: { provider: "test-provider", model: "test-model" }, session: { header: { cwd: "/workspace/memory-project" } } };
-		const h = wiringHarness({ llm, userQuestions, agents: new Map([[agent.id, agent]]), sessionQuery: { readSurface: async () => ({ events }) } });
+		const h = wiringHarness({
+			llm,
+			userQuestions,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
+			sessionQuery: { readSurface: async () => ({ events }) },
+			config: { prefixCacheMode: "off" },
+		});
 		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
+			compact(h, agent);
 			await vi.waitFor(() => expect(globalAsks).toBe(1));
 			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
 			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ outcome: "failed" });
 
-			h.emit("session/event", { id: agent.id }, { type: "compaction/start" });
+			compact(h, agent);
 			await vi.waitFor(() => expect(globalAsks).toBe(2));
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(4));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
 			expect(JSON.parse(h.reviewsLines()[2] ?? "{}")).toMatchObject({ outcome: "declined", rationale: expect.stringContaining("memory scopes declined") });
-			expect(JSON.parse(h.reviewsLines()[3] ?? "{}")).toMatchObject({ outcome: "declined" });
 			expect(projectAsks).toBe(1);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
@@ -881,12 +608,11 @@ describe("registerAutoReview wiring", () => {
 	it("aborts an in-flight memory session on dispose without stopping another session", async () => {
 		let aStarted = 0;
 		let aAborted = 0;
-		let bReviews = 0;
+		let bCalls = 0;
 		const llm = {
 			stream: async function* (request: GenerateOptions) {
 				const body = JSON.stringify(request.messages);
-				const isMemory = request.system?.includes("dedicated background memory extraction agent") === true;
-				if (isMemory && body.includes("A 的挂起记忆任务")) {
+				if (body.includes("A 的挂起记忆任务")) {
 					aStarted += 1;
 					await new Promise<void>((resolve) => {
 						if (request.signal?.aborted) {
@@ -902,13 +628,8 @@ describe("registerAutoReview wiring", () => {
 					yield { type: "finish", reason: { kind: "aborted", failure: { message: "disposed", code: "aborted" } } } as StreamChunk;
 					return;
 				}
-				const text = isMemory
-					? JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] })
-					: (bReviews += 1, JSON.stringify({ shouldRefine: false, rationale: "B complete" }));
-				yield { type: "block-start", index: 0, blockType: "text" } as StreamChunk;
-				yield { type: "text-delta", index: 0, text } as StreamChunk;
-				yield { type: "block-end", index: 0, block: { type: "text", text } } as StreamChunk;
-				yield { type: "finish", reason: { kind: "stop" } } as StreamChunk;
+				bCalls += 1;
+				for (const chunk of noopMemoryChunk(MEMORY_NOOP)) yield chunk;
 			},
 		} as unknown as Context["llm"];
 		const aEvents = [{ type: "user/message", data: { content: [{ type: "text", text: "A 的挂起记忆任务" }], source: { kind: "user" } } }];
@@ -917,81 +638,104 @@ describe("registerAutoReview wiring", () => {
 		const agentB = { id: "session-b-abort", options: { provider: "test-provider", model: "test-model" }, session: { header: {} } };
 		const h = wiringHarness({
 			llm,
+			agents: new Map<string, unknown>([[agentA.id, agentA], [agentB.id, agentB]]),
 			sessionQuery: { readSurface: async (sessionId) => ({ events: sessionId === agentA.id ? aEvents : bEvents }) },
 			// Bounded drain, fast: the hanging run must abort after ~50ms,
 			// not after the 15s production default.
 			config: { prefixCacheMode: "off", sessionCloseDrainMs: 50 },
 		});
 		try {
-			h.emit("agent/turn-stopping", { agent: agentA, turn: 1 });
-			h.emit("agent/status", { agent: agentA, status: "idle" });
+			compact(h, agentA);
 			await vi.waitFor(() => expect(aStarted).toBe(1));
 			h.emit("agent/disposed", { agent: agentA });
 			await vi.waitFor(() => expect(aAborted).toBe(1));
 			await vi.waitFor(() => expect(h.reviewsLines().some((line) => JSON.parse(line).sessionId === agentA.id && JSON.parse(line).outcome === "failed")).toBe(true));
 
-			h.emit("agent/turn-stopping", { agent: agentB, turn: 1 });
-			h.emit("agent/status", { agent: agentB, status: "idle" });
-			await vi.waitFor(() => expect(bReviews).toBe(1));
-			expect(h.reviewsLines().some((line) => JSON.parse(line).sessionId === agentB.id && JSON.parse(line).outcome === "declined")).toBe(true);
+			compact(h, agentB);
+			await vi.waitFor(() => expect(bCalls).toBe(1));
+			expect(h.reviewsLines().some((line) => JSON.parse(line).sessionId === agentB.id && JSON.parse(line).outcome === "noop")).toBe(true);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
-	it("runs a successful turn snapshot even when the session goal is active", async () => {
-		const h = wiringHarness({ goals: { get: () => ({ phase: "active" }) } });
+	it("a goal blocked for the configured streak fires one goal_blocked moment and resets", async () => {
+		let calls = 0;
+		const llm = {
+			stream: async function* () {
+				calls += 1;
+				for (const chunk of noopMemoryChunk(MEMORY_NOOP)) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "goal 被阻塞时的会话证据" }], source: { kind: "user" } } }];
+		const agent = {
+			id: "session-goal-blocked",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: () => undefined,
+		};
+		const h = wiringHarness({
+			llm,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
+			sessionQuery: { readSurface: async () => ({ events }) },
+			goals: { get: () => ({ phase: "blocked" }) },
+			config: { goalBlockedWrapupTurns: 2, prefixCacheMode: "off" },
+		});
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
-			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
-			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { outcome?: string; reason?: string };
-			expect(record.outcome).toBe("skipped");
-			expect(record.reason).toBe("turn_snapshot");
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
+			h.emit("agent/status", { agent, status: "idle" });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(h.reviewsLines()).toHaveLength(1); // streak 1: no moment yet
 
-	it("compaction triggers the gate unconditionally; cold sessions are ignored", async () => {
-		const agents = new Map<string, unknown>([["session-wire", wireAgent]]);
-		const h = wiringHarness({ agents });
-		try {
-			h.emit("session/event", { id: "session-wire" }, { type: "compaction/start" });
-			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
-			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { reason?: string };
-			expect(record.reason).toBe("compact");
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(calls).toBe(1));
+			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(2));
+			expect(JSON.parse(h.reviewsLines()[1] ?? "{}")).toMatchObject({ reason: "goal_blocked", outcome: "noop" });
 
-			h.emit("session/event", { id: "session-cold" }, { type: "compaction/start" });
-			await vi.waitFor(() => expect(true).toBe(true));
+			// a fresh streak must build up again — no immediate re-trigger
+			h.emit("agent/status", { agent, status: "idle" });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(calls).toBe(1);
 			expect(h.reviewsLines()).toHaveLength(2);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
-	it("does not add a compaction trigger in memory-only mode", async () => {
-		const agents = new Map<string, unknown>([["session-wire", wireAgent]]);
-		const h = wiringHarness({ agents, config: { memoryOnly: true } });
+	it("a non-blocked goal resets the streak and never fires a moment", async () => {
+		const h = wiringHarness({ goals: { get: () => ({ phase: "active" }) }, config: { goalBlockedWrapupTurns: 2 } });
 		try {
-			h.emit("session/event", { id: "session-wire" }, { type: "compaction/start" });
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(1));
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(h.reviewsLines()).toHaveLength(1);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
 
-	it("a paused gate stays dormant on the turn-interval path (no LLM, no record)", async () => {
-		const h = wiringHarness();
+	it("the goal-blocked moment is disabled at zero", async () => {
+		const h = wiringHarness({ goals: { get: () => ({ phase: "blocked" }) }, config: { goalBlockedWrapupTurns: 0 } });
 		try {
-			const { saveGateRuntime } = await import("../src/runtime.js");
-			saveGateRuntime(h.dir, true);
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 2 });
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 3 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
-			await vi.waitFor(() => expect(true).toBe(true)); // flush microtasks
-			expect(h.reviewsLines()).toHaveLength(1); // armed marker only
+			for (let i = 0; i < 4; i += 1) h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(h.reviewsLines()).toHaveLength(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("compaction triggers extraction unconditionally; cold sessions are ignored", async () => {
+		const agents = new Map<string, unknown>([["session-wire", wireAgent]]);
+		const h = wiringHarness({ agents });
+		try {
+			compact(h, wireAgent);
+			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
+			const record = JSON.parse(h.reviewsLines()[1] ?? "{}") as { reason?: string };
+			expect(record.reason).toBe("compact");
+
+			h.emit("session/event", { id: "session-cold" }, { type: "compaction/start" });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(h.reviewsLines()).toHaveLength(2);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
@@ -1003,83 +747,11 @@ describe("registerAutoReview wiring", () => {
 		try {
 			const { saveGateRuntime } = await import("../src/runtime.js");
 			saveGateRuntime(h.dir, true);
-			h.emit("session/event", { id: "session-wire" }, { type: "compaction/start" });
-			await vi.waitFor(() => expect(true).toBe(true));
+			compact(h, wireAgent);
+			await new Promise((resolve) => setTimeout(resolve, 200));
 			expect(h.reviewsLines()).toHaveLength(1); // armed marker only
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-});
-
-describe("runGoalBlockedFate (D3)", () => {
-	function blockedCtx(): { ctx: Context; infos: string[] } {
-		const infos: string[] = [];
-		const ctx = {
-			logger: () => ({
-				warn: () => undefined,
-				info: (message: string) => infos.push(message),
-			}),
-			get: (name: string) => (name === "goals" ? { get: () => ({ phase: "blocked" }) } : undefined),
-		} as unknown as Context;
-		return { ctx, infos };
-	}
-
-	function collector(): (entry: Record<string, unknown>) => void {
-		return () => undefined;
-	}
-
-	it("returns immediately when the trigger is disabled", async () => {
-		const { ctx } = blockedCtx();
-		const state = fresh();
-		const engine = createEvolutionEngine(mkdtempSync(join(tmpdir(), "evolve-d3-off-")));
-		try {
-			await runGoalBlockedFate(ctx, engine, wireAgent as never, baseConfig({ goalBlockedWrapupTurns: 0 }), state, "turn_interval", collector());
-			expect(state.goalBlockStreak).toBe(0);
-			expect(state.turns).toBe(0);
-		} finally {
-			rmSync(engine.baseDir, { recursive: true, force: true });
-		}
-	});
-
-	it("a non-blocked goal resets the streak without running fate", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "evolve-d3-reset-"));
-		const engine = createEvolutionEngine(dir);
-		const ctx = {
-			logger: () => ({ warn: () => undefined, info: () => undefined }),
-			get: (name: string) => (name === "goals" ? { get: () => ({ phase: "active" }) } : undefined),
-		} as unknown as Context;
-		const state = fresh();
-		state.goalBlockStreak = 2;
-		try {
-			await runGoalBlockedFate(ctx, engine, wireAgent as never, baseConfig({ goalBlockedWrapupTurns: 3 }), state, "turn_interval", collector());
-			expect(state.goalBlockStreak).toBe(0);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it("triggers one fate assessment at the streak threshold and resets", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "evolve-d3-fire-"));
-		const engine = createEvolutionEngine(dir);
-		const { ctx, infos } = blockedCtx();
-		const config = baseConfig({ goalBlockedWrapupTurns: 3, localFate: true });
-		const state = fresh();
-		try {
-			await runGoalBlockedFate(ctx, engine, wireAgent as never, config, state, "turn_interval", collector());
-			await runGoalBlockedFate(ctx, engine, wireAgent as never, config, state, "turn_interval", collector());
-			expect(state.goalBlockStreak).toBe(2);
-			expect(infos.some((m) => m.includes("goal-blocked trigger"))).toBe(false);
-
-			await runGoalBlockedFate(ctx, engine, wireAgent as never, config, state, "turn_interval", collector());
-			expect(state.goalBlockStreak).toBe(0);
-			expect(infos.some((m) => m.includes("goal-blocked trigger"))).toBe(true);
-
-			// a fresh streak must build up again — no immediate re-trigger
-			await runGoalBlockedFate(ctx, engine, wireAgent as never, config, state, "turn_interval", collector());
-			expect(state.goalBlockStreak).toBe(1);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
@@ -1136,14 +808,13 @@ describe("runMemoryExtractionPhase receipts", () => {
 
 	function gateState(): GateState {
 		return {
-			turns: 4, completedTurn: 4, lastSnapshotTurn: 4, memoryDecisions: {}, lastReviewAt: 0,
-			running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0,
+			turns: 4, completedTurn: 4, memoryDecisions: {}, lastReviewAt: 0, goalBlockStreak: 0,
 		} as GateState;
 	}
 
 	function snapshot() {
 		return {
-			sessionId: "session-mem", turn: 4, reason: "turn_snapshot", cursor: "seq:5", events: [],
+			sessionId: "session-mem", turn: 4, reason: "compact", cursor: "seq:5", events: [],
 			trajectory: "", userText: "", sourceSeqs: [], maxChars: 100, minUserWords: 3, eligible: false,
 		} as never;
 	}
@@ -1185,33 +856,6 @@ describe("runMemoryExtractionPhase receipts", () => {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
-
-	it("warns instead of crashing when the audit ledger cannot be written", async () => {
-		const blocker = join(tmpdir(), `evolve-blocker-${Date.now()}`);
-		writeFileSync(blocker, "x");
-		try {
-			const engine = createEvolutionEngine(blocker);
-			const warnings: string[] = [];
-			const listeners = new Map<string, Array<(payload: unknown) => void>>();
-			const ctx = {
-				on: (event: string, fn: (payload: unknown) => void) => {
-					listeners.set(event, [...(listeners.get(event) ?? []), fn]);
-				},
-				logger: () => ({ info: () => {}, warn: (m: string) => warnings.push(m), error: () => {} }),
-				sessionQuery: { readSurface: async () => ({ events: [] }) },
-			} as unknown as Context;
-			registerAutoReview(ctx, engine, baseConfig());
-			const agent = { id: "session-mem" } as never;
-			for (const fn of listeners.get("agent/turn-stopping") ?? []) fn({ agent, turn: 1 });
-			for (const fn of listeners.get("agent/status") ?? []) fn({ agent, status: "idle" });
-			// The empty surface records a mechanical skip; the ledger write
-			// fails and is contained as a warning with nothing on disk.
-			await vi.waitFor(() => expect(warnings.some((w) => w.includes("failed to record auto-review"))).toBe(true));
-			expect(existsSync(join(blocker, "evolve", "reviews.jsonl"))).toBe(false);
-		} finally {
-			rmSync(blocker, { force: true });
-		}
-	});
 });
 
 describe("auto-review failure containment", () => {
@@ -1244,176 +888,7 @@ describe("auto-review failure containment", () => {
 	});
 });
 
-describe("full-gate review/planner application", () => {
-	const gateEvents = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "每周都要做会话交接" }], source: { kind: "user" } } }];
-
-	/** Audit rows only: reviews.jsonl also carries evolve_complete events. */
-	function auditRows(h: { reviewsLines: () => string[] }): { outcome?: string }[] {
-		return h.reviewsLines().map((line) => JSON.parse(line) as { outcome?: string }).filter((row) => row.outcome !== undefined);
-	}
-
-	function gateAgent(id: string, followup: (msg: unknown) => void = () => undefined) {
-		return { id, options: { provider: "test-provider", model: "test-model" }, session: { header: {}, events: gateEvents }, followup } as never;
-	}
-
-	function scriptedLlm(replies: string[]): { llm: Context["llm"]; calls: () => number } {
-		let calls = 0;
-		const llm = {
-			stream: async function* () {
-				const text = replies[Math.min(calls, replies.length - 1)] ?? "";
-				calls += 1;
-				const chunks: StreamChunk[] = [
-					{ type: "block-start", index: 0, blockType: "text" },
-					{ type: "text-delta", index: 0, text },
-					{ type: "block-end", index: 0, block: { type: "text", text } },
-					{ type: "finish", reason: { kind: "stop" } },
-				];
-				for (const chunk of chunks) yield chunk;
-			},
-		} as unknown as Context["llm"];
-		return { llm, calls: () => calls };
-	}
-
-	const SKILL_PLAN = JSON.stringify({
-		summary: "session handoff workflow",
-		rationale: "the trajectory repeats the handoff routine",
-		expectedOutcome: "guidance skill for handoffs",
-		edits: [{
-			action: "create",
-			kind: "skill",
-			title: "Session handoff process",
-			content: "Run the handoff checklist at session end.",
-			skill_kind: "executable",
-			reference: { type: "python", import: "handoff", callable: "run" },
-			arguments: { scope: { type: "string", required: true, description: "handoff scope" } },
-			blastRadius: "session",
-			reason: "repeated multi-step workflow with a real trigger",
-		}],
-	});
-
-	it("withholds skill edits without the question service and captures an auto-case", async () => {
-		const { llm } = scriptedLlm([
-			JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] }),
-			JSON.stringify({ shouldRefine: true, rationale: "repeated handoff workflow", instructions: "propose the handoff skill" }),
-			SKILL_PLAN,
-		]);
-		const agent = gateAgent("session-gate-skill");
-		const h = wiringHarness({
-			llm,
-			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
-			config: { autoCase: true, prefixCacheMode: "off" },
-		});
-		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(h.reviewsLines()).toHaveLength(3));
-			const review = JSON.parse(h.reviewsLines()[2] ?? "{}") as { outcome?: string; rationale?: string };
-			expect(review.outcome).toBe("declined");
-			expect(review.rationale).toContain("withheld");
-			const engine = createEvolutionEngine(h.dir);
-			expect(Object.keys(engine.load("local", "session-gate-skill").entries.skill)).toHaveLength(0);
-			expect(existsSync(join(h.dir, "evolve", "benchmarks", "auto_regression"))).toBe(true);
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-
-	it("contains an auto-case capture failure instead of breaking the gate", async () => {
-		const { llm } = scriptedLlm([
-			JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] }),
-			JSON.stringify({ shouldRefine: true, rationale: "repeated handoff workflow", instructions: "propose the handoff skill" }),
-			SKILL_PLAN,
-		]);
-		const agent = gateAgent("session-gate-autocase");
-		const h = wiringHarness({
-			llm,
-			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
-			config: { autoCase: true, prefixCacheMode: "off" },
-		});
-		try {
-			const { mkdirSync } = await import("node:fs");
-			mkdirSync(join(h.dir, "evolve"), { recursive: true });
-			writeFileSync(join(h.dir, "evolve", "benchmarks"), "blocker");
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(auditRows(h)).toHaveLength(3));
-			expect(auditRows(h)[2]?.outcome).toBe("declined");
-			expect(h.warnings.some((w) => w.includes("auto-case capture failed"))).toBe(true);
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-
-	it("applies consented skill edits locally and notifies the session", async () => {		const { llm } = scriptedLlm([
-			JSON.stringify({ summary: "no memory", rationale: "nothing durable", expectedOutcome: "none", edits: [] }),
-			JSON.stringify({ shouldRefine: true, rationale: "repeated handoff workflow", instructions: "propose the handoff skill" }),
-			SKILL_PLAN,
-		]);
-		const followedUp: unknown[] = [];
-		const agent = gateAgent("session-gate-apply", (msg) => followedUp.push(msg));
-		const h = wiringHarness({
-			llm,
-			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
-			userQuestions: { ask: async () => ({ answers: [{ id: "evolve-skill-consult", selected: ["固化"] }] }) },
-			config: { notifyOnAutoReview: true, prefixCacheMode: "off" },
-		});
-		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(auditRows(h)).toHaveLength(3));
-			const review = auditRows(h)[2] as { outcome?: string };
-			expect(review.outcome).toBe("approved");
-			const engine = createEvolutionEngine(h.dir);
-			expect(Object.keys(engine.load("local", "session-gate-apply").entries.skill)).toHaveLength(1);
-			expect(followedUp).toHaveLength(1);
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-
-	it("lands local memory edits from the dedicated phase and notifies on applied", async () => {
-		const { llm } = scriptedLlm([
-			JSON.stringify({
-				summary: "one durable preference",
-				rationale: "user repeats the same build command",
-				expectedOutcome: "memory saved",
-				edits: [{
-					action: "create",
-					kind: "memory",
-					targetScope: "local",
-					blastRadius: "session",
-					title: "Build command",
-					content: "Build with pnpm build. Why: repeated. How to apply: run it.",
-					metadata: { memoryType: "project" },
-				}],
-			}),
-			JSON.stringify({ shouldRefine: false, rationale: "memory phase owns this evidence" }),
-		]);
-		const followedUp: unknown[] = [];
-		const agent = gateAgent("session-gate-memory", (msg) => followedUp.push(msg));
-		const h = wiringHarness({
-			llm,
-			sessionQuery: { readSurface: async () => ({ events: gateEvents }) },
-			config: { notifyOnAutoReview: true, prefixCacheMode: "off", requireGlobalApproval: false },
-		});
-		try {
-			h.emit("agent/turn-stopping", { agent, turn: 1 });
-			h.emit("agent/status", { agent, status: "idle" });
-			await vi.waitFor(() => expect(auditRows(h)).toHaveLength(3));
-			const rows = auditRows(h);
-			expect(rows[1]?.outcome).toBe("applied");
-			expect(rows[2]?.outcome).toBe("declined");
-			const engine = createEvolutionEngine(h.dir);
-			const memories = engine.load("local", "session-gate-memory").entries.memory;
-			expect(Object.values(memories).some((entry) => entry.title === "Build command")).toBe(true);
-			expect(followedUp).toHaveLength(1);
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-});
-
-describe("registerAutoReview scheduler guards (branch-85 round)", () => {
+describe("registerAutoReview guards", () => {
 	it("ignores non-idle statuses and agentless payloads", () => {
 		const h = wiringHarness();
 		try {
@@ -1421,20 +896,6 @@ describe("registerAutoReview scheduler guards (branch-85 round)", () => {
 			h.emit("agent/status", {});
 			h.emit("agent/disposed", {});
 			expect(h.reviewsLines()).toHaveLength(1);
-		} finally {
-			rmSync(h.dir, { recursive: true, force: true });
-		}
-	});
-
-	it("skips a second idle with no new turn", async () => {
-		const h = wiringHarness();
-		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
-			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
-			await new Promise((resolve) => setTimeout(resolve, 300));
-			expect(h.reviewsLines()).toHaveLength(2);
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
@@ -1452,27 +913,25 @@ describe("registerAutoReview scheduler guards (branch-85 round)", () => {
 
 	it("passes an explicit minUserWords into snapshot capture", async () => {
 		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "请记住这个约定" }], source: { kind: "user" } } }];
-		const h = wiringHarness({ sessionQuery: { readSurface: async () => ({ events }) }, config: { memoryMinUserWords: 3 } });
+		const agents = new Map<string, unknown>([[wireAgent.id, wireAgent]]);
+		const h = wiringHarness({ agents, sessionQuery: { readSurface: async () => ({ events }) }, config: { memoryMinUserWords: 3 } });
 		try {
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			compact(h, wireAgent);
 			await vi.waitFor(() => expect(h.reviewsLines().length).toBe(2));
 		} finally {
 			rmSync(h.dir, { recursive: true, force: true });
 		}
 	});
-});
 
-describe("registerAutoReview failure guards (branch-85 round)", () => {
 	it("warns instead of crashing when the audit trail is unwritable", async () => {
-		const h = wiringHarness();
+		const agents = new Map<string, unknown>([[wireAgent.id, wireAgent]]);
+		const h = wiringHarness({ agents });
 		try {
 			const { chmodSync } = await import("node:fs");
 			const reviews = join(h.dir, "evolve", "reviews.jsonl");
 			chmodSync(reviews, 0o000);
 			try {
-				h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-				h.emit("agent/status", { agent: wireAgent, status: "idle" });
+				compact(h, wireAgent);
 				await vi.waitFor(() => expect(h.warnings.some((w) => w.includes("failed to record"))).toBe(true));
 			} finally {
 				chmodSync(reviews, 0o644);
@@ -1482,12 +941,12 @@ describe("registerAutoReview failure guards (branch-85 round)", () => {
 		}
 	});
 
-	it("aborts a scheduled review when the gate pauses mid-flight", async () => {
-		const h = wiringHarness();
+	it("aborts a scheduled extraction when the gate pauses mid-flight", async () => {
+		const agents = new Map<string, unknown>([[wireAgent.id, wireAgent]]);
+		const h = wiringHarness({ agents });
 		try {
 			const { saveGateRuntime } = await import("../src/runtime.js");
-			h.emit("agent/turn-stopping", { agent: wireAgent, turn: 1 });
-			h.emit("agent/status", { agent: wireAgent, status: "idle" });
+			compact(h, wireAgent);
 			// Pause synchronously: the async capture/schedule/callback chain
 			// observes the paused gate and aborts without recording.
 			saveGateRuntime(h.dir, true);

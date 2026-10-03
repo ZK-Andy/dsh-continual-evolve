@@ -22,7 +22,7 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 
 - **三作用域**与合并语义（global < project < local）：**local** 本会话暂存、**project** 本项目跨会话库、**global** 跨项目——配合机械化晋升守卫，只有可携带、有分量、非重复的知识才能进全局
 - **类型化单条记忆**：每条 memory 带召回类型（`user | feedback | project | reference`）；踩坑（`feedback`）必须含 Why + How to apply
-- **专用后台记忆 Agent**：成功回合通过机械 eligibility 后，有界 ZCode 式 loop 检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码。该 listener 不运行通用 review/planner/fate
+- **时刻驱动的后台记忆 Agent**：有界 ZCode 式 loop 只在四个低频时刻醒来（压缩、goal 连续受阻、会话收尾 drain、手动 wrapup），检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码。成功回合零 LLM 成本——日常沉淀由对话直写承担
 - **记忆召回、投影与回执**：`evolve_recall` 按 query/kind/scope/type 精确读回记忆全文；每次 memory 落盘同时生成可读的 `MEMORY.md` 索引 + 单事实文件；每次提取留统一审计回执（no-op/applied/declined + 耗时与轮次统计），只有实际沉淀才通知会话
 - **确定性回滚**：逆操作编辑由已应用结果生成——不靠 LLM 重新猜测
 - **benchmark 闭环**：候选沉淀先经冻结用例 + 独立评分者评估再接受（rubric 加密落盘）
@@ -30,8 +30,8 @@ Agent 在每个会话里积累可复用经验（重复失败、持久事实、�
 
 ## 工作原理
 
-1. **沉淀**——模型经 `evolve_add` 创建条目，或由专用 Memory Agent 消费成功回合后的增量 snapshot。通用 review/planner 保持手动，除非另行显式调用。
-2. **能力感知的辅助调用**——memory loop、review、planner、wrapup、fate 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
+1. **沉淀**——模型经 `evolve_add` 创建条目；专用 Memory Agent 只在四个低频时刻消费增量 snapshot（压缩、goal 连续受阻、会话收尾 drain、手动 wrapup）。
+2. **能力感知的辅助调用**——memory loop、planner、wrapup 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
 3. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
 4. **审批**——全局与项目写入需明确人工批准；弹窗展示有界结构化编辑 diff 与冲突提示，弹窗丢失/响应畸形会重试，不会被误记为拒绝。
 5. **应用与注入**——memory 批次先完成所有持久化审批，写前重查 abort；后续 scope 失败时补偿回滚先前写入，成功 scope 仍保留快照与审计。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；**memory 正文**在会话开场按硬预算注入（会话内冻结，when_to_save 指南随行）；skill 仍以按相关性排序的目录索引出现。
@@ -67,14 +67,14 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `/evolve mount · unmount <skillId>` | 把可执行技能热挂载为 live 插件 |
 | `/evolve goal [objective · done · block]` | 回合驱动的自进化目标 |
 | `/evolve benchmark …` | 用例生命周期、运行、接受决策 |
-| `/evolve pause · resume · status` | 暂停/恢复自动门禁（手动工具不受影响）、门禁状态 |
-| `/evolve usage` | 每条目注入次数 + memory/review/planner/wrapup/fate 直属调用的 provider 精确 token（不含 benchmark 宿主子代理） |
+| `/evolve pause · resume · status` | 暂停/恢复自动提取（手动工具不受影响）、运行时状态 |
+| `/evolve usage` | 每条目注入次数 + memory/planner/wrapup 直属调用的 provider 精确 token（不含 benchmark 宿主子代理） |
 
 模型工具：`evolve_list / add / update / delete / rollback / recall`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批；`evolve_recall` 按 query/kind/scope/memoryType/limit 过滤，返回全文 + 版本 + 来源 + 过时信号）。记忆的读写都在对话里完成——模型手里有注入的记忆索引 + `evolve_recall`/`evolve_add`——因此不再有 `/evolve remember · forget · recall` 对应命令：直接在对话里说。
 
 第三方消费：每次进化落地（门禁或手动）都会向 `reviews.jsonl` 追加结构化 `evolve_complete` 事件（shape 见 `src/evolve-event.ts`），与人类可读的审计记录并存。
 
-`/evolve usage` 还会读取 `evolve/token-usage.jsonl`：插件直属 memory Agent、review、planner、手动 wrapup 与自动 fate 调用的 provider 精确 input/cache/output/total token。报告只覆盖保留尾部而非终身累计，单独显示 provider 未返回 usage 的调用，并明确排除宿主 benchmark 子代理、其 agent-loop 调用与逐条 memory 注入归因。
+`/evolve usage` 还会读取 `evolve/token-usage.jsonl`：插件直属 memory Agent、planner 与手动 wrapup 调用的 provider 精确 input/cache/output/total token。报告只覆盖保留尾部而非终身累计，单独显示 provider 未返回 usage 的调用，并明确排除宿主 benchmark 子代理、其 agent-loop 调用与逐条 memory 注入归因。
 
 注入形态：prompt 补充与委派规格带内容注入（每 kind ≤6 条 × 180 字符，按相关性排序）。memory 以**正文**在会话开场注入：`evolve:memory-index` section（order 400）承载 when_to_save 指南 + 预算内的全部记忆正文，排序 `project > feedback > user > reference`，放不下的降级为 `[memory:type:id] 标题`钩子、其余折叠计数（硬上限 `memoryIndex.maxChars`，默认 6000 字符；未展示的用 `evolve_recall` 读）。该 section 每会话只算一次并逐字节复用，system prompt 因此稳定、prompt cache 持续命中——会话中途写入的记忆下个会话生效。skill 仍以按相关性排序的目录索引出现（15 行封顶 + 折叠计数行），memory 不再列入。每次 memory 落盘同时刷新 store 目录下的可读 `MEMORY.md` 索引 + 单事实文件。`memoryIndex.guide` 关闭且 store 为空时 = 零注入 token。
 
@@ -86,15 +86,12 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `autoReview` | `false` | 没有 `evolve/runtime.json` 时 Memory Agent 的初始默认；监听器始终注册，因此它不是注册门 |
 | `memoryMinUserWords` | `3` | ZCode 风格：单个直接用户文本至少包含的词数；使用 CJK 分词 |
 | `sessionCloseDrainMs` | `15000` | 会话关闭时在途提取的有界 drain（毫秒，`0` 立即 abort） |
-| `reviewIntervalTurns` | `6` | local-fate 的兼容节奏；成功回合 review 不再等待这个间隔 |
-| `maxReviewInputChars` | `40000` | 交给门禁的轨迹切片 |
-| `reviewBudgetTokens` | `4096` | 门禁调用输出预算 |
-| `notifyOnAutoReview` | `true` | 门禁应用后发可见跟进通知 |
+| `maxReviewInputChars` | `40000` | 交给提取器的轨迹切片 |
+| `reviewBudgetTokens` | `4096` | 提取 loop 输出预算 |
+| `notifyOnAutoReview` | `true` | goal 受阻时刻应用后发可见跟进回执（压缩与会话收尾只留审计） |
 | `requireGlobalApproval` | `true` | 全局与项目写入需明确批准 |
 | `recordLanguage` | `auto` | 记录**与弹窗**语言：`auto` 依次跟随 DSH 客户端偏好 → 会话自身用户文本 → `en`；`zh`/`en` 固定 |
-| `localFate` | `false` | 可选的本地条目晋升/归档 fate 评估；listener 以 memory-only 运行时不可达，只对直接/完整调用者生效 |
-| `fateIntervalTurns` | 跟随 `reviewIntervalTurns` | 归宿评估的最小回合间隔 |
-| `goalBlockedWrapupTurns` | `3` | 连续阻塞目标的门禁轮数触发一次归宿评估（`0` 关闭） |
+| `goalBlockedWrapupTurns` | `3` | 连续阻塞目标的 idle 探测轮数触发一次记忆提取（`0` 关闭） |
 | `promotionBlockPatterns` | POSIX 路径、session id、`~/.dsh` | 内容命中即判定项目专属，永不晋升全局 |
 | `promotionMinChars` | `100` | 低于此长度的整体晋升留在本地 |
 | `injectionDirectoryLines` | `15` | 每次构建的目录行数上限，超出折叠为计数行 |
@@ -108,7 +105,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | 插件自带 JSONL 文件日志带轮转 |
 | `autoRollbackOnReject` | `true` | benchmark 拒绝后自动确定性回滚 |
 | `autoCase` | `true` | 失败的进化尝试自动沉淀为 draft 回归用例（`auto_regression` 基准） |
-| `reviewModel` | agent 自身 | 专用 memory Agent 与 review 门禁可选更便宜的模型（`"provider/model"`） |
+| `reviewModel` | agent 自身 | 专用 memory Agent 可选更便宜的模型（`"provider/model"`） |
 | `plannerPrefixCache` | `auto` | 有缓存证据时用会话前缀输入（`session` 总是前缀，`off` 保持旧扁平文本） |
 | `plannerPrefixMaxChars` | `12000` | Route A 会话前缀预算（字符） |
 | `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500, tokenUsage: 500}` | 存储卫生：每 store 快照数、每 store 历史尾行、共享 `reviews.jsonl` 尾行、直属调用 `token-usage.jsonl` 尾行 |
@@ -119,16 +116,15 @@ profile patch 示例：
 - id: continual-evolve
   config:
     autoReview: true
-    reviewIntervalTurns: 6
 ```
 
-即使 `autoReview` 为 `false`，Memory Agent 监听器也会注册——`autoReview` 只提供初始默认值，装完即用，无需改 profile。使用 `/evolve resume` 立即开启成功回合 snapshot，使用 `/evolve pause` 抑制新 snapshot 与模型调用，使用 `/evolve status` 查看配置默认值与运行时状态。开关保存在 `evolve/runtime.json`；手动 `evolve_*` 工具和 `/evolve` 命令不受暂停影响。自动运行只有 Memory Agent：通用 review/planner、prompt/skill 写入与 local fate 都不由该 listener 触达。Memory 触发采用 ZCode 的轻量 eligibility：单个直接用户文本至少包含 `memoryMinUserWords` 个词（使用 CJK 分词）；空增量、内部 Agent、直接 memory 写入会跳过，压缩不会额外触发 memory-only 管线。每次提取都在 `reviews.jsonl` 留统一审计回执（`noop`/`applied`/`declined` + 耗时与轮次/检索统计）；只有实际沉淀才排队前台通知，关闭的会话让在途提取在 `sessionCloseDrainMs` 内收尾再 abort。
+即使 `autoReview` 为 `false`，Memory Agent 监听器也会注册——`autoReview` 只提供初始默认值，装完即用，无需改 profile。使用 `/evolve resume` 立即开启提取时刻，使用 `/evolve pause` 抑制新的模型调用，使用 `/evolve status` 查看配置默认值与运行时状态。开关保存在 `evolve/runtime.json`；手动 `evolve_*` 工具和 `/evolve` 命令不受暂停影响。提取时刻驱动：压缩、goal 连续受阻（`goalBlockedWrapupTurns` 次 idle 探测）、会话收尾 drain（`sessionCloseDrainMs`）与手动 `/evolve wrapup`——成功回合零 LLM 成本。Memory 触发采用 ZCode 的轻量 eligibility：单个直接用户文本至少包含 `memoryMinUserWords` 个词（使用 CJK 分词）；空增量、内部 Agent、直接 memory 写入会跳过。每次提取都在 `reviews.jsonl` 留统一审计回执（`noop`/`applied`/`declined` + 耗时与轮次/检索统计）；只有 goal 受阻时刻的实际沉淀才排队前台回执，关闭的会话让在途提取在 `sessionCloseDrainMs` 内收尾再 abort。
 
 ## 开发
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（1097 例）
+pnpm test                    # vitest（1017 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm coverage:gaps           # 定位各文件未覆盖行（只读）
 pnpm lint                    # oxlint src test
@@ -137,7 +133,7 @@ pnpm lint                    # oxlint src test
 目录结构：
 
 ```
-├── src/                   # 引擎、工具、命令、memory Agent、召回、投影、门禁、fate、benchmark、注入 + token 用量…
+├── src/                   # 引擎、工具、命令、memory Agent、召回、投影、benchmark、注入 + token 用量…
 ├── test/                  # vitest 测试套件（59 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/

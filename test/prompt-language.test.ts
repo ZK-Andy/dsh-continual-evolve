@@ -7,7 +7,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import { reviewAutoRefine } from "../src/review.js";
 import { planWithLlm } from "../src/planner.js";
 import { runMemoryAgent } from "../src/memory-agent.js";
 import { assessLocalEntries } from "../src/wrapup.js";
@@ -50,33 +49,6 @@ function wrapupCandidate(): Parameters<typeof assessLocalEntries>[2][number] {
 }
 
 describe("record language at the prompt boundary", () => {
-	it("review detects zh from the trajectory", async () => {
-		streamTextMock.mockResolvedValueOnce('{"shouldRefine": false, "rationale": "一次交互"}');
-		await reviewAutoRefine(bareCtx(), {
-			agent,
-			state: emptyHarnessState(),
-			history: [],
-			context: { reason: "turn_interval", turnsSinceLastReview: 6 },
-			trajectory: "用户说确认弹窗有点丑陋，要改样式",
-		});
-		const system = String((streamTextMock.mock.calls.at(-1)?.[1] as { system?: unknown } | undefined)?.system ?? "");
-		expect(system).toContain("记录语言");
-	});
-
-	it("review honors the explicit override", async () => {
-		streamTextMock.mockResolvedValueOnce('{"shouldRefine": false, "rationale": "once"}');
-		await reviewAutoRefine(zhCtx(), {
-			agent,
-			state: emptyHarnessState(),
-			history: [],
-			context: { reason: "turn_interval", turnsSinceLastReview: 6 },
-			trajectory: "用户说确认弹窗有点丑陋",
-			language: "en",
-		});
-		const system = String((streamTextMock.mock.calls.at(-1)?.[1] as { system?: unknown } | undefined)?.system ?? "");
-		expect(system).toContain("Record language");
-	});
-
 	it("planner detects zh from the trajectory", async () => {
 		streamTextMock.mockResolvedValueOnce('{"summary": "s", "rationale": "r", "expectedOutcome": "o", "edits": []}');
 		await planWithLlm(bareCtx(), {

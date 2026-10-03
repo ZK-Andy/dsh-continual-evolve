@@ -10,9 +10,6 @@ import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { requestScopeApproval } from "../src/approval.js";
-import { consultLocalFates } from "../src/fate.js";
-import { consultSkillEdits } from "../src/auto.js";
-import type { GateState } from "../src/auto.js";
 import { createEvolutionEngine } from "../src/service.js";
 import { executeWrapupCommand } from "../src/wrapup-command.js";
 
@@ -55,12 +52,6 @@ function capturingCtx(answer: { id: string; selected: string[] }): { ctx: Contex
 	return baseCtx(async () => ({ answers: [answer] }), ZH_SETTINGS);
 }
 
-function freshGate(): GateState {
-	return { turns: 6, completedTurn: 6, lastSnapshotTurn: 6, memoryDecisions: {}, lastReviewAt: 0, running: false, skillRejects: new Map(), lastFateAt: 0, fateRejects: new Map(), goalBlockStreak: 0 };
-}
-
-const fakeAgent = { id: "session-copy" } as unknown as Agent;
-
 function tmpBase(): string {
 	const base = join(process.cwd(), "test/.tmp");
 	mkdirSync(base, { recursive: true });
@@ -93,45 +84,6 @@ describe("confirmation copy refresh (zh via durable preference)", () => {
 		expect(q.question).toContain("…");
 		expect(q.question.length).toBeLessThan(long.length);
 		expect(q.options?.[0]?.description).toBe("写入，仅本项目会话可见");
-	});
-
-	it("fate consult: grouped headline + consequence + descriptions", async () => {
-		const { ctx, captured } = capturingCtx({ id: "evolve-fate-consult", selected: ["不执行"] });
-		const plan = {
-			candidates: [{ kind: "memory", id: "m1", title: "要提升", content: "c", path: "general", version: 1, metadata: {}, coveredGlobally: false, globalHints: [] }],
-			promotable: [{ key: "memory:m1", verdict: "promote" as const, reason: "durable" }],
-			splits: [],
-			silentArchives: [],
-			reviewArchives: [],
-			skipped: [],
-			splitSkipped: [],
-		};
-		const result = await consultLocalFates(ctx, fakeAgent, plan, freshGate());
-		expect(result).toMatchObject({ approved: false, asked: true, reason: "declined" });
-		const q = captured[0]!;
-		expect(q.id).toBe("evolve-fate-consult");
-		expect(q.question.split("\n")[0]).toBe("自进化门禁：本会话 local 条目需要归宿处理");
-		expect(q.question).toContain("提升写入后所有会话可见，归档隐藏但可恢复。是否执行？");
-		expect(q.options?.map((o) => o.label)).toEqual(["执行", "不执行"]);
-		expect(q.options?.[0]?.description).toContain("均可恢复");
-		expect(q.options?.[1]?.description).toContain("10 回合");
-	});
-
-	it("skill consult: headline + reversibility + descriptions", async () => {
-		const { ctx, captured } = capturingCtx({ id: "evolve-skill-consult", selected: ["固化"] });
-		const ok = await consultSkillEdits(
-			ctx,
-			fakeAgent,
-			[{ action: "create", kind: "skill", title: "会话交接流程", content: "body", skill_kind: "guidance" }],
-			freshGate(),
-		);
-		expect(ok).toBe(true);
-		const q = captured[0]!;
-		expect(q.id).toBe("evolve-skill-consult");
-		expect(q.question.split("\n")[0]).toBe("发现可复用的流程，建议固化为技能");
-		expect(q.question).toContain("可回滚。是否固化？");
-		expect(q.options?.map((o) => o.label)).toEqual(["固化", "不固化"]);
-		expect(q.options?.[0]?.description).toBe("生成技能，以后复用");
 	});
 
 	it("wrapup archive: two-line headline + descriptions", async () => {
@@ -191,35 +143,6 @@ describe("confirmation copy follows the resolved language", () => {
 		expect(await requestScopeApproval(zhCtx, undefined, undefined, "global", "w", "zh")).toBe("approved");
 		const { ctx: enCtx } = baseCtx(async () => ({ answers: [{ id: "approve-global-evolve", selected: ["Decline"] }] }));
 		expect(await requestScopeApproval(enCtx, undefined, undefined, "global", "w", "en")).toBe("declined");
-	});
-
-	it("fate consult en: Proceed label and parser", async () => {
-		const { ctx, captured } = baseCtx(async () => ({ answers: [{ id: "evolve-fate-consult", selected: ["Proceed"] }] }));
-		const plan = {
-			candidates: [{ kind: "memory", id: "m1", title: "m1", content: "c", path: "general", version: 1, metadata: {}, coveredGlobally: false, globalHints: [] }],
-			promotable: [{ key: "memory:m1", verdict: "promote" as const, reason: "durable" }],
-			splits: [],
-			silentArchives: [],
-			reviewArchives: [],
-			skipped: [],
-			splitSkipped: [],
-		};
-		const result = await consultLocalFates(ctx, fakeAgent, plan, freshGate(), "en");
-		expect(result).toMatchObject({ approved: true, reason: "consented" });
-		expect(captured[0]!.options?.map((o) => o.label)).toEqual(["Proceed", "Skip"]);
-	});
-
-	it("skill consult en: Solidify label and parser", async () => {
-		const { ctx, captured } = baseCtx(async () => ({ answers: [{ id: "evolve-skill-consult", selected: ["Solidify"] }] }));
-		const ok = await consultSkillEdits(
-			ctx,
-			fakeAgent,
-			[{ action: "create", kind: "skill", title: "handoff", content: "body", skill_kind: "guidance" }],
-			freshGate(),
-			"en",
-		);
-		expect(ok).toBe(true);
-		expect(captured[0]!.options?.map((o) => o.label)).toEqual(["Solidify", "Skip"]);
 	});
 
 	it("dialogs fall back to en without a durable preference (DSH fallback)", async () => {

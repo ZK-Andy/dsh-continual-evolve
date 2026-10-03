@@ -12,7 +12,7 @@ import { sessionEventsOf } from "./inject.js";
 import { projectKeyOf } from "./project.js";
 
 /** Why a scheduler snapshot was captured. */
-export type TurnSnapshotReason = "turn_snapshot" | "compact";
+export type TurnSnapshotReason = "compact" | "session_close" | "goal_blocked";
 
 /** Mechanical reasons a snapshot can be skipped without an LLM call. */
 export type SnapshotSkipReason =

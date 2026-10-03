@@ -56,9 +56,7 @@ export const Config = z.object({
 	 * Absent → 15s; 0 restores the legacy immediate abort on dispose.
 	 */
 	sessionCloseDrainMs: z.natural().default(15000),
-	/** Legacy/local-fate cadence fallback; successful-turn review is snapshot-driven. */
-	reviewIntervalTurns: z.natural().default(6),
-	/** Trajectory slice handed to the gate, in characters. */
+	/** Trajectory slice handed to the extractor, in characters. */
 	maxReviewInputChars: z.natural().default(40000),
 	/** Output budget for the cheap gate call. */
 	reviewBudgetTokens: z.natural().default(4096),
@@ -101,29 +99,23 @@ export const Config = z.object({
 	 */
 	autoCase: z.boolean().default(true),
 	/**
-	 * Gap C1: optional model override for the review gate (cheaper model).
+	 * Optional model override for the memory extractor (cheaper model).
 	 * Format: "provider/model" or just "model" (same provider as the agent).
-	 * When absent, the review gate uses the agent's own provider/model.
+	 * When absent, the extractor uses the agent's own provider/model.
 	 */
 	reviewModel: z.string(),
 	/**
-	 * Gate local-fate dimension (#11 P2): the gate audits the session's local
-	 * entries on its own cadence and proposes promote/archive — consulted
-	 * first, never written silently. Only meaningful with autoReview on;
-	 * disabled by default even when the automatic pipeline is explicitly enabled.
-	 */
-	localFate: z.boolean().default(false),
-	/**
-	 * Minimum turns between local-fate assessments on the turn-interval path
-	 * (compaction is unconditional). Absent → follows reviewIntervalTurns.
-	 */
-	fateIntervalTurns: z.natural(),
-	/**
-	 * Goal-blocked trigger (D3): after this many CONSECUTIVE gate runs that
-	 * observe the session goal in phase "blocked", run one local-fate
-	 * assessment so the encounter is distilled. 0 disables.
+	 * Goal-blocked moment: after this many CONSECUTIVE idle probes that
+	 * observe the session goal in phase "blocked", run one memory extraction
+	 * so the stuck encounter is distilled. 0 disables.
 	 */
 	goalBlockedWrapupTurns: z.natural().min(0).default(3),
+	/**
+	 * Promotion policy (2026-08-22): regex sources whose match in a
+	 * candidate's title/content marks it project-scoped — such entries are
+	 * never promoted to the cross-session global store. Replaces the built-in
+	 * defaults when set.
+	 */
 	/**
 	 * Promotion policy (2026-08-22): regex sources whose match in a
 	 * candidate's title/content marks it project-scoped — such entries are
@@ -276,26 +268,20 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
 	});
 
-	// The Memory Agent listener is always registered: an install must work
-	// without profile edits, so `autoReview` is only the initial default when
-	// no `evolve/runtime.json` exists yet — `/evolve pause|resume` own the
-	// switch afterwards. The general review/planner, prompt/skill writes, and
-	// local-fate phases are not reachable from this listener.
+	// The memory extraction listener is always registered: an install must
+	// work without profile edits, so `autoReview` is only the initial default
+	// when no `evolve/runtime.json` exists yet — `/evolve pause|resume` own
+	// the switch afterwards. Extraction is moment-driven: compaction,
+	// goal-blocked streaks, the session-close drain, and manual
+	// `/evolve wrapup` — successful turns never cost an LLM call.
 	registerAutoReview(ctx, engine, {
-		intervalTurns: config.reviewIntervalTurns ?? 6,
 		enabledByDefault: config.autoReview ?? false,
-		memoryOnly: true,
 		memoryMinUserWords: config.memoryMinUserWords ?? 3,
 		sessionCloseDrainMs: config.sessionCloseDrainMs ?? 15000,
 		maxInputChars: config.maxReviewInputChars ?? 40000,
 		budgetTokens: config.reviewBudgetTokens ?? 4096,
 		notifyOnAutoReview: config.notifyOnAutoReview ?? true,
-		localFate: config.localFate ?? false,
-		fateIntervalTurns: config.fateIntervalTurns ?? config.reviewIntervalTurns ?? 6,
 		goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
-		promotionPolicy,
-		autoCase: config.autoCase ?? true,
-		rubricKey,
 		...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
 		...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
 		requireGlobalApproval: config.requireGlobalApproval ?? true,
@@ -304,7 +290,7 @@ export function apply(ctx: Context, config: EvolveConfig): void {
 		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
 	});
 	ctx.logger("continual-evolve").info(
-		"continual-evolve automatic listener registered (Memory Agent only; generic review/planner/fate disconnected)",
+		"continual-evolve moment-driven memory extraction listener registered (compaction / goal-blocked / session-close drain; manual wrapup via /evolve wrapup)",
 	);
 
 	ctx.logger("continual-evolve").info(`continual-evolve mounted (baseDir=${baseDir})`);

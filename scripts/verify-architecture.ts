@@ -33,7 +33,7 @@ const LAYER: Record<string, number> = {
 	mount: 2, logfile: 2, approval: 2, notify: 2, rubric: 2,
 	"record-language": 2, copy: 2,
 	// L3 domain flows
-	"memory-agent": 3, review: 3, planner: 3, wrapup: 3, fate: 3,
+	"memory-agent": 3, planner: 3, wrapup: 3,
 	benchmark: 3, evaluate: 3, autocase: 3, goal: 3, score: 3,
 	"review-scheduler": 3,
 	// L4 interface
@@ -49,14 +49,13 @@ const MAX_OUT_DEGREE_ROOT = 14;
 
 /** Known violations, each cleared by a named refactor phase. */
 const WHITELIST = {
-	/** Phase 1 deletes fate (auto⇄fate cycle dissolves). */
-	cycles: ["auto,fate", "benchmark-command,command,mount-command"],
-	/** Phase 1 deletes fate. */
-	upward: ["fate->auto"],
+	/** Phase 2 turns command into a pure router and extracts shared helpers. */
+	cycles: ["benchmark-command,command,mount-command"],
+	upward: [] as string[],
 	/** Phase 2: interface modules receive engine reads via the service facade. */
 	bypass: ["auto->state", "auto->store", "command->state", "command->store", "tool->store"],
-	/** Phase 1 shrinks auto+fate; Phase 2 splits command/auto; Phase 3 splits inject/wrapup/memory-agent. */
-	overlines: ["auto", "command", "fate", "inject", "memory-agent", "wrapup"],
+	/** Phase 2 splits command/auto; Phase 3 splits inject/wrapup/memory-agent. */
+	overlines: ["auto", "command", "inject", "memory-agent", "wrapup"],
 	/** Phase 1 shrinks memory-agent; Phase 2 turns command into a pure router and splits auto. */
 	overdegree: ["auto", "command", "memory-agent"],
 };
