@@ -490,6 +490,36 @@ describe("assessLocalEntries token ledger wiring", () => {
 	});
 });
 
+describe("assessor candidate rendering (loaded fields)", () => {
+	it("renders stale, negated, and global-hint annotations into the candidate list", async () => {
+		const base = tmpBase();
+		try {
+			const text = JSON.stringify({ rationale: "keep", items: [{ key: "memory:m1", verdict: "keep", reason: "still useful" }] });
+			const ctx = {
+				llm: {
+					stream: async function* () {
+						const chunks: StreamChunk[] = [
+							{ type: "block-start", index: 0, blockType: "text" },
+							{ type: "text-delta", index: 0, text },
+							{ type: "block-end", index: 0, block: { type: "text", text } },
+							{ type: "finish", reason: { kind: "stop" } },
+						];
+						for (const chunk of chunks) yield chunk;
+					},
+				},
+			} as unknown as Context;
+			const agent = { id: "session-wrapup", options: { provider: "p", model: "m" } } as never;
+			const candidate = candidateOf(entry("m1", "memory", "covered title"), true);
+			candidate.stale = true;
+			candidate.negativeCount = 2;
+			candidate.globalHints = [{ id: "global_g1", title: "Global twin" }];
+			await assessLocalEntries(ctx, agent, [candidate], { tokenUsage: { baseDir: base, sessionId: "session-wrapup", retain: 10 } });
+		} finally {
+			rmSync(base, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("assessment edge guards (branch-85 round)", () => {
 	it("returns early with no candidates and fails loud with no route", async () => {
 		const ctx = {} as unknown as Context;

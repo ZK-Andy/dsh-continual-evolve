@@ -703,6 +703,60 @@ describe("registerAutoReview wiring", () => {
 		}
 	});
 
+	it("an applied goal_blocked moment lands the local memory edit and queues the receipt", async () => {
+		let calls = 0;
+		const llm = {
+			stream: async function* () {
+				calls += 1;
+				const text = JSON.stringify({
+					summary: "one durable preference",
+					rationale: "user repeats the same build command",
+					expectedOutcome: "memory saved",
+					edits: [{
+						action: "create",
+						kind: "memory",
+						targetScope: "local",
+						blastRadius: "session",
+						title: "Build command",
+						content: "Build with pnpm build. Why: repeated. How to apply: run it.",
+						metadata: { memoryType: "project" },
+					}],
+				});
+				for (const chunk of noopMemoryChunk(text)) yield chunk;
+			},
+		} as unknown as Context["llm"];
+		const events = [{ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "goal 被阻塞时的会话证据" }], source: { kind: "user" } } }];
+		const followedUp: unknown[] = [];
+		const agent = {
+			id: "session-goal-applied",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: {}, events },
+			followup: (msg: unknown) => followedUp.push(msg),
+		};
+		const h = wiringHarness({
+			llm,
+			agents: new Map<string, unknown>([[agent.id, agent]]),
+			sessionQuery: { readSurface: async () => ({ events }) },
+			goals: { get: () => ({ phase: "blocked" }) },
+			config: { goalBlockedWrapupTurns: 2, prefixCacheMode: "off", notifyOnAutoReview: true },
+		});
+		try {
+			h.emit("agent/status", { agent, status: "idle" });
+			h.emit("agent/status", { agent, status: "idle" });
+			await vi.waitFor(() => expect(calls).toBe(1));
+			const rows = h.reviewsLines().map((line) => JSON.parse(line) as { outcome?: string }).filter((row) => row.outcome !== undefined);
+			await vi.waitFor(() => expect(rows).toHaveLength(2));
+			expect(rows[1]).toMatchObject({ reason: "goal_blocked", outcome: "applied" });
+			const engine = createEvolutionEngine(h.dir);
+			const memories = engine.load("local", agent.id).entries.memory;
+			expect(Object.values(memories).some((entry) => entry.title === "Build command")).toBe(true);
+			// only the goal_blocked moment wakes the agent mid-session
+			expect(followedUp).toHaveLength(1);
+		} finally {
+			rmSync(h.dir, { recursive: true, force: true });
+		}
+	});
+
 	it("a non-blocked goal resets the streak and never fires a moment", async () => {
 		const h = wiringHarness({ goals: { get: () => ({ phase: "active" }) }, config: { goalBlockedWrapupTurns: 2 } });
 		try {

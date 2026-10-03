@@ -12,6 +12,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import { findEntryById, registerEvolveCommand, stripAngleBrackets, tokenizeEvolveInput } from "../src/command.js";
 import { createEvolutionEngine } from "../src/service.js";
+import { projectKeyOf } from "../src/project.js";
 import { saveHarnessState } from "../src/state.js";
 import { storePaths } from "../src/store.js";
 import { emptyHarnessState, ARCHIVED_AT_KEY, type HarnessEntry } from "../src/types.js";
@@ -671,6 +672,36 @@ describe("executeEvolveCommand — project-aware status / usage / log", () => {
 		const result = await h.run(`import ${path}`);
 		expect(result.kind).toBe("success");
 		expect(result.text).toContain("imported local store");
+	}));
+
+	it("asks approval before planning into the project store (cwd-derived key)", withDir(async (h) => {
+		const result = await h.run("plan project repo rule", "session-cmd", {
+			id: "session-cmd",
+			options: { provider: "test-provider", model: "test-model" },
+			session: { header: { cwd: "/workspace/plan-project" } },
+		} as never);
+		expect(result.kind, result.text).toBe("success");
+		expect(result.text).toContain("1 applied");
+		const projectKey = projectKeyOf({ session: { header: { cwd: "/workspace/plan-project" } } } as never);
+		expect(Object.keys(h.engine.load("project", projectKey).entries.prompt)).toHaveLength(1);
+	}, {}, {
+		requireGlobalApproval: true,
+		userQuestions: { ask: async () => ({ answers: [{ id: "approve-global-evolve", selected: ["批准"] }] }) },
+		llm: {
+			stream: async function* () {
+				const text = JSON.stringify({
+					summary: "project prompt",
+					rationale: "durable",
+					expectedOutcome: "saved",
+					edits: [{ action: "create", kind: "prompt", title: "Project rule", content: "Confirm first.", blastRadius: "project", reason: "r" }],
+				});
+				yield { type: "block-start", index: 0, blockType: "text" };
+				yield { type: "text-delta", index: 0, text };
+				yield { type: "block-end", index: 0, block: { type: "text", text } };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		},
 	}));
 
 	it("asks approval before planning into the global store", withDir(async (h) => {

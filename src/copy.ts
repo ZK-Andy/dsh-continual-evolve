@@ -8,7 +8,7 @@
  * (explicit config upstream, else the durable DSH client preference,
  * else `en`) when the caller does not supply one.
  */
-import { resolveRecordLanguage, type RecordLanguage } from "./record-language.js";
+import type { RecordLanguage } from "./record-language.js";
 
 export interface ConfirmOption {
 	label: string;
@@ -79,16 +79,4 @@ export function wrapupArchiveCopy(title: string, lang: RecordLanguage): ConfirmC
 			{ label: "Keep", description: "Keep injecting" },
 		],
 	};
-}
-
-/**
- * Resolve the dialog language for a call site that holds no explicit
- * choice: durable client preference first, `en` otherwise. (Dialogs carry
- * no trajectory text, so there is no detection tier here.)
- *
- * @param ctx Host context for the durable-preference read.
- * @returns The dialog language.
- */
-export function resolveDialogLanguage(ctx: unknown): RecordLanguage {
-	return resolveRecordLanguage({ ctx });
 }
