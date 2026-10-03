@@ -25,11 +25,8 @@ DeepSeek Harness 的持续自我进化插件：从会话轨迹中提炼**版本�
 
 ## 编码约定（TypeScript）
 
-- **fail loud**：缺失引用、误配置绝不静默跳过；空 `catch` 必须命名它吞掉什么；`try` 只包一个语句。
-- 公共 API 带 TSDoc 契约（`@param/@returns/@throws`）；跨界 ID 用 Branded 类型，禁裸 `string` 跨模块传递。
-- 可调参数进 schemastery 配置模型，禁止硬编码；协议常量与安全不变量保持固定。
-- 测试：vitest（`pnpm test`）；覆盖边界、错误路径、事件顺序、并发；**行为级变更必须配套回归测试**；mock 只用于昂贵/非确定性边界（LLM 调用、时钟）。
-- 构建产物只进 `lib/`（tsc），源码只在 `src/`；不手改 `lib/`。
+- 完整规范：[docs/coding-standard.md](docs/coding-standard.md)（编码）与 [docs/architecture-standard.md](docs/architecture-standard.md)（分层/预算/host 边界，机器门禁 `scripts/verify-architecture.ts`）。
+- 红线：**fail loud**；行为级变更必须配套回归测试（vitest）；构建产物只进 `lib/`、源码只在 `src/`；分层与规模预算由架构门禁把守，违标白名单只减不增。
 
 ## GitHub 调研纪律（强制）
 

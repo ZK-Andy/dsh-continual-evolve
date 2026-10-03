@@ -30,6 +30,7 @@ function main(): void {
 	run("verify-doc-budgets", ["scripts/verify-doc-budgets.ts", "--manifest", "scripts/doc-budgets.manifest.json"]);
 	run("verify-md-links", ["scripts/verify-md-links.ts"]);
 	run("verify-governance", ["scripts/verify-governance.ts"]);
+	run("verify-architecture", ["scripts/verify-architecture.ts"]);
 	// 工作区根 HANDOFF 家庭（入口/待办/冷归档）：干净检出下文件缺席即跳过（clean-CI 语义）
 	run("verify-handoff-structure", ["scripts/verify-handoff-structure.ts"]);
 	console.log("run-gates OK");
