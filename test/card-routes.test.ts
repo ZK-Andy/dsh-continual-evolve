@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	CARD_API_MEMORY_FILE_PATH,
 	CARD_API_MEMORY_PATH,
 	CARD_API_WORKSPACES_PATH,
 	mountCardRoutes,
@@ -11,6 +12,7 @@ import {
 	type CardWebServer,
 } from "../src/card-routes.js";
 import { createKnownWorkspaces } from "../src/known-workspaces.js";
+import { MEMORY_FILE_PREVIEW_LIMIT } from "../src/memory-snapshot.js";
 
 let workspace = "";
 
@@ -70,10 +72,14 @@ function jsonBody(recorded: RecordedResponse): unknown {
 }
 
 describe("mountCardRoutes", () => {
-	it("registers both routes and the disposer unregisters them", () => {
+	it("registers all three routes and the disposer unregisters them", () => {
 		const { routes, webServer } = makeWebServer();
 		const disposer = mountCardRoutes(webServer, createKnownWorkspaces());
-		expect([...routes.keys()]).toEqual([CARD_API_WORKSPACES_PATH, CARD_API_MEMORY_PATH]);
+		expect([...routes.keys()]).toEqual([
+			CARD_API_WORKSPACES_PATH,
+			CARD_API_MEMORY_PATH,
+			CARD_API_MEMORY_FILE_PATH,
+		]);
 		disposer();
 		expect(routes.size).toBe(0);
 	});
@@ -148,5 +154,76 @@ describe("mountCardRoutes", () => {
 		expect(body.root).toBe(workspace);
 		expect(body.exists).toBe(true);
 		expect(body.indexEntryCount).toBe(1);
+	});
+});
+
+describe("the memory file content route", () => {
+	function setup(): { routes: Map<string, CardRoute>; known: ReturnType<typeof createKnownWorkspaces> } {
+		const { routes, webServer } = makeWebServer();
+		const known = createKnownWorkspaces();
+		known.remember(workspace);
+		mountCardRoutes(webServer, known);
+		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
+		return { routes, known };
+	}
+
+	it("answers 405 for non-GET and 400 for a missing file parameter", async () => {
+		const { routes } = setup();
+		const url = `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent(workspace)}`;
+		const put = await call(routes.get(CARD_API_MEMORY_FILE_PATH), { method: "PUT", url });
+		expect(put.status).toBe(405);
+		const noFile = await call(routes.get(CARD_API_MEMORY_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent(workspace)}`,
+		});
+		expect(noFile.status).toBe(400);
+	});
+
+	it("serves one memory file's body with metadata", async () => {
+		const { routes } = setup();
+		writeFileSync(join(workspace, ".evolve", "memory", "note.md"), "正文", "utf8");
+		const recorded = await call(routes.get(CARD_API_MEMORY_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent(workspace)}&file=${encodeURIComponent("note.md")}`,
+		});
+		expect(recorded.status).toBe(200);
+		expect(jsonBody(recorded)).toMatchObject({ file: "note.md", content: "正文", changed: false });
+	});
+
+	it("answers 404 for a deleted file and for a root the process never served", async () => {
+		const { routes } = setup();
+		writeFileSync(join(workspace, ".evolve", "memory", "MEMORY.md"), "", "utf8");
+		const ghost = await call(routes.get(CARD_API_MEMORY_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent(workspace)}&file=ghost.md`,
+		});
+		expect(ghost.status).toBe(404);
+		const stranger = await call(routes.get(CARD_API_MEMORY_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent("/etc")}&file=x.md`,
+		});
+		expect(stranger.status).toBe(404);
+	});
+
+	it("answers 400 for traversal shapes without a filesystem oracle", async () => {
+		const { routes } = setup();
+		writeFileSync(join(workspace, ".evolve", "memory", "note.md"), "正文", "utf8");
+		for (const file of ["../package.json", "sub/note.md", "note.txt"]) {
+			const recorded = await call(routes.get(CARD_API_MEMORY_FILE_PATH), {
+				method: "GET",
+				url: `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent(workspace)}&file=${encodeURIComponent(file)}`,
+			});
+			expect(recorded.status).toBe(400);
+		}
+	});
+
+	it("answers 413 for a body beyond the 5 MiB preview limit", async () => {
+		const { routes } = setup();
+		writeFileSync(join(workspace, ".evolve", "memory", "big.md"), "x".repeat(MEMORY_FILE_PREVIEW_LIMIT + 1), "utf8");
+		const recorded = await call(routes.get(CARD_API_MEMORY_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_MEMORY_FILE_PATH}?root=${encodeURIComponent(workspace)}&file=big.md`,
+		});
+		expect(recorded.status).toBe(413);
 	});
 });

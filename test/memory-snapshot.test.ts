@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	MEMORY_FILE_PREVIEW_LIMIT,
+	memoryFileContent,
 	memorySnapshot,
 	parseMemoryFrontmatter,
 	parseMemoryIndexRows,
@@ -87,9 +89,10 @@ describe("memorySnapshot", () => {
 		expect(snapshot.fileCount).toBe(2);
 		expect(snapshot.indexEntryCount).toBe(2);
 		expect(snapshot.files).toEqual([
-			{ file: "dsh-config.md", name: "dsh-config", description: "配置位置", type: "reference" },
-			{ file: "user-pref.md", name: "user-pref", description: "用户偏好", type: "user" },
+			{ file: "dsh-config.md", name: "dsh-config", description: "配置位置", type: "reference", updatedAt: expect.any(Number) },
+			{ file: "user-pref.md", name: "user-pref", description: "用户偏好", type: "user", updatedAt: expect.any(Number) },
 		]);
+		expect(snapshot.files[0].updatedAt).toBeGreaterThan(0);
 		expect(snapshot.missingFiles).toEqual([]);
 		expect(snapshot.unindexedFiles).toEqual([]);
 	});
@@ -109,5 +112,49 @@ describe("memorySnapshot", () => {
 		expect(snapshot.exists).toBe(true);
 		expect(snapshot.readError).not.toBeNull();
 		expect(snapshot.fileCount).toBe(0);
+	});
+});
+
+describe("memoryFileContent", () => {
+	it("reads a plain memory file with its mtime and unchanged flag", () => {
+		writeFile("note.md", "正文内容");
+		const result = memoryFileContent(workspace, "note.md");
+		expect(result).toEqual({
+			ok: true,
+			file: "note.md",
+			content: "正文内容",
+			mtimeMs: statSync(join(memoryDir(), "note.md")).mtimeMs,
+			changed: false,
+		});
+	});
+
+	it("serves the index file too: the preview shows MEMORY.md as well", () => {
+		writeFile("MEMORY.md", "- [配置](note.md) — 索引行\n");
+		const result = memoryFileContent(workspace, "MEMORY.md");
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.content).toContain("[配置](note.md)");
+		}
+	});
+
+	it("rejects traversal and non-plain names without touching the filesystem", () => {
+		writeFile("note.md", "正文内容");
+		for (const bad of ["../note.md", "sub/note.md", "a\\note.md", "note.txt", ".", "", "note.md/.."]) {
+			expect(memoryFileContent(workspace, bad)).toEqual({ ok: false, reason: "outside" });
+		}
+		// A directory inside the memory dir must not become a read target either.
+		mkdirSync(join(memoryDir(), "nested.md"), { recursive: true });
+		expect(memoryFileContent(workspace, "nested.md")).toEqual({ ok: false, reason: "absent" });
+	});
+
+	it("answers absent for a file that does not exist", () => {
+		writeFile("MEMORY.md", "");
+		expect(memoryFileContent(workspace, "ghost.md")).toEqual({ ok: false, reason: "absent" });
+	});
+
+	it("answers too-large without reading a body beyond the 5 MiB cap", () => {
+		writeFile("MEMORY.md", "");
+		writeFile("big.md", "x".repeat(MEMORY_FILE_PREVIEW_LIMIT + 1));
+		expect(memoryFileContent(workspace, "big.md")).toEqual({ ok: false, reason: "too-large" });
 	});
 });

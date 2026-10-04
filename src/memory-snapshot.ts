@@ -4,12 +4,18 @@
  * card is a viewer, never a second store: no caching, no writes, no bootstrap
  * (unlike the injection path, a missing store is reported, not created).
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { memoryDirFor } from "./memory-section.js";
 
 /** The index file name (same store contract as the injection path). */
 export const MEMORY_SNAPSHOT_INDEX_FILE = "MEMORY.md";
+
+/**
+ * Preview size cap for the file content endpoint — files above it answer
+ * `too-large` instead of their body (ZCode's memory viewer uses the same 5 MiB).
+ */
+export const MEMORY_FILE_PREVIEW_LIMIT = 5 * 1024 * 1024;
 
 /** One memory file with its frontmatter fields ("" when absent). */
 export interface MemoryFileInfo {
@@ -17,6 +23,8 @@ export interface MemoryFileInfo {
 	name: string;
 	description: string;
 	type: string;
+	/** File modification time in epoch milliseconds (the card's "updated" line). */
+	updatedAt: number;
 }
 
 /** One parsed index row: `- [title](file.md) — hook`. */
@@ -113,7 +121,8 @@ function readStoreState(memoryDir: string): StoreState {
 	const diskFiles = listStoreFiles(memoryDir);
 	const files = diskFiles.map((file) => {
 		const frontmatter = parseMemoryFrontmatter(readFileSync(join(memoryDir, file), "utf8"));
-		return { file, name: frontmatter.name, description: frontmatter.description, type: frontmatter.type };
+		const updatedAt = statSync(join(memoryDir, file)).mtimeMs;
+		return { file, name: frontmatter.name, description: frontmatter.description, type: frontmatter.type, updatedAt };
 	});
 	return { indexRows: parseMemoryIndexRows(indexText), diskFiles, files };
 }
@@ -167,4 +176,58 @@ export function memorySnapshot(root: string): MemorySnapshot {
 		unindexedFiles: state.diskFiles.filter((file) => !referenced.has(file)),
 		readError: null,
 	};
+}
+
+/** The content endpoint's outcomes: the body, or why there is none. */
+export type MemoryFileContent =
+	| { ok: true; file: string; content: string; mtimeMs: number; changed: boolean }
+	| { ok: false; reason: "outside" | "absent" | "too-large" };
+
+/**
+ * Read one memory file's body for the card's content preview — the viewer
+ * side of the same read-only fence as `memorySnapshot`. The requested file
+ * name must be a plain entry of the workspace's memory directory (no path
+ * separators, no traversal, resolved location stays inside the directory);
+ * anything else answers `outside` without touching the filesystem, so the
+ * endpoint cannot become a path oracle. Oversized files answer `too-large`
+ * with the body unread.
+ */
+export function memoryFileContent(root: string, file: string): MemoryFileContent {
+	const memoryDir = memoryDirFor(resolve(root));
+	if (
+		file.length === 0 ||
+		!file.endsWith(".md") ||
+		file.includes("/") ||
+		file.includes("\\") ||
+		basename(file) !== file
+	) {
+		return { ok: false, reason: "outside" };
+	}
+	const target = resolve(memoryDir, file);
+	if (!target.startsWith(memoryDir + "/") && target !== memoryDir) {
+		return { ok: false, reason: "outside" };
+	}
+	let before: ReturnType<typeof statSync>;
+	try {
+		before = statSync(target);
+	} catch {
+		return { ok: false, reason: "absent" };
+	}
+	if (!before.isFile()) {
+		return { ok: false, reason: "absent" };
+	}
+	if (before.size > MEMORY_FILE_PREVIEW_LIMIT) {
+		return { ok: false, reason: "too-large" };
+	}
+	let content: string;
+	try {
+		content = readFileSync(target, "utf8");
+	} catch {
+		return { ok: false, reason: "absent" };
+	}
+	// The file may have been rewritten between stat and read — surface that
+	// instead of silently showing stale bytes (same guard shape as ZCode's
+	// memory viewer's "changed during read" state).
+	const after = statSync(target);
+	return { ok: true, file, content, mtimeMs: after.mtimeMs, changed: after.mtimeMs !== before.mtimeMs };
 }

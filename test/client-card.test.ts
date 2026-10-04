@@ -136,8 +136,10 @@ describe("client bundle", () => {
 		(exports.apply as (ctx: unknown) => void)(ctx);
 		expect(registered).toHaveLength(1);
 		expect(registered[0].ns).toBe("dsh-continual-evolve");
-		expect(registered[0].dicts.zh.title).toContain("工作区记忆");
-		expect(registered[0].dicts.en.title).toContain("Workspace memory");
+		expect(registered[0].dicts.zh.title).toBe("工作区记忆");
+		expect(registered[0].dicts.en.title).toBe("Workspace Memory");
+		expect(registered[0].dicts.zh.localeTag).toBe("zh-CN");
+		expect(registered[0].dicts.en.localeTag).toBe("en-US");
 		expect(boundNs).toBe("dsh-continual-evolve");
 		expect(effects).toContain("dsh-continual-evolve: dictionaries");
 	});
@@ -177,14 +179,52 @@ describe("client bundle", () => {
 		expect(created).not.toHaveLength(0);
 	});
 
-	it("ships zh/en dictionaries, theme tokens, and no element-plus-string rows", () => {
+	it("ships the dshmarket SettingsCard shape and the ZCode viewer content surface", () => {
 		const code = readFileSync(BUNDLE_PATH, "utf8");
-		expect(code).toContain('title: "工作区记忆');
-		expect(code).toContain('title: "Workspace memory');
+		expect(code).toContain('title: "工作区记忆"');
+		expect(code).toContain('title: "Workspace Memory"');
+		// SettingsCard form: collapsed-by-default framed disclosure with a
+		// rotating chevron, hover/open states, one injected stylesheet.
+		expect(code).toContain('"dsh-continual-evolve-card-css"');
+		expect(code).toContain("style.id = STYLE_ID");
+		expect(code).toContain('.dce-card[data-open="true"]');
+		expect(code).toContain(".dce-card:hover");
+		expect(code).toContain('.dce-chevron[data-open="true"]');
+		expect(code).toContain("aria-expanded");
+		expect(code).toContain("IconChevronDownOutlineRegular");
+		expect(code).toContain('"▾"');
+		// ZCode memory viewer content: workspace chips, file search, relative
+		// updated time, click-to-preview with the deleted/too-large states.
+		expect(code).toContain("searchPlaceholder");
+		expect(code).toContain("function formatRelative");
+		expect(code).toContain("previewTooLarge");
+		expect(code).toContain("previewDeleted");
+		expect(code).toContain("/memory/file?root=");
+		expect(code).toContain("workspaceLabel");
+		// Theme tokens still route through the alias layer.
 		expect(code).toContain("var(--dsw-alias-bg-layer-1");
 		expect(code).toContain("UI.Button");
 		// The v0.12.1 [object Object] shape must not return.
 		expect(code).not.toMatch(/createElement\("strong"[^)]*\)\s*\+/);
+	});
+
+	it("exposes the locale meta files the host plugin metadata reader consumes", () => {
+		const packageJson = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as {
+			exports: Record<string, string>;
+			files: string[];
+			description: string;
+		};
+		expect(packageJson.exports["./locale/*.json"]).toBe("./locale/*.json");
+		expect(packageJson.files).toContain("locale/*.json");
+		// npm sees English only; the localized strings live in the locale files.
+		expect(packageJson.description).not.toMatch(/[／/]/);
+		for (const language of ["en", "zh"]) {
+			const meta = JSON.parse(
+				readFileSync(fileURLToPath(new URL(`../locale/${language}.json`, import.meta.url)), "utf8"),
+			) as { meta: { title: string; description: string } };
+			expect(meta.meta.title.length).toBeGreaterThan(0);
+			expect(meta.meta.description.length).toBeGreaterThan(0);
+		}
 	});
 });
 
@@ -241,5 +281,46 @@ describe("loadCardModel", () => {
 		const loadCardModel = exports.loadCardModel as (fetchImpl: typeof fetch) => Promise<unknown>;
 		const fetchImpl = (async () => jsonResponse({}, 500)) as unknown as typeof fetch;
 		await expect(loadCardModel(fetchImpl)).rejects.toThrow("HTTP 500");
+	});
+});
+
+describe("loadFileContent", () => {
+	const ROOT = "/ws/a";
+	const FILE = "note.md";
+
+	function makeLoad(): (fetchImpl: typeof fetch) => Promise<unknown> {
+		const { exports } = loadBundle(makeReact());
+		return exports.loadFileContent as (fetchImpl: typeof fetch) => Promise<unknown>;
+	}
+
+	it("requests the content endpoint with encoded root and file and returns the body", async () => {
+		const calls: string[] = [];
+		const load = makeLoad();
+		const fetchImpl = (async (url: string | URL) => {
+			calls.push(String(url));
+			return jsonResponse({ file: FILE, content: "正文", changed: false });
+		}) as unknown as typeof fetch;
+		const result = (await load(fetchImpl, ROOT, FILE)) as { status: string; content: string };
+		expect(result).toEqual({ status: "ready", content: "正文", message: "" });
+		expect(calls[0]).toContain("/memory/file?root=" + encodeURIComponent(ROOT) + "&file=" + encodeURIComponent(FILE));
+	});
+
+	it("maps 404 to deleted and 413 to tooLarge without messages", async () => {
+		const load = makeLoad();
+		let status = 404;
+		const fetchImpl = (async () => jsonResponse({ error: "x" }, status)) as unknown as typeof fetch;
+		expect(await load(fetchImpl, ROOT, FILE)).toEqual({ status: "deleted", content: "", message: "" });
+		status = 413;
+		expect(await load(fetchImpl, ROOT, FILE)).toEqual({ status: "tooLarge", content: "", message: "" });
+	});
+
+	it("degrades other statuses and network errors to failed with a message", async () => {
+		const load = makeLoad();
+		const failing = (async () => jsonResponse({}, 500)) as unknown as typeof fetch;
+		expect(await load(failing, ROOT, FILE)).toEqual({ status: "failed", content: "", message: "HTTP 500" });
+		const throwing = (async () => {
+			throw new Error("socket down");
+		}) as unknown as typeof fetch;
+		expect(await load(throwing, ROOT, FILE)).toEqual({ status: "failed", content: "", message: "socket down" });
 	});
 });

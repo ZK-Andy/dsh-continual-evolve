@@ -99,6 +99,7 @@ describe("apply card wiring", () => {
 		expect([...routes.keys()]).toEqual([
 			"/dsh-continual-evolve/api/v1/workspaces",
 			"/dsh-continual-evolve/api/v1/memory",
+			"/dsh-continual-evolve/api/v1/memory/file",
 		]);
 	});
 

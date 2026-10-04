@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Workspace Memory",
+    "description": "Per-workspace markdown memory store with session-start index injection."
+  }
+}

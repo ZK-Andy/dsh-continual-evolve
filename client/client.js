@@ -17,12 +17,25 @@
  * call with null (the bundle list row shows the package description; the
  * card is the page).
  *
- * Market parity (v0.13): locale/theme/primitives wiring copied from
- * dshmarket's client — `ctx.locale.register(NS, { zh, en })` + `bind`,
- * `var(--dsw-alias-*)` theme tokens, `Button` primitive for the refresh
- * control. Missing primitives/locale degrade to themed plain elements, so an
- * old host never blanks the settings dialog. The card stays a read-only
- * projection: fetched at render time from this plugin's host routes
+ * Card form (v0.14): the dshmarket SettingsCard shape, one for one — a
+ * collapsed-by-default framed card whose header is the toggle button
+ * (name + one-liner + rotating chevron), body rendered only when open, hover
+ * and open states on the frame (see that bundle's "why the chrome is
+ * hand-built" note: a flat, always-expanded box next to rows that collapse
+ * reads as another product). The stylesheet is injected once, like the
+ * host's own CSS-module tags.
+ *
+ * Content (v0.14): aligned with ZCode's Settings → Memory viewer, which the
+ * .evolve store shape was itself aligned with — one workspace selected at a
+ * time (chips; the known-workspace LRU is bounded at 8), a file search box,
+ * per-file relative updated times, and a click-to-preview body served by the
+ * host's content endpoint (5 MiB cap, deleted/changed guards). The drift
+ * warnings (dangling index rows / unindexed files) stay: they are this
+ * plugin's OBSERVATION surface and a deliberate superset of ZCode's viewer.
+ * Locale/theme/primitives wiring unchanged from v0.13: `ctx.locale.register`
+ * + `bind`, `var(--dsw-alias-*)` tokens, primitives with plain-element
+ * fallbacks so an old host never blanks the settings dialog. Read-only
+ * projection, fetched at render time from this plugin's host routes
  * (same-origin). No editor, no write path, no cached state.
  */
 window.__ModuleLoader__.load({
@@ -65,9 +78,11 @@ window.__ModuleLoader__.load({
 		var NS = "dsh-continual-evolve";
 		var SLOT = "plugins.bundle.config";
 		var API_ROOT = "/dsh-continual-evolve/api/v1";
+		var STYLE_ID = "dsh-continual-evolve-card-css";
 
 		var zh = {
-			title: "工作区记忆（只读投影）",
+			title: "工作区记忆",
+			desc: "各工作区 .evolve/memory/ 的只读投影。",
 			refresh: "刷新",
 			hint: "事实源是各工作区 .evolve/memory/ 下的 markdown 文件——模型原生读写；本卡片只展示，编辑请直接改文件。",
 			loading: "读取中…",
@@ -76,12 +91,25 @@ window.__ModuleLoader__.load({
 			absent: "该工作区尚无记忆库（开一次会话自动创建）。",
 			readFailed: "记忆库读取失败：",
 			stats: "{files} 条记忆 · 索引 {index} 行",
+			filesHeading: "文件",
+			searchPlaceholder: "搜索记忆文件…",
+			searchEmpty: "没有匹配的记忆文件。",
 			missing: "索引失联（索引引用但文件已删）：",
 			unindexed: "未入索引（文件存在但索引没有行）：",
 			readError: "读取失败：",
+			previewLoading: "正在加载文件…",
+			previewTooLarge: "该记忆文件超过 5 MiB 预览上限。",
+			previewDeleted: "该记忆文件已被删除，请刷新文件列表。",
+			previewFailed: "内容读取失败：",
+			justNow: "刚刚",
+			minutesAgo: "{count} 分钟前",
+			today: "今天 {time}",
+			yesterday: "昨天 {time}",
+			localeTag: "zh-CN",
 		};
 		var en = {
-			title: "Workspace memory (read-only)",
+			title: "Workspace Memory",
+			desc: "Read-only projection of each workspace's .evolve/memory/.",
 			refresh: "Refresh",
 			hint: "The source of truth is the markdown files under each workspace's .evolve/memory/ — read and written by the model; this card only displays them, edit the files directly.",
 			loading: "Loading…",
@@ -90,9 +118,21 @@ window.__ModuleLoader__.load({
 			absent: "No memory store in this workspace yet (one is created when you open a session).",
 			readFailed: "Failed to read the memory store: ",
 			stats: "{files} memories · {index} index rows",
+			filesHeading: "Files",
+			searchPlaceholder: "Search memory files…",
+			searchEmpty: "No matching memory files.",
 			missing: "Dangling index (indexed but deleted): ",
 			unindexed: "Unindexed (on disk, missing from the index): ",
 			readError: "Read failed: ",
+			previewLoading: "Loading file…",
+			previewTooLarge: "This memory file exceeds the 5 MiB preview limit.",
+			previewDeleted: "This memory file has been deleted — refresh the file list.",
+			previewFailed: "Failed to read the content: ",
+			justNow: "Just now",
+			minutesAgo: "{count} min ago",
+			today: "Today {time}",
+			yesterday: "Yesterday {time}",
+			localeTag: "en-US",
 		};
 
 		function format(template, params) {
@@ -100,6 +140,41 @@ window.__ModuleLoader__.load({
 				var value = params[key];
 				return value === undefined || value === null ? match : String(value);
 			});
+		}
+
+		/**
+		 * Relative updated time, ZCode viewer style: just now / N minutes ago /
+		 * today / yesterday, then a calendar rendering via Intl in the active
+		 * language (the `localeTag` dictionary key carries that language out).
+		 */
+		function formatRelative(updatedAt, now, t) {
+			if (typeof updatedAt !== "number" || !isFinite(updatedAt) || updatedAt <= 0) {
+				return "";
+			}
+			var minute = 60000;
+			var diff = now - updatedAt;
+			if (diff < minute) {
+				return t("justNow");
+			}
+			if (diff < 60 * minute) {
+				return t("minutesAgo", { count: Math.floor(diff / minute) });
+			}
+			var date = new Date(updatedAt);
+			var time = new Intl.DateTimeFormat(t("localeTag"), { hour: "2-digit", minute: "2-digit" }).format(date);
+			var startOfDay = new Date(now);
+			startOfDay.setHours(0, 0, 0, 0);
+			if (updatedAt >= startOfDay.getTime()) {
+				return t("today", { time: time });
+			}
+			if (updatedAt >= startOfDay.getTime() - 24 * 60 * 60 * 1000) {
+				return t("yesterday", { time: time });
+			}
+			var sameYear = date.getFullYear() === new Date(now).getFullYear();
+			return new Intl.DateTimeFormat(t("localeTag"), {
+				month: "numeric",
+				day: "numeric",
+				year: sameYear ? undefined : "numeric",
+			}).format(date);
 		}
 
 		/**
@@ -141,157 +216,355 @@ window.__ModuleLoader__.load({
 			return { workspaces: entries };
 		}
 
-		var CARD_STYLE = {
-			background: "var(--dsw-alias-bg-layer-1,#fff)",
-			border: "1px solid var(--dsw-alias-border-l2,#e5e7eb)",
-			borderRadius: "12px",
-			padding: "12px 14px",
-			display: "flex",
-			flexDirection: "column",
-			gap: "12px",
-		};
-		var TITLE_STYLE = {
-			color: "var(--dsw-alias-label-primary,#1f2328)",
-			fontSize: "15px",
-			fontWeight: 600,
-			lineHeight: "22px",
-		};
-		var HINT_STYLE = {
-			color: "var(--dsw-alias-label-tertiary,#8b93a1)",
-			fontSize: "12px",
-			lineHeight: "18px",
-		};
-		var SECTION_STYLE = {
-			borderTop: "1px solid var(--dsw-alias-border-l2,#f0f1f3)",
-			paddingTop: "8px",
-			display: "flex",
-			flexDirection: "column",
-			gap: "6px",
-		};
-		var ROOT_STYLE = {
-			fontFamily: "ui-monospace,Menlo,monospace",
-			fontSize: "11px",
-			color: "var(--dsw-alias-label-secondary,#6b7280)",
-			wordBreak: "break-all",
-		};
-		var STATS_STYLE = {
-			fontSize: "12px",
-			lineHeight: "18px",
-			color: "var(--dsw-alias-label-secondary,#6b7280)",
-		};
-		var WARN_STYLE = {
-			fontSize: "12px",
-			lineHeight: "18px",
-			color: "var(--dsw-alias-state-warn-primary,#b45309)",
-		};
-		var ERROR_STYLE = {
-			fontSize: "12px",
-			lineHeight: "18px",
-			color: "var(--dsw-alias-state-error-primary,#dc2626)",
-		};
-		var LIST_STYLE = { margin: "4px 0 0", paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" };
-		var FALLBACK_BUTTON_STYLE = {
-			background: "var(--dsw-alias-bg-layer-2,#f3f4f6)",
-			color: "var(--dsw-alias-label-primary,#1f2328)",
-			border: "1px solid var(--dsw-alias-border-l2,#e5e7eb)",
-			borderRadius: "6px",
-			padding: "3px 10px",
-			fontSize: "12px",
-			lineHeight: "18px",
-			cursor: "pointer",
-		};
+		/**
+		 * Fetch one memory file's body for the preview. Outcomes mirror the
+		 * endpoint's status mapping so the card can show the ZCode viewer's
+		 * deleted / too-large / failed states instead of a raw error.
+		 *
+		 * @param {typeof fetch} fetchImpl - injectable for tests.
+		 * @param {string} root - known workspace root.
+		 * @param {string} file - plain .md file name inside that memory store.
+		 * @returns {Promise<{status: "ready"|"deleted"|"tooLarge"|"failed", content: string, message: string}>}
+		 */
+		async function loadFileContent(fetchImpl, root, file) {
+			var url = API_ROOT + "/memory/file?root=" + encodeURIComponent(root) + "&file=" + encodeURIComponent(file);
+			try {
+				var response = await fetchImpl(url);
+				if (response.ok) {
+					var body = await response.json();
+					return {
+						status: "ready",
+						content: typeof body.content === "string" ? body.content : "",
+						message: "",
+					};
+				}
+				if (response.status === 404) {
+					return { status: "deleted", content: "", message: "" };
+				}
+				if (response.status === 413) {
+					return { status: "tooLarge", content: "", message: "" };
+				}
+				return { status: "failed", content: "", message: "HTTP " + response.status };
+			} catch (error) {
+				return {
+					status: "failed",
+					content: "",
+					message: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}
+
+		/** Display label for a workspace: its directory name (ZCode shows a project name, not a path). */
+		function workspaceLabel(root) {
+			var normalized = String(root).replace(/[\\/]+$/, "");
+			var index = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+			return index >= 0 ? normalized.slice(index + 1) : normalized;
+		}
+
+		/**
+		 * Inject the card stylesheet once, the way the host's own CSS-module
+		 * tags work. The classes are prefixed `dce-` and every value falls back
+		 * to a fixed color after the token, so an old theme never blanks text.
+		 */
+		function injectCardStyle() {
+			if (typeof document === "undefined") {
+				return;
+			}
+			if (document.getElementById(STYLE_ID) !== null) {
+				return;
+			}
+			var style = document.createElement("style");
+			style.id = STYLE_ID;
+			style.dataset.plugin = NS;
+			style.textContent = [
+				".dce-card{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-3,#fff);border-radius:12px;transition:border-color .16s,background .16s}",
+				".dce-card:hover{border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}",
+				'.dce-card[data-open="true"]{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}',
+				".dce-head{appearance:none;-webkit-appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;border-radius:12px;align-items:center;gap:12px;padding:14px 16px;display:flex}",
+				".dce-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}",
+				".dce-head-text{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}",
+				".dce-name{color:var(--dsw-alias-label-primary,#1f2328);font-size:15px;font-weight:600;line-height:1.4}",
+				".dce-desc{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:1.5}",
+				".dce-chevron{color:var(--dsw-alias-label-tertiary,#8b93a1);flex:none;transition:transform .16s;display:inline-flex}",
+				'.dce-chevron[data-open="true"]{transform:rotate(180deg)}',
+				".dce-body{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);margin:0 16px;padding:12px 0 14px;display:flex;flex-direction:column;gap:10px}",
+				".dce-hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}",
+				".dce-empty{border:1px dashed var(--dsw-alias-border-l3,#d1d9e0);border-radius:10px;padding:16px;text-align:center;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:20px}",
+				".dce-chips{display:flex;flex-wrap:wrap;gap:6px}",
+				".dce-chip{font:inherit;cursor:pointer;background:0 0;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:var(--dsw-radius-md,8px);color:var(--dsw-alias-label-secondary,#6b7280);padding:3px 10px;font-size:12px;line-height:18px}",
+				'.dce-chip[data-active="true"]{background:var(--dsw-alias-bg-module-platform,#eef1f4);border-color:var(--dsw-alias-border-l3,#d1d9e0);color:var(--dsw-alias-label-primary,#1f2328)}',
+				".dce-search{width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l4,#d8dee4);border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-1,#fff);height:32px;color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;padding:0 10px;outline:none}",
+				".dce-search::placeholder{color:var(--dsw-alias-label-tertiary,#8b93a1)}",
+				".dce-search:focus-visible{border-color:var(--dsw-alias-brand-primary,#4f6ef7)}",
+				".dce-files-head{display:flex;align-items:center;gap:10px;min-height:28px}",
+				".dce-files-title{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:600;line-height:18px}",
+				".dce-files-count{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}",
+				".dce-spacer{flex:1}",
+				".dce-list{margin:0;padding:0;list-style:none;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-1,#fff)}",
+				".dce-item+.dce-item{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}",
+				".dce-row{display:flex;width:100%;align-items:center;gap:10px;padding:8px 12px;background:0 0;border:0;font:inherit;color:inherit;text-align:left;cursor:pointer}",
+				".dce-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.03))}",
+				".dce-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}",
+				".dce-file-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500;line-height:18px}",
+				".dce-file-time{flex:none;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px}",
+				".dce-preview{margin:0;padding:8px 12px 10px;background:var(--dsw-alias-bg-module-platform,#eef1f4);border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}",
+				".dce-pre{margin:0;max-height:240px;overflow:auto;font-family:var(--ds-font-family-code,ui-monospace,Menlo,monospace);font-size:11px;line-height:17px;color:var(--dsw-alias-label-primary,#1f2328);white-space:pre-wrap;word-break:break-word}",
+				".dce-workspace{display:flex;flex-direction:column;gap:10px}",
+				".dce-stats{color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px;line-height:18px}",
+				".dce-warn{color:var(--dsw-alias-state-warn-primary,#b45309);font-size:12px;line-height:18px}",
+				".dce-error{color:var(--dsw-alias-state-error-primary,#dc2626);font-size:12px;line-height:18px}",
+				".dce-fallback-btn{background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-primary,#1f2328);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:6px;padding:3px 10px;font-size:12px;line-height:18px;cursor:pointer}",
+			].join("\n");
+			document.head.appendChild(style);
+		}
+
+		/** Chevron from the host primitives, or a plain glyph when they are absent. */
+		function Chevron() {
+			if (
+				primitives !== undefined &&
+				primitives !== null &&
+				typeof primitives.IconChevronDownOutlineRegular !== "undefined" &&
+				primitives.IconChevronDownOutlineRegular !== null
+			) {
+				return createElement(primitives.IconChevronDownOutlineRegular, { size: 14, "aria-hidden": "true" });
+			}
+			return createElement("span", { "aria-hidden": "true" }, "▾");
+		}
 
 		function RefreshButton(props) {
 			var UI = props.UI;
 			var t = props.t;
 			var onClick = props.onClick;
 			if (UI !== null && UI !== undefined && typeof UI.Button !== "undefined" && UI.Button !== null) {
-				return createElement(
-					UI.Button,
-					{ variant: "outline", size: "sm", onClick: onClick },
-					t("refresh"),
-				);
+				return createElement(UI.Button, { variant: "outline", size: "sm", onClick: onClick }, t("refresh"));
 			}
-			return createElement("button", { type: "button", style: FALLBACK_BUTTON_STYLE, onClick: onClick }, t("refresh"));
+			return createElement(
+				"button",
+				{ type: "button", className: "dce-fallback-btn", onClick: onClick },
+				t("refresh"),
+			);
 		}
 
-		/** One workspace block: root, stats, drift warnings, per-file lines. */
-		function WorkspaceBlock(props) {
-			var entry = props.entry;
+		/** One memory file row: name + relative updated time, click toggles the body preview. */
+		function FileRow(props) {
+			var file = props.file;
+			var now = props.now;
 			var t = props.t;
-			if (entry.error !== null && entry.error !== undefined) {
-				return createElement(
-					"div",
-					{ style: SECTION_STYLE },
-					createElement("div", { style: ROOT_STYLE }, entry.root),
-					createElement("div", { style: ERROR_STYLE }, t("readError") + entry.error),
-				);
-			}
-			var snapshot = entry.snapshot;
-			if (snapshot === null || snapshot === undefined || !snapshot.exists) {
-				return createElement(
-					"div",
-					{ style: SECTION_STYLE },
-					createElement("div", { style: ROOT_STYLE }, entry.root),
-					createElement("div", { style: HINT_STYLE }, t("absent")),
-				);
-			}
-			if (snapshot.readError !== null && snapshot.readError !== undefined) {
-				return createElement(
-					"div",
-					{ style: SECTION_STYLE },
-					createElement("div", { style: ROOT_STYLE }, entry.root),
-					createElement("div", { style: ERROR_STYLE }, t("readFailed") + snapshot.readError),
-				);
+			var expanded = props.expanded;
+			var preview = props.preview;
+			var onToggle = props.onToggle;
+			var rowChildren = [
+				createElement("span", { key: "name", className: "dce-file-name" }, file.file),
+			];
+			var time = formatRelative(file.updatedAt, now, t);
+			if (time !== "") {
+				rowChildren.push(createElement("span", { key: "time", className: "dce-file-time" }, time));
 			}
 			var children = [
-				createElement("div", { key: "root", style: ROOT_STYLE }, entry.root),
 				createElement(
-					"div",
-					{ key: "stats", style: STATS_STYLE },
-					t("stats", { files: snapshot.fileCount, index: snapshot.indexEntryCount }),
+					"button",
+					{
+						key: "row",
+						type: "button",
+						className: "dce-row",
+						"aria-expanded": expanded ? "true" : "false",
+						onClick: onToggle,
+					},
+					rowChildren,
 				),
 			];
-			if (snapshot.missingFiles.length > 0) {
-				children.push(
-					createElement("div", { key: "missing", style: WARN_STYLE }, t("missing") + snapshot.missingFiles.join("、")),
-				);
+			if (expanded) {
+				var body = null;
+				if (preview === null || preview.file !== file.file) {
+					body = createElement("div", { className: "dce-hint" }, t("previewLoading"));
+				} else if (preview.status === "loading") {
+					body = createElement("div", { className: "dce-hint" }, t("previewLoading"));
+				} else if (preview.status === "ready") {
+					body = createElement("pre", { className: "dce-pre" }, preview.content);
+				} else if (preview.status === "deleted") {
+					body = createElement("div", { className: "dce-hint" }, t("previewDeleted"));
+				} else if (preview.status === "tooLarge") {
+					body = createElement("div", { className: "dce-hint" }, t("previewTooLarge"));
+				} else {
+					body = createElement("div", { className: "dce-error" }, t("previewFailed") + preview.message);
+				}
+				children.push(createElement("div", { key: "preview", className: "dce-preview" }, body));
 			}
-			if (snapshot.unindexedFiles.length > 0) {
-				children.push(
-					createElement(
-						"div",
-						{ key: "unindexed", style: WARN_STYLE },
-						t("unindexed") + snapshot.unindexedFiles.join("、"),
-					),
-				);
-			}
-			children.push(
-				createElement(
-					"ul",
-					{ key: "files", style: LIST_STYLE },
-					snapshot.files.map(function (file) {
-						return createElement(
-							"li",
-							{ key: file.file },
-							createElement("strong", null, file.file),
-							file.description !== "" ? " — " + file.description : "",
-						);
-					}),
-				),
-			);
-			return createElement("div", { style: SECTION_STYLE }, children);
+			return createElement("li", { className: "dce-item" }, children);
 		}
 
-		/** The card page: refresh control + one block per known workspace. */
+		/** One workspace's memory store: stats, drift warnings, searchable file list with previews. */
+		function WorkspaceBlock(props) {
+			var entry = props.entry;
+			var selected = props.selected;
+			var onSelect = props.onSelect;
+			var t = props.t;
+			var UI = props.UI;
+			var now = props.now;
+			var expandedFile = props.expandedFile;
+			var preview = props.preview;
+			var onToggleFile = props.onToggleFile;
+			var onRefresh = props.onRefresh;
+			var query = props.query;
+			var onQueryChange = props.onQueryChange;
+			var chips = [];
+			if (entry.workspaces.length > 1) {
+				chips = createElement(
+					"div",
+					{ key: "chips", className: "dce-chips", role: "tablist", "aria-label": t("filesHeading") },
+					entry.workspaces.map(function (workspace) {
+						return createElement(
+							"button",
+							{
+								key: workspace.root,
+								type: "button",
+								className: "dce-chip",
+								"data-active": workspace.root === selected ? "true" : "false",
+								onClick: function () {
+									onSelect(workspace.root);
+								},
+							},
+							workspaceLabel(workspace.root),
+						);
+					}),
+				);
+			}
+			var active = entry.workspaces.find(function (workspace) {
+				return workspace.root === selected;
+			});
+			if (active === undefined) {
+				return createElement("div", { key: "block" }, chips);
+			}
+			var body = null;
+			if (active.error !== null && active.error !== undefined) {
+				body = [
+					createElement("div", { key: "root", className: "dce-stats" }, active.root),
+					createElement("div", { key: "err", className: "dce-error" }, t("readError") + active.error),
+				];
+			} else if (active.snapshot === null || active.snapshot === undefined || !active.snapshot.exists) {
+				body = createElement("div", { className: "dce-empty" }, t("absent"));
+			} else if (active.snapshot.readError !== null && active.snapshot.readError !== undefined) {
+				body = [
+					createElement("div", { key: "root", className: "dce-stats" }, active.root),
+					createElement("div", { key: "err", className: "dce-error" }, t("readFailed") + active.snapshot.readError),
+				];
+			} else {
+				var snapshot = active.snapshot;
+				var normalizedQuery = String(query).trim().toLocaleLowerCase();
+				var files = snapshot.files.filter(function (file) {
+					if (normalizedQuery.length === 0) {
+						return true;
+					}
+					return [file.file, file.name, file.description, file.type]
+						.filter(function (value) {
+							return typeof value === "string";
+						})
+						.some(function (value) {
+							return value.toLocaleLowerCase().includes(normalizedQuery);
+						});
+				});
+				var parts = [
+					createElement(
+						"div",
+						{ key: "stats", className: "dce-stats" },
+						t("stats", { files: snapshot.fileCount, index: snapshot.indexEntryCount }),
+					),
+				];
+				if (snapshot.missingFiles.length > 0) {
+					parts.push(
+						createElement("div", { key: "missing", className: "dce-warn" }, t("missing") + snapshot.missingFiles.join("、")),
+					);
+				}
+				if (snapshot.unindexedFiles.length > 0) {
+					parts.push(
+						createElement(
+							"div",
+							{ key: "unindexed", className: "dce-warn" },
+							t("unindexed") + snapshot.unindexedFiles.join("、"),
+						),
+					);
+				}
+				parts.push(
+					createElement("input", {
+						key: "search",
+						type: "search",
+						className: "dce-search",
+						value: query,
+						placeholder: t("searchPlaceholder"),
+						"aria-label": t("searchPlaceholder"),
+						onChange: function (event) {
+							onQueryChange(event.currentTarget.value);
+						},
+					}),
+				);
+				parts.push(
+					createElement(
+						"div",
+						{ key: "head", className: "dce-files-head" },
+						createElement("span", { className: "dce-files-title" }, t("filesHeading")),
+						createElement("span", { className: "dce-files-count" }, String(files.length)),
+						createElement("span", { className: "dce-spacer" }),
+						createElement(RefreshButton, {
+							UI: UI,
+							t: t,
+							onClick: onRefresh,
+						}),
+					),
+				);
+				if (files.length === 0) {
+					parts.push(createElement("div", { key: "none", className: "dce-empty" }, t("searchEmpty")));
+				} else {
+					parts.push(
+						createElement(
+							"ul",
+							{ key: "files", className: "dce-list" },
+							files.map(function (file) {
+								return createElement(FileRow, {
+									key: file.file,
+									file: file,
+									now: now,
+									t: t,
+									expanded: expandedFile === file.file,
+									preview: preview,
+									onToggle: function () {
+										onToggleFile(file.file);
+									},
+								});
+							}),
+						),
+					);
+				}
+				body = parts;
+			}
+			return createElement("div", { key: "block", className: "dce-workspace" }, chips, body);
+		}
+
+		/**
+		 * The card: a collapsed-by-default framed disclosure (dshmarket
+		 * SettingsCard shape) whose open body is the ZCode-memory-viewer-shaped
+		 * read-only projection.
+		 */
 		function MemoryCard(props) {
 			var t = props.t;
 			var UI = props.UI;
+			injectCardStyle();
+			var openState = useState(false);
+			var open = openState[0];
+			var setOpen = openState[1];
 			var state = useState({ status: "loading", model: null, message: "" });
 			var model = state[0];
 			var setModel = state[1];
 			var reloadState = useState(0);
 			var reload = reloadState[1];
+			var selectionState = useState({ root: null, query: "", expandedFile: null });
+			var selection = selectionState[0];
+			var setSelection = selectionState[1];
+			var previewState = useState({ file: null, status: "loading", content: "", message: "" });
+			var preview = previewState[0];
+			var setPreview = previewState[1];
+			var nowState = useState(Date.now());
+			var now = nowState[0];
+			var setNow = nowState[1];
 			useEffect(
 				function () {
 					var alive = true;
@@ -311,42 +584,116 @@ window.__ModuleLoader__.load({
 				},
 				[reloadState[0]],
 			);
-			var body = null;
-			if (model.status === "loading") {
-				body = createElement("div", { key: "body", style: HINT_STYLE }, t("loading"));
-			} else if (model.status === "error") {
-				body = createElement("div", { key: "body", style: ERROR_STYLE }, t("loadFailed") + model.message);
-			} else if (model.model.workspaces.length === 0) {
-				body = createElement("div", { key: "body", style: HINT_STYLE }, t("empty"));
-			} else {
-				body = createElement(
-					"div",
-					{ key: "body" },
-					model.model.workspaces.map(function (entry) {
-						return createElement(WorkspaceBlock, { key: entry.root, entry: entry, t: t, UI: UI });
-					}),
-				);
-			}
-			return createElement(
-				"div",
-				{ style: CARD_STYLE },
+			useEffect(
+				function () {
+					if (open) setNow(Date.now());
+				},
+				[open],
+			);
+			var refresh = function () {
+				setModel({ status: "loading", model: null, message: "" });
+				setSelection(function (current) {
+					return { root: current.root, query: "", expandedFile: null };
+				});
+				setPreview({ file: null, status: "loading", content: "", message: "" });
+				reload(function (n) {
+					return n + 1;
+				});
+			};
+			var header = createElement(
+				"button",
+				{
+					type: "button",
+					className: "dce-head",
+					"aria-expanded": open ? "true" : "false",
+					onClick: function () {
+						setOpen(!open);
+					},
+				},
 				createElement(
 					"div",
-					{ style: { display: "flex", alignItems: "center", gap: "12px" } },
-					createElement("div", { style: TITLE_STYLE }, t("title")),
-					createElement("span", { style: { flex: 1 } }),
-					createElement(RefreshButton, {
-						UI: UI,
-						t: t,
-						onClick: function () {
-							setModel({ status: "loading", model: null, message: "" });
-							reload(function (n) {
-								return n + 1;
-							});
-						},
-					}),
+					{ className: "dce-head-text" },
+					createElement("div", { className: "dce-name" }, t("title")),
+					createElement("div", { className: "dce-desc" }, t("desc")),
 				),
-				createElement("div", { style: HINT_STYLE }, t("hint")),
+				createElement(
+					"span",
+					{ className: "dce-chevron", "data-open": open ? "true" : "false" },
+					createElement(Chevron, null),
+				),
+			);
+			var body = null;
+			if (!open) {
+				return createElement("div", { className: "dce-card", "data-open": "false" }, header);
+			}
+			var inner = null;
+			if (model.status === "loading") {
+				inner = createElement("div", { key: "inner", className: "dce-hint" }, t("loading"));
+			} else if (model.status === "error") {
+				inner = createElement("div", { key: "inner", className: "dce-error" }, t("loadFailed") + model.message);
+			} else if (model.model.workspaces.length === 0) {
+				inner = createElement("div", { key: "inner", className: "dce-empty" }, t("empty"));
+			} else {
+				var selected = selection.root;
+				if (
+					selected === null ||
+					!model.model.workspaces.some(function (workspace) {
+						return workspace.root === selected;
+					})
+				) {
+					selected = model.model.workspaces[0].root;
+				}
+				inner = createElement(WorkspaceBlock, {
+					key: "inner",
+					entry: model.model,
+					selected: selected,
+					onSelect: function (root) {
+						setSelection({ root: root, query: "", expandedFile: null });
+						setPreview({ file: null, status: "loading", content: "", message: "" });
+					},
+					t: t,
+					UI: UI,
+					now: now,
+					expandedFile: selection.expandedFile,
+					preview: preview,
+					onToggleFile: function (file) {
+						if (selection.expandedFile === file) {
+							setSelection(function (current) {
+								return { root: current.root, query: current.query, expandedFile: null };
+							});
+							return;
+						}
+						setSelection(function (current) {
+							return { root: current.root, query: current.query, expandedFile: file };
+						});
+						setPreview({ file: file, status: "loading", content: "", message: "" });
+						loadFileContent(fetch, selected, file).then(function (result) {
+							setPreview(function (current) {
+								if (current.file !== file) {
+									return current;
+								}
+								return { file: file, status: result.status, content: result.content, message: result.message };
+							});
+						});
+					},
+					query: selection.query,
+					onQueryChange: function (value) {
+						setSelection(function (current) {
+							return { root: current.root, query: value, expandedFile: current.expandedFile };
+						});
+					},
+				});
+			}
+			body = createElement(
+				"div",
+				{ key: "body", className: "dce-body" },
+				createElement("div", { className: "dce-hint" }, t("hint")),
+				inner,
+			);
+			return createElement(
+				"div",
+				{ className: "dce-card", "data-open": "true" },
+				header,
 				body,
 			);
 		}
@@ -354,6 +701,7 @@ window.__ModuleLoader__.load({
 		exports.name = NS;
 		exports.inject = ["slots", "locale", "theme"];
 		exports.loadCardModel = loadCardModel;
+		exports.loadFileContent = loadFileContent;
 		exports.apply = function apply(ctx) {
 			var tRaw = null;
 			try {

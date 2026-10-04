@@ -1,7 +1,7 @@
 {
   "name": "dsh-continual-evolve",
-  "version": "0.13.0",
-  "description": "DSH 工作区记忆：每个工作区一个 markdown 记忆库，会话开局注入索引，模型原生读写 / ZCode-style workspace memory for DeepSeek Harness: a per-workspace markdown store with session-start index injection.",
+  "version": "0.14.0",
+  "description": "ZCode-style workspace memory for DeepSeek Harness: a per-workspace markdown store with session-start index injection.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -20,13 +20,15 @@
       "default": "./lib/index.js"
     },
     "./client": "./client/client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "lib/**/*.js",
     "lib/**/*.d.ts",
     "client/client.js",
     "cordis.patch.yml",
+    "locale/*.json",
     "README.md",
     "LICENSE"
   ],

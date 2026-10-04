@@ -94,3 +94,16 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 - **工作区内点目录读写全通**：`dsh-tool-fs` 无 ignore/hidden 过滤（连搜索都 `--no-ignore --hidden`，只排 VCS 目录）——`<workspace>/.evolve/` 这类点目录今天就能被模型原生读写。
 
 **要点**：想让模型"直接读写文件"，把文件放进工作区即可，零配置零改动；放 home 目录则读没问题、写会逐次弹提权。
+
+## 7. 插件显示名/描述的双语：包根 `locale/*.json`，不是 package.json 拼串
+
+**症状**：插件管理页显示的是包名 `dsh-continual-evolve`，语言切到英文也不变；或把 package.json `description` 写成"中文 / 英文"拼串后，两种语言都显示整串（带字面 ` / `）。
+
+**上游事实**（`dsh-app-boot` `readPluginMeta` + `dsh-client-locale`，2026-10-05 安装包核对）：
+
+- 宿主读取插件显示元数据的正式通道是**包根 `locale/<lang>.json`**：以 `<specifier>/locale/en.json` 为锚点（**必须存在**，否则整组字典不读），扫同目录其余 `*.json`，各取 `meta.title` / `meta.description`（纯字符串），合成 `{en: 回退, ...各语言}` 的 `LocalizedText`。
+- 回退链：title ← package.json `name`（最终回退是完整模块名），description ← package.json `description`（最终回退是空串）。**普通字符串永远原样渲染，不翻译**——拼串双语是错误形态。
+- 客户端 `ctx.locale.resolveText(text)` 按当前语言取一条；插件管理页与内置插件列表都用 `meta?.title ? resolveText : pkg.name`。
+- 接线要求：package.json `exports` 加 `"./locale/*.json": "./locale/*.json"`，`files` 加 `locale/*.json`。参照 dshmarket 的 `locale/zh.json`。
+
+**要点**：双语显示名/描述 = locale 文件各写各的；package.json `description` 保持纯英文（npm 展示同一句）。
