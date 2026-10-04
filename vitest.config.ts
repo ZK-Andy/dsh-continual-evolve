@@ -6,13 +6,11 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			include: ["src/**/*.ts"],
-			exclude: ["src/index.ts", "src/types.ts"],
+			exclude: ["src/index.ts"],
 			thresholds: {
 				// DSH-shaped per-file gate: every file must clear the floor,
-				// not just the repo average. Values are the current waterline
-				// (2026-09-25 round 12: branches minimum skillquality 83.6 —
-				// proven ceiling, see round-3 ADR; functions minimum logfile 91.66);
-				// raise toward 100 file by file.
+				// not just the repo average. The plugin is three files since
+				// the 2026-10-04 teardown; keep the floor honest as it grows.
 				perFile: true,
 				lines: 91,
 				functions: 91,

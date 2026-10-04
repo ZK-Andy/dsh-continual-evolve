@@ -1,31 +1,43 @@
 /**
- * The persistent-memory guide injected as part of the `evolve:memory-index`
- * system-prompt section (evolve v2, change two).
+ * The persistent-memory guide injected as part of the memory section.
  *
- * This text is the write-path half of the v2 plan: it teaches the model when a
- * durable memory is worth creating, which recall type it belongs to, what body
- * structure each type owes, and that the main session may write directly with
- * `evolve_add` instead of waiting for the background pipeline.
+ * This text is the write-path half of the ZCode-aligned design: it teaches
+ * the model when a durable memory is worth creating, which type it belongs
+ * to, what body structure each type owes, and that memories are plain
+ * markdown files written directly with the native file tools — the plugin
+ * registers no tools and no commands.
  *
- * Provenance: `docs/research/evolve-v2-passive-read-write-plan.md` §改动二
- * (Chinese full text, adapted from ZCode's persistent-memory prompt). Kept in
- * its own module so the wording is a single home — `memory-index.ts` only
- * composes it with the `<memories>` block.
+ * Provenance: the when_to_save taxonomy is adapted from ZCode's persistent-
+ * memory prompt (introduced here in evolve v2); the write-path wording now
+ * targets native file operations on `<workspace>/.evolve/memory/`.
  */
 
-/** Heading and framing before the `<memories>` block. */
-export const MEMORY_GUIDE_INTRO = `# 持久记忆
+/** Heading and framing before the `<memories>` block. Takes the absolute memory dir. */
+export function memoryGuideIntro(memoryDir: string): string {
+	return `# 持久记忆
 
-你有一个跨会话的持久记忆系统。以下是当前记忆（已直接注入，无需查询即可使用；需要检索完整内容或确认是否有相关记忆时，调用 evolve_recall）。本会话内可以直接用 evolve_add 落盘，不必等后台流程——默认写 local，只有稳定的跨项目教训才写 global（global 写入会弹人工批准）。`;
+你有一个跨会话的持久记忆系统，存放在 \`${memoryDir}/\`：一事一文，\`MEMORY.md\` 是索引，其内容已注入在下方。没有专用命令或工具——直接用你的文件读写工具查看、新建、修改、删除记忆文件，并在同一会话内顺手落盘。`;
+}
 
-/** The when_to_save / how_to_use rules and maintenance discipline. */
-export const MEMORY_GUIDE_RULES = `## 何时写入记忆
+/** The file format, when_to_save / how_to_use rules, and maintenance discipline. */
+export const MEMORY_GUIDE_RULES = `## 记忆文件的格式
 
-用户明确要求记住时，立即存为最合适的类型；要求忘记时，找到并删除相关条目。
+---
+name: <短横线小写标识>
+description: <一句话相关性钩子——决定未来会话会不会想起这条记忆>
+metadata:
+  type: user | feedback | project | reference
+---
+
+<正文>
+
+## 何时写入记忆
+
+用户明确要求记住时，立即存为最合适的类型；要求忘记时，找到并删除相关文件与索引行。
 除此之外，在对话中自然遇到以下信号时主动写入。存之前先过一道筛子：
 **能从代码、git 历史、仓库文件里重新推导出来的事实不存**——只存重推导不出来的
 背景、决策和偏好。相对日期一律转成绝对日期（"周四"→"2026-10-08"），否则未来
-的会话无法解读。一条事实一个条目；不确定值不值得存时，问自己"这条的信息量
+的会话无法解读。一条事实一个文件；不确定值不值得存时，问自己"这条的信息量
 是否在'为什么'里，而不在'是什么'里"。
 
 <type name="user">
@@ -53,7 +65,7 @@ export const MEMORY_GUIDE_RULES = `## 何时写入记忆
 <type name="project">
   <when_to_save>得知进行中的工作、目标、决策、截止期或事故的背景动机时——
   凡是"谁在做什么、为什么、到什么时候"且无法从代码或 git 推导的信息。
-  这类记忆衰减快，状态变化时更新它，别堆叠新条目。</when_to_save>
+  这类记忆衰减快，状态变化时更新它，别堆叠新文件。</when_to_save>
   <how_to_use>用它补全请求背后的上下文与动机，让建议贴住真实约束。
   例："周四起冻结合并"——存：2026-03-05 起冻结合并，非关键 PR 提前标记。</how_to_use>
   <body_structure>事实/决策先行 + **Why:**（动机：约束、deadline、干系人要求）
@@ -68,7 +80,6 @@ export const MEMORY_GUIDE_RULES = `## 何时写入记忆
 
 ## 如何维护
 
-- 更新优先于新建：状态变了改原条目，不另起一条（新旧并存比没有记忆更糟）。
-- 每条的 description 是给未来会话的相关性 hook——写"决定了一条记忆会不会
-  被想起"的一句话，不写流水账。
+- 写完记忆文件后立即在 MEMORY.md 追加或更新一行索引：\`- [标题](文件名.md) — 钩子\`；状态变化时原文与索引行一起改，别让索引说谎。
+- 更新优先于新建：状态变了改原文件，不另起一条（新旧并存比没有记忆更糟）。
 - [[名字]] 互相引用相关记忆；引用还不存在的名字是合法的，它标记"值得将来补写"。`;

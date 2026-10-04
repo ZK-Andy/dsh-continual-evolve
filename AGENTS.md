@@ -1,6 +1,6 @@
 # dsh-continual-evolve — 项目规则
 
-DeepSeek Harness 的持续自我进化插件：从会话轨迹中提炼**版本化、可审计、可回滚**的 harness 状态（prompt notes / memories / skills / subagent specs）。TypeScript npm 库，以 cordis 插件形态挂载（`cordis.patch.yml`）。
+DeepSeek Harness 的工作区记忆插件：每个工作区一个纯 markdown 记忆库（`<workspace>/.evolve/memory/`），会话开局注入索引，模型用原生文件读写工具直接使用。TypeScript npm 库，以 cordis 插件形态挂载（`cordis.patch.yml`）。
 
 ## 协作模式（AI + 人）
 
@@ -25,8 +25,8 @@ DeepSeek Harness 的持续自我进化插件：从会话轨迹中提炼**版本�
 
 ## 编码约定（TypeScript）
 
-- 完整规范：[docs/coding-standard.md](docs/coding-standard.md)（编码）与 [docs/architecture-standard.md](docs/architecture-standard.md)（分层/预算/host 边界，机器门禁 `scripts/verify-architecture.ts`）。
-- 红线：**fail loud**；行为级变更必须配套回归测试（vitest）；构建产物只进 `lib/`、源码只在 `src/`；分层与规模预算由架构门禁把守，违标白名单只减不增。
+- 完整规范：[docs/coding-standard.md](docs/coding-standard.md)（编码）与 [docs/architecture-standard.md](docs/architecture-standard.md)（分层/预算/host 边界）。
+- 红线：**fail loud**；行为级变更必须配套回归测试（vitest）；构建产物只进 `lib/`、源码只在 `src/`。
 
 ## GitHub 调研纪律（强制）
 

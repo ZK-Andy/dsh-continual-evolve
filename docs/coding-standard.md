@@ -50,4 +50,4 @@
 
 - Conventional Commits；非平凡变更同变更携带 ADR（`## Alternatives considered` 强制）。
 - durable 文档写当前状态不写变更史；每个事实只有一个家。
-- `pnpm typecheck && pnpm lint && pnpm test` 三关 + `run-gates` 文档/架构门禁全绿才算完成；架构违标白名单清偿进度由 `verify-architecture.ts` 输出可见。
+- `pnpm typecheck && pnpm lint && pnpm test` 三关 + `run-gates` 文档门禁全绿才算完成。

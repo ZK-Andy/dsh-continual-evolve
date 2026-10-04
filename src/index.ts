@@ -1,158 +1,60 @@
 /**
- * dsh-continual-evolve — plugin entry (Phase 2: auto review gate).
+ * dsh-continual-evolve — plugin entry.
  *
- * Mounts the evolution engine, registers the model-facing evolve_* tools,
- * the human-facing /evolve command, the system-prompt guidance section, and
- * the dedicated Memory Agent listener. The listener is always registered so
- * an install works without profile edits; `autoReview` only supplies the
- * initial default when `evolve/runtime.json` does not exist yet, and
- * `/evolve pause|resume` own it afterwards. Generic review/planner/fate are
- * not reachable from this listener.
+ * After the 2026-10-04 ZCode-alignment teardown the plugin is one thing: a
+ * session-start system-prompt section that injects the workspace memory
+ * index (`<cwd>/.evolve/memory/MEMORY.md`), hands out the store path, and
+ * teaches the when-to-save guide. The model reads and writes the markdown
+ * files with its native tools; there are no plugin tools, no commands, no
+ * background extraction, and no governance. See
+ * .agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md.
  *
- * evolve v2 registers a third section (`evolve:memory-index`) that injects
- * memory content plus the when_to_save guide, frozen per session — see
- * memory-index.ts.
+ * The host API surface is declared locally (the minimal shape this plugin
+ * touches) instead of importing the DSH type packages — the section call is
+ * the same one every prior release used, verified in production.
  */
-import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
-import type { Context } from "@deepseek-ai/cordis";
-import { expandHomePath, resolveDshHome } from "@deepseek-ai/dsh-home-paths";
-import { createEvolutionEngine, type EvolutionEngine } from "./service.js";
-import { registerEvolveTools } from "./tool.js";
-import { registerEvolveCommand } from "./command.js";
-import { registerAutoReview } from "./listener.js";
-import { syncSkillsFromResult } from "./skill.js";
-import { entriesSectionText } from "./inject.js";
 import {
 	createFrozenMemorySection,
-	DEFAULT_MEMORY_INDEX_MAX_CHARS,
+	DEFAULT_MAX_CHARS,
 	DEFAULT_MEMORY_SECTION_ORDER,
 	MEMORY_SECTION_NAME,
-	memoryIndexSectionText,
-} from "./memory-index.js";
-import { resolveRubricKey } from "./rubric.js";
-import { restoreMounted } from "./mount.js";
-import { registerFileLogger } from "./logfile.js";
-import { resolvePromotionPolicy } from "./promotion.js";
+	memorySectionText,
+} from "./memory-section.js";
 
 export const name = "continual-evolve";
 
-/** Service key under which the evolution engine is published. */
-export const EVOLUTION_SERVICE = "evolution";
+export const inject = ["systemPrompt"];
 
-export const inject = ["tools", "commands", "systemPrompt", "llm", "sessionQuery", "agents", "userQuestions", "subagents"];
+/** The minimal host surface this plugin touches. */
+interface SectionContext {
+	agent?: unknown;
+}
+
+interface HostContext {
+	systemPrompt: {
+		section(section: {
+			name: string;
+			order: number;
+			text: string | ((context: SectionContext) => string);
+		}): void;
+	};
+	logger(name: string): { info(message: string): void; warn(message: string): void };
+}
 
 export const Config = z.object({
-	/** Root for evolution stores; defaults to the resolved DSH home. */
-	baseDir: z.string(),
-	/** System-prompt section order for the evolution guidance. */
-	sectionOrder: z.natural().default(118),
-	/** Initial Memory Agent default when no `evolve/runtime.json` exists; not a registration gate. */
-	autoReview: z.boolean().default(false),
-	/** ZCode-style minimum lexical words in one direct user text part. */
-	memoryMinUserWords: z.natural().default(3),
 	/**
-	 * Session-close bounded drain for in-flight extraction, in milliseconds.
-	 * Absent → 15s; 0 restores the legacy immediate abort on dispose.
-	 */
-	sessionCloseDrainMs: z.natural().default(15000),
-	/** Trajectory slice handed to the extractor, in characters. */
-	maxReviewInputChars: z.natural().default(40000),
-	/** Output budget for the cheap gate call. */
-	reviewBudgetTokens: z.natural().default(4096),
-	/**
-	 * Planner prefix-cache routing for the gate and planner inputs: `auto`
-	 * prepends a session-derived message prefix when the session shows
-	 * cache-read evidence (dropping the redundant flat trajectory text),
-	 * `session` always prefixes, `off` keeps the legacy flat-text input.
-	 */
-	plannerPrefixCache: z.union([z.const("auto"), z.const("session"), z.const("off")]).default("auto"),
-	/** Session-prefix budget for Route A planning inputs, in characters. */
-	plannerPrefixMaxChars: z.natural().default(12000),
-	/** After an approved gate run with applied edits, queue a visible follow-up notice. */
-	notifyOnAutoReview: z.boolean().default(true),
-	/** Cross-session (global) edits require an explicit human approval. */
-	requireGlobalApproval: z.boolean().default(true),
-	/**
-	 * Authoring language for evolution records (refinement summaries,
-	 * rationales, entry titles/content, review and wrap-up verdicts).
-	 * `auto` follows the DSH client language (durable `locale.preference`,
-	 * then trajectory detection, then `en`); `zh`/`en` pin it.
-	 */
-	recordLanguage: z.union([z.const("auto"), z.const("zh"), z.const("en")]).default("auto"),
-	/** Skills root for materialized skill entries; defaults to <dshHome>/skills. */
-	skillsDir: z.string(),
-	/** Passphrase for rubric encryption; falls back to DSH_EVOLVE_RUBRIC_KEY, then a local key file. */
-	rubricKey: z.string(),
-	/** Write all cordis log messages to <baseDir>/evolve/plugin.log (JSONL). */
-	logToFile: z.boolean().default(true),
-	/** File log level: 0=error, 1=info, 2=warn, 3=debug. */
-	logLevel: z.natural().default(1),
-	/** Rotate the file log when it exceeds this many bytes. */
-	logMaxBytes: z.natural().default(5 * 1024 * 1024),
-	/** After a benchmark decision rejects a candidate, roll the refinement back automatically. */
-	autoRollbackOnReject: z.boolean().default(true),
-	/**
-	 * P1 auto-case capture: failed evolution attempts (benchmark-rejected
-	 * candidates, gate proposals without consent) land as draft cases in the
-	 * auto-regression container benchmark, seeding the regression loop.
-	 */
-	autoCase: z.boolean().default(true),
-	/**
-	 * Optional model override for the memory extractor (cheaper model).
-	 * Format: "provider/model" or just "model" (same provider as the agent).
-	 * When absent, the extractor uses the agent's own provider/model.
-	 */
-	reviewModel: z.string(),
-	/**
-	 * Goal-blocked moment: after this many CONSECUTIVE idle probes that
-	 * observe the session goal in phase "blocked", run one memory extraction
-	 * so the stuck encounter is distilled. 0 disables.
-	 */
-	goalBlockedWrapupTurns: z.natural().min(0).default(3),
-	/**
-	 * Promotion policy (2026-08-22): regex sources whose match in a
-	 * candidate's title/content marks it project-scoped — such entries are
-	 * never promoted to the cross-session global store. Replaces the built-in
-	 * defaults when set.
-	 */
-	/**
-	 * Promotion policy (2026-08-22): regex sources whose match in a
-	 * candidate's title/content marks it project-scoped — such entries are
-	 * never promoted to the cross-session global store. Replaces the built-in
-	 * defaults when set.
-	 */
-	promotionBlockPatterns: z.array(z.string()),
-	/** Whole promotions below this content length stay local (chars). */
-	promotionMinChars: z.natural().default(100),
-	/** Entry-directory lines injected per build before folding into a counter. */
-	injectionDirectoryLines: z.natural().default(15),
-	/**
-	 * evolve v2 memory index: the section that injects memory CONTENT (not just
-	 * an id/title directory) at session start, frozen per session to keep the
-	 * system prompt byte-stable (prompt cache). `enabled`/`guide`/`order`/
-	 * `maxChars` default to true/true/400/6000; with `guide` off and an empty
-	 * store the section renders to "" and costs no tokens.
+	 * The memory section: injects the workspace memory index at session
+	 * start, frozen per session to keep the system prompt byte-stable
+	 * (prompt cache). `enabled`/`guide`/`order`/`maxChars` default to
+	 * true/true/400/6000; with `guide` off and an empty store the section
+	 * renders to "" and costs no tokens.
 	 */
 	memoryIndex: z.object({
 		enabled: z.boolean(),
 		guide: z.boolean(),
 		order: z.natural(),
 		maxChars: z.natural(),
-	}),
-	/**
-	 * Storage hygiene (#20): how much append-only past each write keeps.
-	 * `snapshots` = full-state copies per store, `refinements` = tail lines
-	 * per store history, `reviews` = tail lines of the shared audit trail,
-	 * `tokenUsage` = tail lines of the direct-call token ledger.
-	 * Absent fields fall back to the store defaults (20 / 500 / 500 / 500) —
-	 * rollback needs recent snapshots, readers need a recent window.
-	 */
-	historyRetain: z.object({
-		snapshots: z.natural(),
-		refinements: z.natural(),
-		reviews: z.natural(),
-		tokenUsage: z.natural(),
 	}),
 });
 
@@ -162,136 +64,23 @@ export const Config = z.object({
  */
 export type EvolveConfig = Partial<Schemastery.TypeT<typeof Config>>;
 
-export interface EvolutionService {
-	readonly engine: EvolutionEngine;
-	readonly baseDir: string;
-}
-
-export function apply(ctx: Context, config: EvolveConfig): void {
-	const baseDir = resolveDshHome(config.baseDir);
-	const skillsRoot = config.skillsDir ? expandHomePath(config.skillsDir) : join(baseDir, "skills");
-	const engine = createEvolutionEngine(baseDir, {
-		onApplied: (result) => {
-			try {
-				const warnings = syncSkillsFromResult(skillsRoot, result);
-				for (const warning of warnings) {
-					ctx.logger("continual-evolve").warn(warning);
-				}
-			} catch (cause) {
-				ctx
-					.logger("continual-evolve")
-					.warn(`skill materialization failed for ${result.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
-			}
-		},
-	},
-	config.historyRetain ? { historyRetain: { ...config.historyRetain } } : {},
-	);
-
-	ctx.provide(EVOLUTION_SERVICE, { engine, baseDir });
-
-	ctx.systemPrompt.section({
-		name: "tool:continual-evolve",
-		order: config.sectionOrder ?? 118,
-		text: "You have a continual harness: versioned, persistent prompt notes, memories, skills, and subagent specs. Memories are ONE FACT per entry, typed user/feedback/project/reference (feedback = pitfall + Why + How to apply). Stores: local (this session's staging), project (this project's cross-session store), global (cross-project). Prompt notes and delegation specs are injected below; use evolve_list for the full state. Create an entry (evolve_add) after a repeated failure, a reusable tactic, a durable fact or preference, a repeated procedure, or a repeated delegation role. Keep edits small and evidence-backed; prefer local scope, use project for repo-specific lessons, global: true only for stable cross-project lessons. Update or delete (evolve_update / evolve_delete) when an entry is wrong or obsolete; roll back faulty refinements with evolve_rollback. Every edit is snapshotted, versioned, and recorded — no edit can be silently lost.",
-	});
-
-	// Phase 2: make prompt entries real system-prompt content and subagent
-	// entries real delegation specs. The text is a provider evaluated at every
-	// assembly with the assembling agent; a store without prompt/subagent
-	// entries renders to "" and the prompt renderer drops the section.
-	//
-	// evolve v2: when the memory index section carries memory content, the
-	// directory stops listing memories so the same entries are never paid for
-	// twice (one fact, one home).
-	const memoryIndexEnabled = config.memoryIndex?.enabled ?? true;
-	ctx.systemPrompt.section({
-		name: "tool:continual-evolve:entries",
-		order: (config.sectionOrder ?? 118) + 1,
+export function apply(host: HostContext, config: EvolveConfig): void {
+	if (config.memoryIndex?.enabled === false) {
+		return;
+	}
+	const frozen = createFrozenMemorySection();
+	host.systemPrompt.section({
+		name: MEMORY_SECTION_NAME,
+		order: config.memoryIndex?.order ?? DEFAULT_MEMORY_SECTION_ORDER,
 		text: (context) =>
-			entriesSectionText(engine, context.agent, undefined, {
-				directoryLines: config.injectionDirectoryLines ?? 15,
-				includeMemoryDirectory: !memoryIndexEnabled,
-			}),
+			frozen.textFor(context.agent, (agent) =>
+				memorySectionText(agent, {
+					maxChars: config.memoryIndex?.maxChars ?? DEFAULT_MAX_CHARS,
+					guide: config.memoryIndex?.guide ?? true,
+				}),
+			),
 	});
-
-	// evolve v2 passive read path: memory content in the prompt at session
-	// start, frozen per session (see memory-index.ts) so the whole system
-	// prompt stays byte-stable within a session and prompt-cache reads keep
-	// hitting. Registered in the empty 1–499 order slot — the two sections
-	// above sit at 118/119, upstream's named slots start at PLAN_POLICY=500.
-	if (memoryIndexEnabled) {
-		const frozenMemories = createFrozenMemorySection();
-		const memoryIndexOrder = config.memoryIndex?.order ?? DEFAULT_MEMORY_SECTION_ORDER;
-		const memoryIndexMaxChars = config.memoryIndex?.maxChars ?? DEFAULT_MEMORY_INDEX_MAX_CHARS;
-		const memoryIndexGuide = config.memoryIndex?.guide ?? true;
-		ctx.systemPrompt.section({
-			name: MEMORY_SECTION_NAME,
-			order: memoryIndexOrder,
-			text: (context) =>
-				frozenMemories.textFor(context.agent, (agent) =>
-					memoryIndexSectionText(engine, agent, { maxChars: memoryIndexMaxChars, guide: memoryIndexGuide }),
-				),
-		});
-	}
-
-	const gate = {
-		requireGlobalApproval: config.requireGlobalApproval ?? true,
-		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
-	};
-	const promotionPolicy = resolvePromotionPolicy({
-		blockPatterns: config.promotionBlockPatterns,
-		minPromoteChars: config.promotionMinChars,
-	});
-	registerEvolveTools(ctx, engine, gate);
-	const rubricKey = resolveRubricKey(baseDir, config.rubricKey, process.env, (m) => ctx.logger("continual-evolve").warn(m));
-	registerEvolveCommand(ctx, engine, gate, {
-		rubricKey,
-		autoRollbackOnReject: config.autoRollbackOnReject ?? true,
-		autoCase: config.autoCase ?? true,
-		promotionPolicy,
-		autoReview: config.autoReview ?? false,
-		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
-	});
-
-	// Plugin-owned file logging: every cordis log message lands in
-	// <baseDir>/evolve/plugin.log regardless of how dsh web was launched —
-	// no extra component to install, no startup-script dependency.
-	if (config.logToFile !== false) {
-		registerFileLogger(ctx, baseDir, {
-			logLevel: config.logLevel ?? 1,
-			...(config.logMaxBytes !== undefined ? { logMaxBytes: config.logMaxBytes } : {}),
-		});
-	}
-
-	// v2 optional: restore hot-mounted skill plugins after a restart.
-	void restoreMounted(ctx, baseDir).catch((cause) => {
-		ctx.logger("continual-evolve").warn(`mount restore failed: ${cause instanceof Error ? cause.message : String(cause)}`);
-	});
-
-	// The memory extraction listener is always registered: an install must
-	// work without profile edits, so `autoReview` is only the initial default
-	// when no `evolve/runtime.json` exists yet — `/evolve pause|resume` own
-	// the switch afterwards. Extraction is moment-driven: compaction,
-	// goal-blocked streaks, the session-close drain, and manual
-	// `/evolve wrapup` — successful turns never cost an LLM call.
-	registerAutoReview(ctx, engine, {
-		enabledByDefault: config.autoReview ?? false,
-		memoryMinUserWords: config.memoryMinUserWords ?? 3,
-		sessionCloseDrainMs: config.sessionCloseDrainMs ?? 15000,
-		maxInputChars: config.maxReviewInputChars ?? 40000,
-		budgetTokens: config.reviewBudgetTokens ?? 4096,
-		notifyOnAutoReview: config.notifyOnAutoReview ?? true,
-		goalBlockedWrapupTurns: config.goalBlockedWrapupTurns ?? 3,
-		...(config.historyRetain?.reviews !== undefined ? { reviewsRetain: config.historyRetain.reviews } : {}),
-		...(config.reviewModel ? { reviewModel: config.reviewModel } : {}),
-		requireGlobalApproval: config.requireGlobalApproval ?? true,
-		...(config.plannerPrefixCache ? { prefixCacheMode: config.plannerPrefixCache } : {}),
-		...(config.plannerPrefixMaxChars !== undefined ? { prefixMaxChars: config.plannerPrefixMaxChars } : {}),
-		...(config.recordLanguage !== undefined ? { recordLanguage: config.recordLanguage } : {}),
-	});
-	ctx.logger("continual-evolve").info(
-		"continual-evolve moment-driven memory extraction listener registered (compaction / goal-blocked / session-close drain; manual wrapup via /evolve wrapup)",
+	host.logger("continual-evolve").info(
+		"continual-evolve memory section registered (workspace .evolve/memory, native file read/write)",
 	);
-
-	ctx.logger("continual-evolve").info(`continual-evolve mounted (baseDir=${baseDir})`);
 }

@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> **superseded by** `2026-10-04-zcode-alignment-teardown`（2026-10-04）——"治理不跟"的边界已被新证据推翻，见该笔记。
+
 ## Problem
 
 evolve v2 把读路径（开场注入记忆正文）与写路径（对话内直写）对齐了 ZCode 的持久记忆体感。用户随即提出"是不是要全面转向 ZCode 记忆路线"——但"全面"没有边界定义，容易被理解成连存储与治理层一起放弃。

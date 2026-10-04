@@ -26,3 +26,6 @@ pnpm-debug.log*
 .idea/
 .vscode/
 *.swp
+
+# Workspace memory (personal context — plugin-managed, see docs/design.md)
+.evolve/
