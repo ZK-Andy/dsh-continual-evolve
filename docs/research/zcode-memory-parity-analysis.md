@@ -2,7 +2,7 @@
 
 > 调研日期：2026-09-24。本文是自动记忆提取、存储、召回与运行时控制的实现基线。
 >
-> **实施状态（2026-09-24）**：P0 运行时闭环已完成——成功回合增量 snapshot、eligibility、每会话 latest-pending scheduler、失败/abort 不推进 cursor、运行时 pause/resume，以及专用 memory loop + manifest + 闭集 proposal 工具 + `EvolutionEngine.apply()` 均已接线。可读 Markdown 投影、定向 recall、专用 benchmark 与统一提取回执仍属 P1。实施细节见 [`src/memory-agent.ts`](../../src/memory-agent.ts) 与 [`implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md`](../../.agents/notes/implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md)。
+> **实施状态（2026-09-24）**：P0 运行时闭环已完成——成功回合增量 snapshot、eligibility、每会话 latest-pending scheduler、失败/abort 不推进 cursor、运行时 pause/resume，以及专用 memory loop + manifest + 闭集 proposal 工具 + `EvolutionEngine.apply()` 均已接线。可读 Markdown 投影、定向 recall、专用 benchmark 与统一提取回执仍属 P1。实施细节见 [`src/memory-agent.ts`](https://github.com/ZK-Andy/dsh-continual-evolve/blob/863fdca/src/memory-agent.ts) 与 [`implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md`](../../.agents/notes/implemented/feature/2026-09-24-dedicated-memory-extraction-agent.md)。
 >
 > 范围：`dsh-continual-evolve` 的自动记忆提取、存储、召回、质量评估与运行时控制；不涉及替换 DSH 已有的版本化、回滚、审计和作用域能力。
 

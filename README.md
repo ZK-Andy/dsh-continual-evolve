@@ -1,171 +1,91 @@
 # dsh-continual-evolve
 
-[中文](README.zh.md) | English
+English | [中文](README.zh.md)
 
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![npm](https://img.shields.io/npm/v/dsh-continual-evolve)](https://www.npmjs.com/package/dsh-continual-evolve)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1020%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-93%25-green)]()
-[![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
+[![Coverage · branches](https://img.shields.io/badge/coverage_branches-98%25-green)]()
+[![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
 
-Continual self-evolution for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a versioned, auditable, rollback-safe harness state layer — prompt notes, memories, skills, subagent specs — refined from session trajectories.
-
-**The model proposes, the code guarantees.** Every mechanical safety property — schema validation, atomic writes, snapshots, versioning, audit trail, acceptance decisions — is enforced in code, never by prompt discipline.
+A workspace-memory plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`): one plain-markdown memory store per workspace (`<workspace>/.evolve/memory/`), the index injected at session start, used by the model with its **native file tools** — and nothing else.
 
 ## Why
 
-Agents accumulate reusable experience (repeated failures, durable facts, reusable procedures) and forget it next session. This plugin turns that experience into first-class state:
-
-- **Three scopes** with merge semantics (global < project < local): **local** per-session staging, **project** per-workspace cross-session store, **global** cross-project — plus mechanical promotion guards so only portable, substantial, non-duplicate knowledge reaches global
-- **Typed one-fact memories**: every memory entry carries a recall type (`user | feedback | project | reference`); pitfalls (`feedback`) must include Why + How to apply
-- **Moment-driven background memory agent**: a bounded ZCode-style loop wakes only at low-frequency moments (compaction, goal-blocked streaks, the session-close drain, manual wrapup), searches the frozen memory manifest, and proposes memory-only edits through a closed tool set; it cannot call agents, MCP, the network, or write source files. Successful turns never cost an LLM call — conversation writes own routine sedimentation
-- **Memory recall, projection, and receipts**: `evolve_recall` reads back full memory content by query/kind/scope/type; every memory apply also materializes a readable `MEMORY.md` index plus one fact file per entry; each extraction lands a unified audit receipt (no-op/applied/declined with duration and turn stats) and only applied outcomes notify the session
-- **Deterministic rollback**: inverse edits generated from applied results — no LLM re-guessing
-- **Benchmark loop**: candidate refinements are evaluated against frozen cases by a separate scorer before acceptance (rubric encrypted at rest)
-- **Store hygiene**: `/evolve consolidate` turns write-time conflict hints and zero-use staleness into one approved, fully reversible batch of archives — with `merge`, near-duplicate content folds into the surviving original
+Reusable experience gathered in one session (user preferences, pitfalls, project context) is forgotten by the next. ZCode solves this with a folder: one fact per markdown file plus a `MEMORY.md` index, injected at session start, read and written natively by the model, with no dedicated machinery. This plugin brings that exact shape to DSH.
 
 ## How it works
 
-1. **Sediment** — the model creates entries via `evolve_add`; the automatic Memory Agent consumes incremental snapshots only at the four low-frequency moments (compaction, goal-blocked streak, session-close drain, manual wrapup).
-2. **Capability-aware auxiliary calls** — the memory loop, planner, and wrapup resolve exact provider/model metadata through [`src/llm-text.ts`](src/llm-text.ts), use the lowest advertised enabled reasoning effort (falling back to a closing effort only when no enabled level exists), and forward the host session id for provider routing; models without reasoning metadata use their provider default.
-3. **Guard** — code-enforced validation: edit schema, blast-radius/scope coherence, and the promotion policy (project-scoped markers, thin content, near-duplicate detection, credential screening keep the global store clean — secrets are rejected at every write sink, including mount materialization). Global creates that near-duplicate an existing entry are rejected at write time (≥0.8 similarity); moderate overlaps carry a `conflictHint` for later consolidation.
-4. **Approve** — global and project writes require explicit human approval; the dialog shows the bounded structured edit diff and conflict warnings, while malformed/lost responses remain retryable rather than counting as rejection.
-5. **Apply & inject** — memory batches preflight every persistent approval, recheck abort before writes, and compensate earlier scope writes if a later batch fails; every successful scope still passes through snapshot + audit. Prompt notes and delegation specs inject into the system prompt (capped, relevance-ranked, contradicted entries demoted, zero tokens when empty); memory CONTENT injects at session start under a hard character budget, frozen per session, with the when_to_save guide riding along; skills still appear as a relevance-ordered capped directory index.
-6. **Validate & roll back** — benchmarks score candidates against frozen cases; rejected candidates roll back deterministically and are captured as draft regression cases (`auto_regression` benchmark).
+1. **Session-start injection** — the plugin registers a single system-prompt section: the `MEMORY.md` index content (whole-line truncated over budget, with a read-the-directory hint), the absolute store path, and the when_to_save guide. The section is computed once per session and reused byte-for-byte, keeping the system prompt stable and the prompt cache warm; an empty store costs zero tokens.
+2. **Native read/write** — DSH fully permits file access inside the workspace (reads are never fenced; the write fence only covers paths outside the workspace, see [`docs/FAQ.md`](docs/FAQ.md) #6). The model reads, writes, and edits memory files and maintains the index directly; the store is bootstrapped on first use.
+3. **Governance is the file** — no versions, no snapshots, no approvals, no background extraction: a bad memory is a visible file in the workspace, and deleting it is the retirement path. Memories are personal context; `.evolve/` stays out of git by default.
+
+Memory file format (same as ZCode): frontmatter with `name` / `description` (the hook that decides whether a future session recalls it) / `metadata.type` (`user | feedback | project | reference`); `feedback` bodies must carry **Why:** and **How to apply:** lines.
 
 ## Install
 
 ```bash
-# from npm (installs and activates — ships its own bundle patch)
+# From npm (activates on install — ships its own bundle patch)
 dsh plugin add dsh-continual-evolve
 
-# or from source (first GitHub installs require approving the allowBuilds step)
+# Or from source (approve the allowBuilds build step on first GitHub install)
 dsh plugin add ZK-Andy/dsh-continual-evolve
 ```
 
-Restart the DSH profile you use (`dsh web` or the desktop host) after installing or updating.
+After installing or updating, restart the DSH profile you actually use (`dsh web` or the desktop host).
 
 ## Usage
 
-Commands (in-session):
-
-| Command | Effect |
-|---|---|
-| `/evolve` | short help + current local store (`/evolve help all` lists every subcommand) |
-| `/evolve list · history · rollback <id>` | inspect and revert (add `project` for this project's store, `global` for the cross-project store) |
-| `/evolve plan [msg]` | run the LLM planner against the store |
-| `/evolve wrapup` | assess this session's local entries: promote / archive / keep |
-| `/evolve archive · unarchive <id>` | hide from injection (data kept, restorable) |
-| `/evolve consolidate [apply] [merge]` | report (or apply) one batch archive of conflict-hinted + stale zero-use global entries; `merge` folds near-duplicate content into the survivors |
-| `/evolve failures` | aggregated failure classes (gate + benchmark) |
-| `/evolve log [tail N] [session <id>]` | plugin log |
-| `/evolve export · import <path>` | backup / restore a store |
-| `/evolve mount · unmount <skillId>` | hot-mount an executable skill as a live plugin |
-| `/evolve goal [objective · done · block]` | round-driven auto-review goal |
-| `/evolve benchmark …` | case lifecycle, runs, acceptance |
-| `/evolve pause · resume · status` | pause/resume the auto-review gate (manual tools keep working), gate state |
-| `/evolve usage` | per-entry injection counts + exact provider-reported tokens for direct memory/review/planner/wrapup/fate calls (benchmark host subagents excluded) |
-
-Model tools: `evolve_list / add / update / delete / rollback / recall` (`evolve_delete` takes `id` or a batch `ids` array — one refinement, one approval; `evolve_recall` filters by query, kinds, scopes, memory types, and limit, and returns full content with version, source, and staleness). Memory reads and writes live in the conversation — the model carries the injected memory index plus `evolve_recall`/`evolve_add` — so there are no `/evolve remember · forget · recall` counterparts: ask in chat.
-
-For third-party consumers: every applied evolution (gate or manual) appends a structured `evolve_complete` event to `reviews.jsonl` (`src/evolve-event.ts` defines the shape) alongside the human-readable audit records.
-
-`/evolve usage` also reads `evolve/token-usage.jsonl`: exact provider-reported input/cache/output/total tokens for the plugin's direct memory-agent, review, planner, manual-wrapup, and automatic-fate calls. The report covers a retained tail rather than lifetime usage, distinguishes missing provider samples, and explicitly excludes host benchmark subagents, their agent-loop calls, and per-entry injection attribution.
-
-Injection shape: prompt notes and delegation specs inject with content (≤6/kind × 180 chars, relevance-ranked). Memories inject as CONTENT at session start: the `evolve:memory-index` section (order 400) carries the when_to_save guide plus every memory body the budget allows, ranked `project > feedback > user > reference`, with overflow degraded to `[memory:type:id] title` hooks and the remainder counted (hard cap `memoryIndex.maxChars`, default 6000 chars; `evolve_recall` reads anything not shown). The section is computed once per session and reused byte-for-byte, so the system prompt stays stable and prompt-cache reads keep hitting — a memory written mid-session appears in the next session. Skills still appear as a relevance-ordered directory index (capped at 15 lines with a fold counter); memories no longer do. Every memory apply also refreshes a readable `MEMORY.md` index plus one fact file per entry in the store directory. With `memoryIndex.guide` off and an empty store, injection is zero tokens.
+No commands, no tools. On the first session after restart, `.evolve/memory/` is created and the index is injected automatically. Just tell the model "remember …" / "forget …" — the memory files plus their index lines are the entire persistent state. Memories written mid-session become visible in the next session (the section is frozen to protect the prompt cache); for an immediate look the model simply reads the directory.
 
 ## Configuration
 
 | Key | Default | Meaning |
 |---|---|---|
-| `baseDir` | resolved DSH home | root for the `evolve/` stores |
-| `autoReview` | `false` | initial Memory Agent default when no `evolve/runtime.json` exists yet; the listener is always registered, so this is not a registration gate |
-| `memoryMinUserWords` | `3` | ZCode-style minimum lexical words in one direct user text part; uses CJK-aware segmentation |
-| `sessionCloseDrainMs` | `15000` | session-close bounded drain for in-flight extraction in ms (`0` aborts immediately) |
-| `maxReviewInputChars` | `40000` | trajectory slice handed to the extractor |
-| `reviewBudgetTokens` | `4096` | output budget for the extraction loop |
-| `notifyOnAutoReview` | `true` | visible follow-up receipt after an applied goal-blocked moment (compaction and session-close stay audit-only) |
-| `requireGlobalApproval` | `true` | global and project edits ask for explicit approval |
-| `recordLanguage` | `auto` | authoring **and dialog** language: `auto` follows the DSH client preference, then the session's own user text, then `en`; `zh`/`en` pin it |
-| `goalBlockedWrapupTurns` | `3` | consecutive blocked-goal idle probes trigger one memory extraction (`0` disables) |
-| `promotionBlockPatterns` | POSIX paths, session ids, `~/.dsh` | content matching these is project-scoped and never promoted to global |
-| `promotionMinChars` | `100` | whole promotions below this length stay local |
-| `injectionDirectoryLines` | `15` | entry-directory lines per build before folding into a counter |
-| `sectionOrder` | `118` | system-prompt section order for the guidance + entries sections |
-| `memoryIndex.enabled` | `true` | register the `evolve:memory-index` content section |
-| `memoryIndex.guide` | `true` | include the when_to_save guide (with the store empty and this off, the section renders nothing) |
-| `memoryIndex.order` | `400` | section order (upstream named slots start at `PLAN_POLICY=500`; the plugin's other sections sit at 118/119) |
-| `memoryIndex.maxChars` | `6000` | hard character budget for the injected memories block |
-| `skillsDir` | `<dshHome>/skills` | where skill entries materialize as SKILL.md bundles |
-| `rubricKey` | auto-generated key file | AES-256-GCM passphrase for benchmark rubrics (`DSH_EVOLVE_RUBRIC_KEY` overrides) |
-| `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | plugin-owned JSONL file log with rotation |
-| `autoRollbackOnReject` | `true` | deterministic rollback after a benchmark rejection |
-| `autoCase` | `true` | failed evolution attempts are captured as draft regression cases (`auto_regression` benchmark) |
-| `reviewModel` | agent's own | optional cheaper model for the dedicated memory agent (`"provider/model"`) |
-| `plannerPrefixCache` | `auto` | Route A session-prefix input when cache evidence exists (`session` always, `off` legacy flat text) |
-| `plannerPrefixMaxChars` | `12000` | session-prefix budget for Route A planning inputs (chars) |
-| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500, tokenUsage: 500}` | storage hygiene: snapshots per store, tail lines per store history, shared `reviews.jsonl` tail, and direct-call `token-usage.jsonl` tail |
+| `memoryIndex.enabled` | `true` | Register the memory section |
+| `memoryIndex.guide` | `true` | Inject the when_to_save guide (zero tokens when off and the index is empty) |
+| `memoryIndex.order` | `400` | Section order (upstream named slots start at `PLAN_POLICY=500`) |
+| `memoryIndex.maxChars` | `6000` | Hard character budget for the injected index |
 
-Example profile patch:
+Profile patch example:
 
 ```yaml
 - id: continual-evolve
   config:
-    autoReview: true
+    memoryIndex:
+      maxChars: 8000
 ```
-
-The Memory Agent listener is registered even when `autoReview` is `false` —
-`autoReview` only supplies the initial default, so an install works without
-editing the profile. Use `/evolve resume` to enable extraction moments
-immediately, `/evolve pause` to suppress new model work, and `/evolve status`
-to inspect the configured default plus the current runtime state. The runtime
-switch is stored in `evolve/runtime.json`; manual `evolve_*` tools and
-`/evolve` commands are not paused. The memory trigger follows ZCode's
-lightweight eligibility: direct user text must contain at least
-`memoryMinUserWords` lexical words (CJK-aware segmentation), while
-empty/internal/direct-memory-write snapshots are skipped. Every extraction
-writes a unified audit receipt (`noop`/`applied`/`declined` with duration and
-turn/search stats) to `reviews.jsonl`; only an applied goal-blocked moment
-queues a visible follow-up, and a closing session lets in-flight extraction
-settle up to `sessionCloseDrainMs` before aborting.
 
 ## Development
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (1020 tests)
-pnpm test:coverage           # v8 coverage, thresholds enforced in CI
-pnpm coverage:gaps           # locate uncovered lines per file (read-only)
+pnpm test                    # vitest (27 tests)
+pnpm test:coverage           # v8 coverage, CI-enforced thresholds
 pnpm lint                    # oxlint src test
 ```
 
-Project layout:
+Layout:
 
 ```
-├── src/                   # engine, tools, commands, memory agent, recall, projection, benchmark, injection + token usage…
-├── test/                  # vitest suites (57 files)
+├── src/
+│   ├── index.ts           # registration: the one section + config
+│   ├── memory-section.ts  # injection: read index / bootstrap / truncate / session freeze
+│   └── memory-guide.ts    # guide: when_to_save and upkeep (adapted from ZCode)
+├── test/                  # vitest suite (3 files)
 ├── lib/                   # build output (tsc)
-├── docs/
-│   ├── design.md          # the one-loop design narrative
-│   ├── FAQ.md             # real failure/fix records
-│   ├── gap-analysis.md    # vs prime-agent /refine + penguin-harness
-│   ├── research/pi-dsh-competitor-gap-analysis.md  # pi/dsh ecosystem competitors
-│   ├── experiment-bootstrap.md
-│   ├── archive/           # closed point-in-time reports
-│   └── research/          # penguin report + prime-agent annotated source
-├── examples/README.md     # seed benchmark cases
+├── docs/                  # design.md (design) · FAQ.md (real-world pitfalls)
 └── .agents/               # AI collaboration layer (AGENTS.md, skills, ADR notes)
 ```
 
-## Docs & provenance
+## Docs
 
-- Design: [`docs/design.md`](docs/design.md) · Pitfalls: [`docs/FAQ.md`](docs/FAQ.md) · Gap analysis: [`docs/gap-analysis.md`](docs/gap-analysis.md) · D2 experiment: [`docs/experiment-bootstrap.md`](docs/experiment-bootstrap.md)
-- Lineage: **penguin-harness** (concept; Apache-2.0) — report in [`docs/research/penguin-harness-self-evolution.md`](docs/research/penguin-harness-self-evolution.md); **prime-agent `/refine`** (engineering shape; MIT) — annotated reference source in [`docs/research/prime-agent-refinement.ts`](docs/research/prime-agent-refinement.ts). This package is an original implementation on the DSH plugin surface.
+- Design: [`docs/design.md`](docs/design.md) · Pitfalls: [`docs/FAQ.md`](docs/FAQ.md) · Teardown decision: [`.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md`](.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md)
 
 ## License
 
-[MIT](LICENSE)
+MIT. Independent project — not affiliated with DeepSeek.

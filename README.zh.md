@@ -7,35 +7,24 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1020%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-93%25-green)]()
-[![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
+[![Coverage · branches](https://img.shields.io/badge/coverage_branches-98%25-green)]()
+[![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的持续自进化插件：一套**版本化、可审计、可回滚**的 harness 状态层——提示词补充、记忆、技能、子代理规格——从会话轨迹中沉淀而来。
-
-**模型提议，代码保证。** 每一项机械化安全属性——schema 校验、原子写入、快照、版本、审计、接受决策——都由代码强制，从不依赖提示词自觉。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的工作区记忆插件：每个工作区一个纯 markdown 记忆库（`<workspace>/.evolve/memory/`），会话开局注入索引，模型用**原生文件读写工具**直接使用——仅此而已。
 
 ## 为什么
 
-Agent 在每个会话里积累可复用经验（重复失败、持久事实、可复用流程），下个会话就忘掉。本插件把这些经验变成一等公民的持久状态：
-
-- **三作用域**与合并语义（global < project < local）：**local** 本会话暂存、**project** 本项目跨会话库、**global** 跨项目——配合机械化晋升守卫，只有可携带、有分量、非重复的知识才能进全局
-- **类型化单条记忆**：每条 memory 带召回类型（`user | feedback | project | reference`）；踩坑（`feedback`）必须含 Why + How to apply
-- **时刻驱动的后台记忆 Agent**：有界 ZCode 式 loop 只在四个低频时刻醒来（压缩、goal 连续受阻、会话收尾 drain、手动 wrapup），检索冻结的 memory manifest，并经闭集工具提出纯 memory 编辑；不能调用 Agent、MCP、网络，也不能写源码。成功回合零 LLM 成本——日常沉淀由对话直写承担
-- **记忆召回、投影与回执**：`evolve_recall` 按 query/kind/scope/type 精确读回记忆全文；每次 memory 落盘同时生成可读的 `MEMORY.md` 索引 + 单事实文件；每次提取留统一审计回执（no-op/applied/declined + 耗时与轮次统计），只有实际沉淀才通知会话
-- **确定性回滚**：逆操作编辑由已应用结果生成——不靠 LLM 重新猜测
-- **benchmark 闭环**：候选沉淀先经冻结用例 + 独立评分者评估再接受（rubric 加密落盘）
-- **store 卫生**：`/evolve consolidate` 把写入时冲突提示与零使用陈旧条目变成一次批准、完全可逆的批量归档——加 `merge` 可将近重复内容并入幸存原条目
+Agent 每个会话积累的可复用经验（用户偏好、踩坑教训、项目背景）下个会话就忘。ZCode 用一个文件夹解决了这件事：一事一文的 md 记忆 + `MEMORY.md` 索引、开局注入、模型原生读写、没有任何专用机器。本插件把同一形态带给 DSH。
 
 ## 工作原理
 
-1. **沉淀**——模型经 `evolve_add` 创建条目；专用 Memory Agent 只在四个低频时刻消费增量 snapshot（压缩、goal 连续受阻、会话收尾 drain、手动 wrapup）。
-2. **能力感知的辅助调用**——memory loop、planner、wrapup 通过 [`src/llm-text.ts`](src/llm-text.ts) 解析精确 provider/model 能力并使用模型公布的最低开启 reasoning effort，同时转发 host session id 供 provider 路由；只有没有开启档时才回退关闭档，没有 reasoning 元数据时使用 provider 默认行为。
-3. **守卫**——代码强制校验：编辑 schema、blast-radius 与作用域一致性、晋升政策（项目专属标记 / 过薄内容 / 近似重复检测 / 凭据筛查保持全局库干净——密钥类内容在所有写入出口被拒，含 mount 物化）。全局 create 与既有条目高度相似（≥0.8）时写入即拒；中等重叠带 `conflictHint` 供后续合并。
-4. **审批**——全局与项目写入需明确人工批准；弹窗展示有界结构化编辑 diff 与冲突提示，弹窗丢失/响应畸形会重试，不会被误记为拒绝。
-5. **应用与注入**——memory 批次先完成所有持久化审批，写前重查 abort；后续 scope 失败时补偿回滚先前写入，成功 scope 仍保留快照与审计。prompt 补充与委派规格注入系统提示词（封顶、按相关性排序、被证伪条目降权、空 store 零 token）；**memory 正文**在会话开场按硬预算注入（会话内冻结，when_to_save 指南随行）；skill 仍以按相关性排序的目录索引出现。
-6. **验证与回滚**——benchmark 用冻结用例为候选打分；被拒候选确定性回滚，并自动沉淀为 draft 回归用例（`auto_regression` 基准）。
+1. **开局注入** —— 插件只注册一个 system-prompt section：注入 `MEMORY.md` 索引正文（超预算按整行截断并提示读目录）、记忆目录绝对路径、when_to_save 指南。该 section 每会话只算一次并逐字节复用，system prompt 稳定、prompt cache 持续命中；空 store 零 token。
+2. **原生读写** —— DSH 对工作区内文件读写全放行（读路径从不设防，写围栏只围工作区外，见 [`docs/FAQ.md`](docs/FAQ.md) #6）。模型直接 Read/Write/Edit 记忆文件并维护索引；store 不存在时自动 bootstrap。
+3. **治理即文件** —— 无版本、无快照、无审批、无后台提取：一条坏记忆就是工作区里一个可见的文件，删掉它就是退役。记忆是个人上下文，`.evolve/` 默认不进 git。
+
+记忆文件格式（与 ZCode 一致）：frontmatter 带 `name` / `description`（决定未来会话会不会想起它）/ `metadata.type`（`user | feedback | project | reference`）；`feedback` 正文必带 **Why:** 与 **How to apply:**。
 
 ## 安装
 
@@ -51,107 +40,51 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ## 使用
 
-会话内命令：
-
-| 命令 | 效果 |
-|---|---|
-| `/evolve` | 简短帮助 + 当前 local store（`/evolve help all` 列全部子命令） |
-| `/evolve list · history · rollback <id>` | 查看与回滚（加 `project` 操作本项目库，`global` 操作跨项目库） |
-| `/evolve plan [msg]` | 对 store 运行 LLM 规划器 |
-| `/evolve wrapup` | 收尾本会话 local 条目：晋升 / 归档 / 保留 |
-| `/evolve archive · unarchive <id>` | 从注入中隐藏（数据保留可恢复） |
-| `/evolve consolidate [apply] [merge]` | 报告（或应用）冲突提示 + 零使用陈旧全局条目的批量归档；`merge` 将近重复内容并入幸存原条目 |
-| `/evolve failures` | 失败类聚合（门禁 + benchmark） |
-| `/evolve log [tail N] [session <id>]` | 插件日志 |
-| `/evolve export · import <path>` | 备份 / 恢复 store |
-| `/evolve mount · unmount <skillId>` | 把可执行技能热挂载为 live 插件 |
-| `/evolve goal [objective · done · block]` | 回合驱动的自进化目标 |
-| `/evolve benchmark …` | 用例生命周期、运行、接受决策 |
-| `/evolve pause · resume · status` | 暂停/恢复自动提取（手动工具不受影响）、运行时状态 |
-| `/evolve usage` | 每条目注入次数 + memory/planner/wrapup 直属调用的 provider 精确 token（不含 benchmark 宿主子代理） |
-
-模型工具：`evolve_list / add / update / delete / rollback / recall`（`evolve_delete` 支持 `id` 或批量 `ids` 数组——一次 refinement、一次审批；`evolve_recall` 按 query/kind/scope/memoryType/limit 过滤，返回全文 + 版本 + 来源 + 过时信号）。记忆的读写都在对话里完成——模型手里有注入的记忆索引 + `evolve_recall`/`evolve_add`——因此不再有 `/evolve remember · forget · recall` 对应命令：直接在对话里说。
-
-第三方消费：每次进化落地（门禁或手动）都会向 `reviews.jsonl` 追加结构化 `evolve_complete` 事件（shape 见 `src/evolve-event.ts`），与人类可读的审计记录并存。
-
-`/evolve usage` 还会读取 `evolve/token-usage.jsonl`：插件直属 memory Agent、planner 与手动 wrapup 调用的 provider 精确 input/cache/output/total token。报告只覆盖保留尾部而非终身累计，单独显示 provider 未返回 usage 的调用，并明确排除宿主 benchmark 子代理、其 agent-loop 调用与逐条 memory 注入归因。
-
-注入形态：prompt 补充与委派规格带内容注入（每 kind ≤6 条 × 180 字符，按相关性排序）。memory 以**正文**在会话开场注入：`evolve:memory-index` section（order 400）承载 when_to_save 指南 + 预算内的全部记忆正文，排序 `project > feedback > user > reference`，放不下的降级为 `[memory:type:id] 标题`钩子、其余折叠计数（硬上限 `memoryIndex.maxChars`，默认 6000 字符；未展示的用 `evolve_recall` 读）。该 section 每会话只算一次并逐字节复用，system prompt 因此稳定、prompt cache 持续命中——会话中途写入的记忆下个会话生效。skill 仍以按相关性排序的目录索引出现（15 行封顶 + 折叠计数行），memory 不再列入。每次 memory 落盘同时刷新 store 目录下的可读 `MEMORY.md` 索引 + 单事实文件。`memoryIndex.guide` 关闭且 store 为空时 = 零注入 token。
+无需命令、无需工具。重启后第一场会话，`.evolve/memory/` 会自动生成，索引自动注入开场；对模型直接说"记住……"/"忘掉……"即可，写入的记忆文件 + 索引行就是全部持久状态。会话中途写入的记忆下个会话生效（会话内冻结守 prompt cache）；需要立即查看时，模型直接读目录。
 
 ## 配置
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `baseDir` | 解析后的 DSH home | `evolve/` 存储根目录 |
-| `autoReview` | `false` | 没有 `evolve/runtime.json` 时 Memory Agent 的初始默认；监听器始终注册，因此它不是注册门 |
-| `memoryMinUserWords` | `3` | ZCode 风格：单个直接用户文本至少包含的词数；使用 CJK 分词 |
-| `sessionCloseDrainMs` | `15000` | 会话关闭时在途提取的有界 drain（毫秒，`0` 立即 abort） |
-| `maxReviewInputChars` | `40000` | 交给提取器的轨迹切片 |
-| `reviewBudgetTokens` | `4096` | 提取 loop 输出预算 |
-| `notifyOnAutoReview` | `true` | goal 受阻时刻应用后发可见跟进回执（压缩与会话收尾只留审计） |
-| `requireGlobalApproval` | `true` | 全局与项目写入需明确批准 |
-| `recordLanguage` | `auto` | 记录**与弹窗**语言：`auto` 依次跟随 DSH 客户端偏好 → 会话自身用户文本 → `en`；`zh`/`en` 固定 |
-| `goalBlockedWrapupTurns` | `3` | 连续阻塞目标的 idle 探测轮数触发一次记忆提取（`0` 关闭） |
-| `promotionBlockPatterns` | POSIX 路径、session id、`~/.dsh` | 内容命中即判定项目专属，永不晋升全局 |
-| `promotionMinChars` | `100` | 低于此长度的整体晋升留在本地 |
-| `injectionDirectoryLines` | `15` | 每次构建的目录行数上限，超出折叠为计数行 |
-| `sectionOrder` | `118` | 指南与条目两个 section 的系统提示词顺序 |
-| `memoryIndex.enabled` | `true` | 是否注册 `evolve:memory-index` 内容 section |
-| `memoryIndex.guide` | `true` | 是否注入 when_to_save 指南（关闭且 store 为空时该 section 不渲染） |
-| `memoryIndex.order` | `400` | section 顺序（上游命名槽位自 `PLAN_POLICY=500` 起；本插件另两段在 118/119） |
-| `memoryIndex.maxChars` | `6000` | 注入记忆块的硬字符预算 |
-| `skillsDir` | `<dshHome>/skills` | 技能条目物化为 SKILL.md 的根目录 |
-| `rubricKey` | 自动生成本地密钥文件 | benchmark rubric 的 AES-256-GCM 口令（`DSH_EVOLVE_RUBRIC_KEY` 可覆盖） |
-| `logToFile` / `logLevel` / `logMaxBytes` | `true` / `1` / 5 MiB | 插件自带 JSONL 文件日志带轮转 |
-| `autoRollbackOnReject` | `true` | benchmark 拒绝后自动确定性回滚 |
-| `autoCase` | `true` | 失败的进化尝试自动沉淀为 draft 回归用例（`auto_regression` 基准） |
-| `reviewModel` | agent 自身 | 专用 memory Agent 可选更便宜的模型（`"provider/model"`） |
-| `plannerPrefixCache` | `auto` | 有缓存证据时用会话前缀输入（`session` 总是前缀，`off` 保持旧扁平文本） |
-| `plannerPrefixMaxChars` | `12000` | Route A 会话前缀预算（字符） |
-| `historyRetain` | `{snapshots: 20, refinements: 500, reviews: 500, tokenUsage: 500}` | 存储卫生：每 store 快照数、每 store 历史尾行、共享 `reviews.jsonl` 尾行、直属调用 `token-usage.jsonl` 尾行 |
+| `memoryIndex.enabled` | `true` | 是否注册记忆 section |
+| `memoryIndex.guide` | `true` | 是否注入 when_to_save 指南（关闭且索引为空时该 section 零 token） |
+| `memoryIndex.order` | `400` | section 顺序（上游命名槽位自 `PLAN_POLICY=500` 起） |
+| `memoryIndex.maxChars` | `6000` | 注入索引的硬字符预算 |
 
 profile patch 示例：
 
 ```yaml
 - id: continual-evolve
   config:
-    autoReview: true
+    memoryIndex:
+      maxChars: 8000
 ```
-
-即使 `autoReview` 为 `false`，Memory Agent 监听器也会注册——`autoReview` 只提供初始默认值，装完即用，无需改 profile。使用 `/evolve resume` 立即开启提取时刻，使用 `/evolve pause` 抑制新的模型调用，使用 `/evolve status` 查看配置默认值与运行时状态。开关保存在 `evolve/runtime.json`；手动 `evolve_*` 工具和 `/evolve` 命令不受暂停影响。提取时刻驱动：压缩、goal 连续受阻（`goalBlockedWrapupTurns` 次 idle 探测）、会话收尾 drain（`sessionCloseDrainMs`）与手动 `/evolve wrapup`——成功回合零 LLM 成本。Memory 触发采用 ZCode 的轻量 eligibility：单个直接用户文本至少包含 `memoryMinUserWords` 个词（使用 CJK 分词）；空增量、内部 Agent、直接 memory 写入会跳过。每次提取都在 `reviews.jsonl` 留统一审计回执（`noop`/`applied`/`declined` + 耗时与轮次/检索统计）；只有 goal 受阻时刻的实际沉淀才排队前台回执，关闭的会话让在途提取在 `sessionCloseDrainMs` 内收尾再 abort。
 
 ## 开发
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（1020 例）
+pnpm test                    # vitest（27 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
-pnpm coverage:gaps           # 定位各文件未覆盖行（只读）
 pnpm lint                    # oxlint src test
 ```
 
 目录结构：
 
 ```
-├── src/                   # 引擎、工具、命令、memory Agent、召回、投影、benchmark、注入 + token 用量…
-├── test/                  # vitest 测试套件（59 个文件）
+├── src/
+│   ├── index.ts           # 注册：唯一 section + 配置
+│   ├── memory-section.ts  # 注入：读索引 / bootstrap / 截断 / 会话冻结
+│   └── memory-guide.ts    # 指南：when_to_save 与维护纪律（改编自 ZCode）
+├── test/                  # vitest 测试（3 个文件）
 ├── lib/                   # 构建产物（tsc）
-├── docs/
-│   ├── design.md          # 一条循环的设计叙事
-│   ├── FAQ.md             # 真实踩坑记录
-│   ├── gap-analysis.md    # 对照 prime-agent /refine + penguin-harness
-│   ├── research/pi-dsh-competitor-gap-analysis.md  # pi/dsh 生态竞品差距分析
-│   ├── experiment-bootstrap.md
-│   ├── archive/           # 已完结的一次性报告
-│   └── research/          # penguin 报告 + prime-agent 注释源码
-├── examples/README.md     # 种子 benchmark 用例
+├── docs/                  # design.md（设计）· FAQ.md（踩坑）
 └── .agents/               # AI 协作层（AGENTS.md、技能、ADR 笔记）
 ```
 
-## 文档与出处
+## 文档
 
-- 设计：[`docs/design.md`](docs/design.md) · 踩坑：[`docs/FAQ.md`](docs/FAQ.md) · 差距分析：[`docs/gap-analysis.md`](docs/gap-analysis.md) · D2 实验:[`docs/experiment-bootstrap.md`](docs/experiment-bootstrap.md)
-- 血统：**penguin-harness**（概念；Apache-2.0）——报告见 [`docs/research/penguin-harness-self-evolution.md`](docs/research/penguin-harness-self-evolution.md)；**prime-agent `/refine`**（工程形态；MIT）——注释参考源码见 [`docs/research/prime-agent-refinement.ts`](docs/research/prime-agent-refinement.ts)。本包是面向 DSH 插件表面的原创实现。
+- 设计：[`docs/design.md`](docs/design.md) · 踩坑：[`docs/FAQ.md`](docs/FAQ.md) · 拆解决策：[`.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md`](.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md)
 
 ## License
 

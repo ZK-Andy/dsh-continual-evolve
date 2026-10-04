@@ -1,52 +1,41 @@
-# 设计：一条循环
+# 设计：文件就是 store，代码只做注入
 
-> 本文档是项目的理念陈述与目标架构，写当前状态。三个时代的完整设计史与硬化清单见冷归档 [`docs/research/design-v1-2026-08-14.md`](research/design-v1-2026-08-14.md)；踩坑记录见 [`FAQ.md`](FAQ.md)；编码与结构规则见 [`coding-standard.md`](coding-standard.md) 与 [`architecture-standard.md`](architecture-standard.md)。
+> 2026-10-04 终极收敛后的设计。此前的"一条循环"（三作用域 store + 治理机器 + 提取流水线 + benchmark）整体拆除，证据链与取舍见 ADR [`../.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md`](../.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md)（supersede `2026-10-01-zcode-parity-boundary`）；历史设计全文见冷归档 [`research/design-v1-2026-08-14.md`](research/design-v1-2026-08-14.md)，踩坑记录见 [`FAQ.md`](FAQ.md)。
 
 ## 核心主张
 
-**模型提议，代码保证。**所有机械化安全属性（schema 校验、快照、版本、回滚、审计、接受决策）由代码强制，不靠模型自觉。
+**文件就是 store，模型原生读写，代码只做一件事：开局把索引放进上下文。**
 
-## 一条循环
+## 形态
 
 ```
-轨迹/对话 ──提议──▶ 代码门禁（validateEdit + 人工审批）──▶ 版本化 store（local/project/global）
-                                                              │
-        注入/物化（被动读：prompt section + 技能落盘）◀────────┘
-              │
-        验证（benchmark 闭环 / 确定性回滚 / reviews.jsonl 审计）─┘
+<workspace>/.evolve/memory/
+├── MEMORY.md          # 索引：一行一条「- [标题]（文件名.md）— 一句话钩子」
+└── <fact>.md          # 一事一文：frontmatter（name/description/type）+ 正文
 ```
 
-## 提议的两条来源（地位不等）
+- **开局注入**（`src/memory-section.ts`）：`evolve:memory-index` section（order 400）注入索引正文 + 记忆目录绝对路径 + when_to_save 指南。会话内逐字节冻结守 prompt cache；索引超预算按整行截断并提示直接读目录；store 不存在时自动 bootstrap（mkdir + 起始索引）；guide 关闭且索引为空时零 token。
+- **原生读写**：DSH 的读路径从不设防、写围栏只围工作区外（`dsh-fs-sandbox`：reads pass through untouched）——工作区内点目录读写全通、免审批。模型用原生 Read/Write/Edit 直接操作记忆文件并维护索引，插件不注册任何工具或命令。
+- **指南随行**（`src/memory-guide.ts`）：when_to_save 分类学（user/feedback/project/reference，feedback 必带 Why + How to apply）、可重推导不存、相对日期转绝对、更新优先于新建、[[名字]] 互引——改编自 ZCode 的持久记忆提示词。
+- **零治理**：无快照/版本/回滚/审批/审计/提取/benchmark。坏记忆的归宿是工作区里一个可见的文件——删掉它就是退役（ZCode 同款取舍）。
 
-- **对话直写（主）**：主会话模型按 when_to_save 指南经 `evolve_add` 直写——与 ZCode 记忆 UX 对齐（被动注入 + 低摩擦写）。成功回合零 LLM 成本。
-- **时刻驱动提取（辅）**：专用 memory loop（受限工具闭集、冻结 manifest、双保险校验）只在四个低频时刻醒来——`compaction/start`、goal 连续受阻、会话收尾 drain、手动 `/evolve wrapup`——从轨迹增量补捞对话没有自发沉淀的跨轮模式。per-turn 后台提取已废除（2026-10-03 B 裁决：90% token 换 20% 产出、2% 落盘率，见 ADR `implemented/architecture/2026-10-03-refactor-baseline.md`）。
+## 为什么不是原来的样子（各一句话）
 
-## 四条纪律
+- **层级（global/project/local）**：ZCode 按工作区分库，工作区多大记忆覆盖面就多大；实测 global 存量只有 4 条，local 只是提取流水线的暂存区。
+- **提取流水线**：per-turn → 四时刻 → 零，每一步都在砍成本直到价值归零；对话内顺手写已覆盖需求。
+- **专用工具**：会话日志实测 38 次 `evolve_list` 整仓 dump 对 6 次 `evolve_recall`——注入正文之后模型本就不需要查询，工具只剩整仓 dump 一个用途。
+- **治理机器**：为不存在的多人场景付费；单人场景下坏记忆手删十秒，快照/回滚/审批防的风险从未出现。
 
-1. **ZCode 对齐边界**（ADR `zcode-parity-boundary`）：记忆 UX 层跟 ZCode（用起来像不像）；存储与治理层不跟、继续加厚（有什么）；接口面按判据逐条裁决。**ZCode 对齐的是"用起来像不像"，不是"有什么"。**
-2. **残留退役**：一条路径被取代，同版本内删除 / 降级命名空间 / 改造吸收，三选一（architecture-standard §5）。机器门禁 `verify-architecture.ts` 强制：分层方向、禁环、host API 单点边界、规模预算，违标白名单只减不增。
-3. **ROI 年审**：任何常驻后台自动化必须用 token 账（`token-usage.jsonl`）与产出账（`reviews.jsonl` + refinement 出处）证明 ROI，每次大转向时年审一次。
-4. **人类观测窗**：斜杠命令面是治理层的人类窗口与应急阀门（pause/resume/status/log/export/import/rollback），不因"ZCode 没有命令面"而删；新能力默认进对话与模型工具。
+## 配置
 
-## 关键设计决定（现状一览）
-
-| 决定 | 内容 | 实现锚点 |
+| 键 | 默认 | 含义 |
 |---|---|---|
-| 状态模型 | 三作用域（global < project < local 合并语义）、四类条目（prompt/memory/skill/subagent）、一个事实一个条目、memory 四型（user/feedback/project/reference） | `types.ts` |
-| 写入路径 | 唯一变更入口，原子写、乐观并发、快照先于写入、逐条校验非法编辑不整体作废 | `service.ts` / `state.ts` / `apply.ts` |
-| 回滚 | 确定性逆操作，不是 LLM 再猜一遍；拒绝自动回滚可选 | `rollback.ts` / `score.ts` |
-| 审批 | project/global 写入必须唯一明确的"批准/拒绝"；丢失/畸形响应按失败重试，绝不记为拒绝 | `approval.ts` |
-| 被动读 | prompt 条目与委派规格注入 system prompt（order 118/119）；记忆正文 order 400 注入 + 会话内冻结守 prompt cache；空 store 零 token | `inject.ts` / `memory-index.ts` |
-| 技能物化 | skill 条目落盘 `$DSH_HOME/skills/<kebab>/SKILL.md`，可热挂载为 live 插件 | `skill.ts` / `mount.ts` |
-| benchmark 闭环 | 两段式（执行者产证据 → 独立评审者评分）、rubric AES-256-GCM 加密、非退化接受规则、拒绝自动回滚、失败沉淀为回归用例 | `benchmark.ts` / `evaluate.ts` / `score.ts` |
-| 退役 | consolidate 批量归档/合并、读时验证、晋升式退役（待办推进中） | `consolidate.ts` |
-| 审计 | 每次判断写 `reviews.jsonl`；直属 LLM 调用记账 `token-usage.jsonl`；人类可读 `MEMORY.md` 投影 | `audit-log.ts` / `token-usage.ts` / `projection.ts` |
+| `memoryIndex.enabled` | `true` | 注册记忆 section |
+| `memoryIndex.guide` | `true` | 注入 when_to_save 指南（关闭且索引为空时该 section 零 token） |
+| `memoryIndex.order` | `400` | section 顺序（上游命名槽位自 `PLAN_POLICY=500` 起） |
+| `memoryIndex.maxChars` | `6000` | 注入索引的硬字符预算 |
 
 ## 设计来源
 
-- **prime-agent `/refine`**（工程形态）：状态模型、plan/apply 分离、逆操作回滚。
-- **penguin-harness**（概念 + 硬化清单）：benchmark 驱动进化、"模型自评不可信"的教训。
-- **ZCode 记忆系统**（UX 对标 + 提取内核）：被动注入、低摩擦写、专用受限提取器、一个事实一个文件（源码级分析见 [`research/zcode-memory-parity-analysis.md`](research/zcode-memory-parity-analysis.md)）。
-- 学术：Self-Harness、AHE、HarnessOpt-Bench（纪律与验证闭环）。
-
-完整对照表、采用理由与源码精读记录在冷归档 [`research/design-v1-2026-08-14.md`](research/design-v1-2026-08-14.md)。
+- **ZCode 记忆系统**：唯一的蓝本——按工作区分库、`MEMORY.md` 索引 + 一事一文、开局注入索引、原生读写、when_to_save 指南（源码级分析见 [`research/zcode-memory-parity-analysis.md`](research/zcode-memory-parity-analysis.md)）。
+- 历史血统（penguin-harness / prime-agent `/refine` / 学术）随机制一并退役，记录见冷归档。
