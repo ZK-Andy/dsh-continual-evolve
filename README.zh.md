@@ -23,7 +23,7 @@ Agent 每个会话积累的可复用经验（用户偏好、踩坑教训、项�
 1. **开局注入** —— 插件只注册一个 system-prompt section：注入 `MEMORY.md` 索引正文（超预算按整行截断并提示读目录）、记忆目录绝对路径、when_to_save 指南。该 section 每会话只算一次并逐字节复用，system prompt 稳定、prompt cache 持续命中；空 store 零 token。
 2. **原生读写** —— DSH 对工作区内文件读写全放行（读路径从不设防，写围栏只围工作区外，见 [`docs/FAQ.md`](docs/FAQ.md) #6）。模型直接 Read/Write/Edit 记忆文件并维护索引；store 不存在时自动 bootstrap。
 3. **治理即文件** —— 无版本、无快照、无审批、无后台提取：一条坏记忆就是工作区里一个可见的文件，删掉它就是退役。记忆是个人上下文——bootstrap 时若工作区是 git 仓库会自动把 `.evolve/` 追加进 `.gitignore`（非 git 工作区不碰任何文件）。
-4. **只读卡片** —— 插件在官方插件管理的本 bundle 页面挂一张只读记忆卡片（`plugins.bundle.config` slot，老宿主自动降级为无卡片）：最近服务过的工作区、各自记忆库的条目数/索引行数、索引漂移警告（未索引文件与索引失联文件）。卡片是磁盘文件的请求时投影——单一事实源永远是 `.evolve/memory/` 里的文件，卡片没有编辑路径，编辑请直接改文件。
+4. **只读卡片** —— 插件在官方插件管理的本 bundle 页面挂一张只读记忆卡片（`plugins.bundle.config` slot，老宿主自动降级为无卡片）：最近服务过的工作区、各自记忆库的条目数/索引行数、索引漂移警告（未索引文件与索引失联文件）。卡片与市场同款——宿主主题 token、`Button` 原语刷新按钮、中英文案跟随 DSH 语言（老宿主降级为同主题裸元素）。卡片是磁盘文件的请求时投影——单一事实源永远是 `.evolve/memory/` 里的文件，卡片没有编辑路径，编辑请直接改文件。
 
 记忆文件格式（与 ZCode 一致）：frontmatter 带 `name` / `description`（决定未来会话会不会想起它）/ `metadata.type`（`user | feedback | project | reference`）；`feedback` 正文必带 **Why:** 与 **How to apply:**。
 
@@ -66,7 +66,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（62 例）
+pnpm test                    # vitest（66 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

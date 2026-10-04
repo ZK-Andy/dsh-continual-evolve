@@ -1,7 +1,7 @@
 {
   "name": "dsh-continual-evolve",
   "version": "0.12.1",
-  "description": "ZCode-style workspace memory for DeepSeek Harness: a per-workspace markdown store (<workspace>/.evolve/memory/) with session-start index injection — the model reads and writes the files with its native tools.",
+  "description": "DSH 工作区记忆：每个工作区一个 markdown 记忆库，会话开局注入索引，模型原生读写 / ZCode-style workspace memory for DeepSeek Harness: a per-workspace markdown store with session-start index injection.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -35,7 +35,11 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [],
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
       "platform": "web"
     }
   },
