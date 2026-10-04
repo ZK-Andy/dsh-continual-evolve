@@ -55,33 +55,57 @@ interface ElementLike {
 	children?: unknown[];
 }
 
+interface HookStore {
+	states: unknown[];
+	setters: Array<(value: unknown) => void>;
+}
+
 /**
  * A react stub whose hooks really store state, so a test can drive the card
- * from collapsed/loading into the open/ready tree the file list (and its
- * refresh button) only exists in. `setters` is indexed by hook order; `begin()`
- * rewinds the cursor before each render call.
+ * from collapsed/loading into the open/ready tree its file list lives in.
+ * Stores are keyed per component — real React keys hooks by fiber, and a test
+ * that renders the card and then a nested component in the same pass would
+ * otherwise reuse the card's slots. `begin(name)` selects the component whose
+ * hooks the next render call consumes (default `card`); `states`/`setters`
+ * read the selected one.
  */
 function makeHookReact() {
-	const states: unknown[] = [];
-	const setters: Array<(value: unknown) => void> = [];
+	const stores = new Map<string, HookStore>();
+	let key = "card";
 	let cursor = 0;
+	const store = (): HookStore => {
+		const existing = stores.get(key);
+		if (existing !== undefined) {
+			return existing;
+		}
+		const created: HookStore = { states: [], setters: [] };
+		stores.set(key, created);
+		return created;
+	};
 	return {
-		states,
-		setters,
-		begin: () => {
+		begin(name?: string) {
+			key = name ?? "card";
 			cursor = 0;
+		},
+		get states(): unknown[] {
+			return store().states;
+		},
+		get setters(): Array<(value: unknown) => void> {
+			return store().setters;
 		},
 		react: {
 			createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }),
 			useState: (initial: unknown) => {
+				const target = store();
 				const slot = cursor++;
-				if (setters[slot] === undefined) {
-					states[slot] = typeof initial === "function" ? (initial as () => unknown)() : initial;
-					setters[slot] = (value: unknown) => {
-						states[slot] = typeof value === "function" ? (value as (current: unknown) => unknown)(states[slot]) : value;
+				if (target.setters[slot] === undefined) {
+					target.states[slot] = typeof initial === "function" ? (initial as () => unknown)() : initial;
+					target.setters[slot] = (value: unknown) => {
+						target.states[slot] =
+							typeof value === "function" ? (value as (current: unknown) => unknown)(target.states[slot]) : value;
 					};
 				}
-				return [states[slot], setters[slot]];
+				return [target.states[slot], target.setters[slot]];
 			},
 			useEffect: () => undefined,
 		},
@@ -103,6 +127,29 @@ function findAllByName(node: unknown, name: string): ElementLike[] {
 		}
 		const element = current as ElementLike;
 		if (typeof element.type === "function" && (element.type as { name?: string }).name === name) {
+			found.push(element);
+		}
+		walk(element.children);
+	};
+	walk(node);
+	return found;
+}
+
+/** Every element in the tree carrying this ARIA role. */
+function findAllByRole(node: unknown, role: string): ElementLike[] {
+	const found: ElementLike[] = [];
+	const walk = (current: unknown): void => {
+		if (Array.isArray(current)) {
+			for (const child of current) {
+				walk(child);
+			}
+			return;
+		}
+		if (current === null || typeof current !== "object") {
+			return;
+		}
+		const element = current as ElementLike;
+		if (element.props?.role === role) {
 			found.push(element);
 		}
 		walk(element.children);
@@ -255,14 +302,20 @@ describe("client bundle", () => {
 		expect(code).toContain("aria-expanded");
 		expect(code).toContain("IconChevronDownOutlineRegular");
 		expect(code).toContain('"▾"');
-		// ZCode memory viewer content: workspace chips, file search, relative
-		// updated time, click-to-preview with the deleted/too-large states.
+		// ZCode memory viewer content: a workspace scope selector, file search,
+		// relative updated time, click-to-preview with the deleted/too-large states.
 		expect(code).toContain("searchPlaceholder");
 		expect(code).toContain("function formatRelative");
 		expect(code).toContain("previewTooLarge");
 		expect(code).toContain("previewDeleted");
 		expect(code).toContain("/memory/file?root=");
 		expect(code).toContain("workspaceLabel");
+		// The scope selector is a dropdown, not the chip row it replaced.
+		expect(code).toContain("scopeLabel");
+		expect(code).toContain('className: "dce-scope"');
+		expect(code).toContain('role: "menu"');
+		expect(code).toContain('role: "menuitemradio"');
+		expect(code).not.toContain("dce-chip");
 		// Theme tokens still route through the alias layer.
 		expect(code).toContain("var(--dsw-alias-bg-layer-1");
 		expect(code).toContain("UI.Button");
@@ -315,6 +368,79 @@ describe("card refresh wiring", () => {
 		(onRefresh as () => void)();
 		expect(harness.states[1]).toMatchObject({ status: "loading", model: null });
 		expect(harness.states[2]).toBe(1);
+	});
+});
+
+describe("workspace scope selector", () => {
+	/** Render the open card over the given workspace entries, down to the block. */
+	function renderBlockTree(
+		harness: ReturnType<typeof makeHookReact>,
+		entries: Array<Record<string, unknown>>,
+	): ElementLike {
+		const { exports } = loadBundle(harness.react);
+		const { ctx, registrations } = makeCtx();
+		(exports.apply as (ctx: unknown) => void)(ctx);
+		const card = registrations[0].render({}) as ElementLike;
+		const render = (): ElementLike => {
+			harness.begin();
+			return (card.type as (props: unknown) => ElementLike)(card.props);
+		};
+		render();
+		harness.setters[0](true);
+		harness.setters[1]({ status: "ready", model: { workspaces: entries }, message: "" });
+		const tree = render();
+		// The scope menu lives inside the block component, one level below the
+		// element tree; render that level explicitly.
+		const block = findAllByName(tree, "WorkspaceBlock")[0] as ElementLike;
+		harness.begin("block");
+		return (block.type as (props: unknown) => ElementLike)(block.props);
+	}
+
+	/** Render the scope menu component itself, closed or open. */
+	function renderMenu(harness: ReturnType<typeof makeHookReact>, tree: ElementLike, open: boolean): ElementLike {
+		const menu = findAllByName(tree, "WorkspaceScopeMenu")[0] as ElementLike;
+		const render = (): ElementLike => {
+			harness.begin("menu");
+			return (menu.type as (props: unknown) => ElementLike)(menu.props);
+		};
+		render();
+		if (open) {
+			harness.setters[0](true);
+			return render();
+		}
+		return render();
+	}
+
+	it("offers the selector even for a single workspace", () => {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(harness, [{ root: "/ws/a", label: "A", snapshot: null, error: null }]);
+		const menus = findAllByName(tree, "WorkspaceScopeMenu");
+		expect(menus).toHaveLength(1);
+		expect(menus[0].props?.workspaces).toEqual([{ root: "/ws/a", label: "A" }]);
+		// Closed: a trigger is visible, no menu surface yet. A chip row used to
+		// render nothing here, which is why the capability looked missing.
+		const closed = renderMenu(harness, tree, false);
+		expect(findAllByRole(closed, "menu")).toHaveLength(0);
+		expect(closed.children?.[0]).toMatchObject({
+			props: { "aria-haspopup": "menu", "aria-expanded": "false" },
+		});
+	});
+
+	it("switches the selected workspace when another option is clicked", () => {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(harness, [
+			{ root: "/ws/a", label: "A", snapshot: null, error: null },
+			{ root: "/ws/b", label: "B", snapshot: null, error: null },
+		]);
+		const openTree = renderMenu(harness, tree, true);
+		const options = findAllByRole(openTree, "menuitemradio");
+		expect(options.map((option) => option.props?.["aria-checked"])).toEqual(["true", "false"]);
+		// Clicking the other workspace routes through the card's selection state.
+		const click = options[1].props?.onClick as (() => void) | undefined;
+		expect(typeof click).toBe("function");
+		(click as () => void)();
+		harness.begin();
+		expect(harness.states[3]).toMatchObject({ root: "/ws/b", query: "", expandedFile: null });
 	});
 });
 

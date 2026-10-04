@@ -13,9 +13,9 @@ Status: implemented
 插件新增**只读记忆卡片**：在官方插件管理的本 bundle 页面渲染 `.evolve/memory/` 的只读投影。四条边界：
 
 1. **单一事实源**：卡片是磁盘文件的请求时纯投影（`src/memory-snapshot.ts`），无编辑路径、无缓存、无自持状态；卡片与文件不一致的唯一合法原因是文件刚被改过——刷新即消失。
-2. **零写路径**：host 侧只读文件；已知工作区清单（`src/known-workspaces.ts`）是进程内存中的有界 LRU（section 注入时记下 cwd），不落盘、不持久化——重启即空，开一次会话即回。
+2. **零写路径**：host 侧只读文件；工作区目录取自宿主注册表（`src/workspace-catalog.ts`，服务不可用时回退 `$DSH_HOME/storages/workspace.json`，再回退 section 注入时记下 cwd 的进程内 LRU），插件自身不落盘、不持久化任何清单。
 3. **槽位自探测、老宿主优雅降级**：client bundle 只经 `ctx.slots.inject('plugins.bundle.config', …)` 挂载（宿主没声明该 slot 则从不执行）；host 侧路由经嵌套 `inject(['webServer'], …)` 挂载（无该服务的宿主不挂路由）；client bundle 不依赖任何宿主 UI primitives（纯 React DOM），primitive 缺失问题不存在。核心 section 注入在任何降级路径下不受影响。
-4. **安全围栏**：API 只读、GET-only；`memory?root=` 参数只接受进程内记录过的已知工作区根（白名单），不提供任意路径读取。
+4. **安全围栏**：API 只读、GET-only；`memory?root=` 参数只接受目录中的工作区根（宿主注册表 ∪ served 根），不提供任意路径读取（围栏在 2026-10-05 放宽，见 [2026-10-05-zcode-workspace-switcher.md](2026-10-05-zcode-workspace-switcher.md)）。
 
 接线事实（dshmarket 实证）：host 路由走 `webServer.register({kind:'exact', path, handler})`，路径前缀 `/dsh-continual-evolve/api/v1/`；client bundle 是手写 `window.__ModuleLoader__.load({id, factory})` 工厂（factory 内 `require('react')` 从宿主模块表解析，结尾 `return module.exports`），package.json 以 `dsh.client = { inject: [], platform: 'web' }` + exports `"./client"` 声明。新配置键 `memoryCard.enabled`（默认 true）。
 
@@ -24,7 +24,7 @@ Status: implemented
 - **不做卡片，维持纯注入形态**：最保守，但观察项没有承载面、用户对记忆库零可见性；且 dshmarket 已证明槽位机制稳定，"可见性"本身是长期维护立场的合理诉求。落败。
 - **卡片带写路径（UI 内批准晋升/编辑记忆）**：被否——v0.12.0 收敛明确"记忆不得自动进 git 跟踪文件、展示层不产生第二事实源"；UI 写路径等于长回刚拆掉的治理机制。落败，卡片严格只读。
 - **用 tsdown 构建 client bundle**（dshmarket 同款）：`docs/coding-standard.md` 红线"禁引入第二构建器/打包器"；且为此引入 react/tsdown 开发依赖违背最小增量。落败——bundle 极小（无 TSX、无 primitives），手写工厂并配 vitest 工厂级测试。
-- **持久化"最近工作区"清单到 profile 目录**（dshmarket 的 `.dsh-market/` 状态模式）：为卡片引入第二个磁盘状态，违背"文件就是 store"；进程内存 LRU 已覆盖真实场景（用户重启后开一次会话即恢复）。落败。
+- **持久化"最近工作区"清单到 profile 目录**（dshmarket 的 `.dsh-market/` 状态模式）：为卡片引入第二个磁盘状态，违背"文件就是 store"；工作区目录改接宿主自有的注册表（见 [2026-10-05-zcode-workspace-switcher.md](2026-10-05-zcode-workspace-switcher.md)）——注册表已存在，插件无需自建。落败。
 - **注册全部三个座位**（`settings.plugin.item` / `settings.plugins.tab` / `plugins.bundle.config`，dshmarket 为跨宿主版本线三线并挂）：兼容机器是 dshmarket 源码里最大的一块；本插件只需 0.1.7+ 的 bundle 页座位，slot 自探测已保证老宿主静默降级。落败，只挂 `plugins.bundle.config` 一个座位。
 
 ## Consequences

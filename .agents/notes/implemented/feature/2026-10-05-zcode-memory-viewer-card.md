@@ -21,7 +21,7 @@ v0.13.0"市场同款"验收后用户仍拒收，四项内容/形态缺口：
 
 - **官方双语元数据**：新增 `locale/en.json` + `locale/zh.json`（各含 `meta.title`/`meta.description`；en.json 必须存在，是宿主扫描的锚点）；package.json `exports` 增加 `"./locale/*.json"`、`files` 增加 `locale/*.json`；`description` 改回纯英文（npm 展示同一句）。名称（zh "工作区记忆" / en "Workspace Memory"）从此在插件管理页、内置插件列表双语切换。
 - **卡片形态对齐市场**（`client/client.js` 重写）：默认收起的框卡 + 头部 `<button aria-expanded>`（名称 15px/600 + 一行说明 13px 三级灰 + 旋转 chevron，primitives 的 `IconChevronDownOutlineRegular`，缺则 `▾`），hover 与展开态走 dshmarket 同款 token（`bg-layer-3` 底、`label-dimmed` 边、展开换 `bg-layer-2`）。样式集中为一份注入 `<style>`（宿主自家 CSS-module 同机制，`document` 不存在时跳过），类名前缀 `dce-`，每个 token 带字面回退色。
-- **卡片内容对齐 ZCode 记忆选项卡**：工作区 chips 选择器（LRU 上限 8，显示目录名不显示全路径）+ 文件搜索框 + 文件行（名称 + 相对更新时间：刚刚/N 分钟前/今天/昨天/Intl 日期，活动语言经 `localeTag` 字典键带出）+ 点击行展开内容预览（`<pre>`，max-height 滚动）。漂移警告（索引失联/未入索引）保留——这是 OBSERVATION 观察项的承载面，是 ZCode 查看器之外的刻意超集。
+- **卡片内容对齐 ZCode 记忆选项卡**：工作区作用域选择器（目录取宿主工作区注册表，下拉形态——见 [2026-10-05-zcode-workspace-switcher.md](2026-10-05-zcode-workspace-switcher.md)）+ 文件搜索框 + 文件行（名称 + 相对更新时间：刚刚/N 分钟前/今天/昨天/Intl 日期，活动语言经 `localeTag` 字典键带出）+ 点击行展开内容预览（`<pre>`，max-height 滚动）。漂移警告（索引失联/未入索引）保留——这是 OBSERVATION 观察项的承载面，是 ZCode 查看器之外的刻意超集。
 
 Host 侧（仍纯只读，只动两个文件）：`memory-snapshot.ts` 的文件条目增加 `updatedAt`（statSync mtimeMs），新增 `memoryFileContent(root, file)`——文件名必须是记忆目录内的纯 `.md` 条目（禁路径分隔符/穿越/basename 比对 + resolve 包含校验），超 `MEMORY_FILE_PREVIEW_LIMIT`（5 MiB，与 ZCode 预览上限一致）答 `too-large` 不读体，stat→read→stat 检出读期间变更以 `changed` 标记上报；`card-routes.ts` 挂第三条 GET-only 路由 `/api/v1/memory/file`，同一工作区白名单围栏，状态映射 400（越界）/404（不存在）/413（超大）。
 

@@ -3,17 +3,18 @@
  *
  * Mounted through the host's `webServer` service (same registration shape
  * dshmarket uses: `kind: "exact"` routes on the profile's web server), the
- * three endpoints are GET-only projections: the workspace allowlist, the
+ * three endpoints are GET-only projections: the workspace catalogue, the
  * memory snapshot for a known root, and one memory file's body for the card's
- * content preview. The allowlist IS the security fence — the memory endpoints
- * resolve their `root` parameter only against roots the running process has
- * actually served, and the file endpoint additionally accepts only plain .md
- * entries of that workspace's memory directory, so the API cannot read
- * arbitrary paths. Handlers are synchronous and never throw past the response.
+ * content preview. The catalogue IS the security fence — the memory endpoints
+ * resolve their `root` parameter only against workspaces the host's registry
+ * (or, on hosts without one, a root this process has served) knows about, and
+ * the file endpoint additionally accepts only plain .md entries of that
+ * workspace's memory directory, so the API cannot read arbitrary paths.
+ * Handlers are synchronous and never throw past the response.
  */
 import { resolve } from "node:path";
-import type { KnownWorkspaces } from "./known-workspaces.js";
 import { memoryFileContent, memorySnapshot } from "./memory-snapshot.js";
+import type { CatalogEntry, WorkspaceCatalog } from "./workspace-catalog.js";
 
 /** URL prefix of the card API (kind-exact routes registered under it). */
 export const CARD_API_WORKSPACES_PATH = "/dsh-continual-evolve/api/v1/workspaces";
@@ -59,7 +60,7 @@ function isGet(request: CardRequest): boolean {
  * shape the host hands back (or none, as on some host versions), the
  * disposer calls only the functions among them.
  */
-export function mountCardRoutes(webServer: CardWebServer, workspaces: KnownWorkspaces): () => void {
+export function mountCardRoutes(webServer: CardWebServer, catalog: WorkspaceCatalog): () => void {
 	const disposers: unknown[] = [];
 	disposers.push(
 		webServer.register({
@@ -71,7 +72,9 @@ export function mountCardRoutes(webServer: CardWebServer, workspaces: KnownWorks
 					response.end();
 					return;
 				}
-				sendJson(response, 200, { workspaces: workspaces.list() });
+				// The listed set is the display projection (workspaces with a
+				// memory directory); the read fence is `known` below.
+				sendJson(response, 200, { workspaces: catalog.list() });
 			},
 		}),
 	);
@@ -90,10 +93,10 @@ export function mountCardRoutes(webServer: CardWebServer, workspaces: KnownWorks
 					sendJson(response, 400, { error: "root query parameter is required and must be an absolute path" });
 					return;
 				}
-				const known = workspaces.list().find((workspace) => workspace.root === resolve(root));
+				const known = knownEntryOf(catalog, root);
 				if (known === undefined) {
-					// The allowlist answers 404 without distinguishing "never
-					// served" from "wrong path": no filesystem oracle here.
+					// The catalogue answers 404 without distinguishing "not a
+					// workspace here" from "wrong path": no filesystem oracle.
 					sendJson(response, 404, { error: "unknown workspace root" });
 					return;
 				}
@@ -121,10 +124,10 @@ export function mountCardRoutes(webServer: CardWebServer, workspaces: KnownWorks
 					sendJson(response, 400, { error: "file query parameter is required" });
 					return;
 				}
-				const known = workspaces.list().find((workspace) => workspace.root === resolve(root));
+				const known = knownEntryOf(catalog, root);
 				if (known === undefined) {
 					// Same fence as the snapshot route: 404 without distinguishing
-					// "never served" from "wrong path".
+					// "not a workspace here" from "wrong path".
 					sendJson(response, 404, { error: "unknown workspace root" });
 					return;
 				}
@@ -158,6 +161,12 @@ export function mountCardRoutes(webServer: CardWebServer, workspaces: KnownWorks
 			}
 		}
 	};
+}
+
+/** The catalogued workspace a `root` query parameter resolves to, if any. */
+function knownEntryOf(catalog: WorkspaceCatalog, root: string): CatalogEntry | undefined {
+	const target = resolve(root);
+	return catalog.known().find((workspace) => workspace.root === target);
 }
 
 /** The decoded `root` query parameter, or null when absent/relative. */

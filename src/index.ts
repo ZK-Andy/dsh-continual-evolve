@@ -9,12 +9,13 @@
  * background extraction, and no governance. See
  * .agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md.
  *
- * The 2026-10-04 plugin-management card adds a read-only surface: the
- * workspace roots the section has served feed an in-memory allowlist, and a
- * `webServer` route pair projects any known workspace's store for the card
- * in the official plugin manager (`plugins.bundle.config`, client bundle in
- * client/client.js). The card is a viewer — see
- * .agents/notes/implemented/feature/2026-10-04-plugin-management-card.md.
+ * The 2026-10-04 plugin-management card adds a read-only surface: the host's
+ * workspace registry feeds a catalogue, and a `webServer` route triple projects
+ * any catalogued workspace's store for the card in the official plugin manager
+ * (`plugins.bundle.config`, client bundle in client/client.js). The card is a
+ * viewer — see
+ * .agents/notes/implemented/feature/2026-10-04-plugin-management-card.md and
+ * .agents/notes/implemented/feature/2026-10-05-zcode-workspace-switcher.md.
  *
  * The host API surface is declared locally (the minimal shape this plugin
  * touches) instead of importing the DSH type packages — the section call is
@@ -31,6 +32,7 @@ import {
 	MEMORY_SECTION_NAME,
 	memorySectionText,
 } from "./memory-section.js";
+import { createWorkspaceCatalog, type WorkspaceRegistryLike } from "./workspace-catalog.js";
 
 export const name = "continual-evolve";
 
@@ -96,9 +98,12 @@ export type EvolveConfig = Partial<Schemastery.TypeT<typeof Config>>;
 /**
  * Mount the card routes on the host web server through a nested inject, so
  * the plugin stays mountable on hosts without that service. Called only when
- * the card is enabled.
+ * the card is enabled. The workspace registry is looked up inside the scoped
+ * context (nothing else injects it: a host without the service must still get
+ * the card) and read per request, so a workspace created while the card is
+ * open appears on the next refresh.
  */
-function mountCardWhenAvailable(host: HostContext, workspaces: ReturnType<typeof createKnownWorkspaces>): void {
+function mountCardWhenAvailable(host: HostContext, served: ReturnType<typeof createKnownWorkspaces>): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
 		host.logger("continual-evolve").warn(
@@ -114,8 +119,35 @@ function mountCardWhenAvailable(host: HostContext, workspaces: ReturnType<typeof
 			);
 			return;
 		}
-		mountCardRoutes(webServer, workspaces);
+		const catalog = createWorkspaceCatalog({
+			registry: registryLookup(scoped),
+			served: served,
+			homeDir: process.env.DSH_HOME,
+		});
+		mountCardRoutes(webServer, catalog);
 	});
+}
+
+/**
+ * A live `ctx.workspaceRegistry` getter over the scoped context. The service
+ * is a sibling, so it is reached with `ctx.get` (property access only walks
+ * fiber ancestors) and treated as optional: an absent, foreign or throwing
+ * service degrades the catalogue to its fallback sources instead of taking the
+ * card down.
+ */
+function registryLookup(scoped: unknown): () => WorkspaceRegistryLike | undefined {
+	const context = scoped as { get?: (name: string) => unknown };
+	return () => {
+		if (typeof context.get !== "function") {
+			return undefined;
+		}
+		try {
+			const service = context.get("workspaceRegistry");
+			return service === undefined || service === null ? undefined : (service as WorkspaceRegistryLike);
+		} catch {
+			return undefined;
+		}
+	};
 }
 
 export function apply(host: HostContext, config: EvolveConfig): void {

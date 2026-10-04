@@ -7,7 +7,7 @@ English | [中文](README.zh.md)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-80%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-91%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-93%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -23,7 +23,7 @@ Reusable experience gathered in one session (user preferences, pitfalls, project
 1. **Session-start injection** — the plugin registers a single system-prompt section: the `MEMORY.md` index content (whole-line truncated over budget, with a read-the-directory hint), the absolute store path, and the when_to_save guide. The section is computed once per session and reused byte-for-byte, keeping the system prompt stable and the prompt cache warm; an empty store costs zero tokens.
 2. **Native read/write** — DSH fully permits file access inside the workspace (reads are never fenced; the write fence only covers paths outside the workspace, see [`docs/FAQ.md`](docs/FAQ.md) #6). The model reads, writes, and edits memory files and maintains the index directly; the store is bootstrapped on first use.
 3. **Governance is the file** — no versions, no snapshots, no approvals, no background extraction: a bad memory is a visible file in the workspace, and deleting it is the retirement path. Memories are personal context — on bootstrap in a git workspace the store appends `.evolve/` to the workspace `.gitignore` (non-git workspaces are left untouched).
-4. **Read-only card** — the plugin mounts a read-only memory card on its own page in the official plugin manager (the `plugins.bundle.config` slot; hosts without it silently degrade to no card), shaped like the market's own settings card (collapsed by default, header toggle with a rotating chevron, hover/open frame states) and aligned with ZCode's Settings → Memory viewer: one workspace at a time (directory-name chips), a file search box, per-file relative updated times, click-to-preview file bodies (5 MiB cap), plus index-drift warnings (unindexed files, index rows whose file is gone). The plugin's display name and description localize through the host's package `locale/*.json` metadata channel. The card follows the market's look — host theme tokens, the `Button` primitive for refresh, and zh/en copy that tracks the DSH language (plain themed elements on old hosts). The card is a request-time projection of the files on disk — the single source of truth remains `.evolve/memory/`; the card has no edit path, edit the files directly.
+4. **Read-only card** — the plugin mounts a read-only memory card on its own page in the official plugin manager (the `plugins.bundle.config` slot; hosts without it silently degrade to no card), shaped like the market's own settings card (collapsed by default, header toggle with a rotating chevron, hover/open frame states) and aligned with ZCode's Settings → Memory viewer: one workspace at a time behind a dropdown scope selector fed by the host workspace registry, a file search box, per-file relative updated times, click-to-preview file bodies (5 MiB cap), plus index-drift warnings (unindexed files, index rows whose file is gone). The plugin's display name and description localize through the host's package `locale/*.json` metadata channel. The card follows the market's look — host theme tokens, the `Button` primitive for refresh, and zh/en copy that tracks the DSH language (plain themed elements on old hosts). The card is a request-time projection of the files on disk — the single source of truth remains `.evolve/memory/`; the card has no edit path, edit the files directly.
 
 Memory file format (same as ZCode): frontmatter with `name` / `description` (the hook that decides whether a future session recalls it) / `metadata.type` (`user | feedback | project | reference`); `feedback` bodies must carry **Why:** and **How to apply:** lines.
 
@@ -66,9 +66,9 @@ Profile patch example:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (80 tests)
+pnpm test                    # vitest (91 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds
-pnpm lint                    # oxlint src test
+pnpm lint                    # oxlint src test client
 ```
 
 Layout:
@@ -79,12 +79,13 @@ Layout:
 │   ├── memory-section.ts  # injection: read index / bootstrap / truncate / session freeze
 │   ├── memory-guide.ts    # guide: when_to_save and upkeep (adapted from ZCode)
 │   ├── memory-snapshot.ts # card: read-only store projection (entries / drift / error degrade)
-│   ├── known-workspaces.ts# card: in-process LRU workspace allowlist (the API read fence)
+│   ├── workspace-catalog.ts# card: workspace list from the host registry (the API read fence)
+│   ├── known-workspaces.ts# card: in-process LRU fallback source for the catalogue
 │   └── card-routes.ts     # card: GET-only read API on the host webServer
 ├── client/
 │   └── client.js          # hand-written client bundle: read-only card in the plugin manager
 ├── locale/                # host package metadata: localized display name + description (zh/en)
-├── test/                  # vitest suite (7 files)
+├── test/                  # vitest suite (8 files)
 ├── lib/                   # build output (tsc)
 ├── docs/                  # design.md (design) · FAQ.md (real-world pitfalls)
 └── .agents/               # AI collaboration layer (AGENTS.md, skills, ADR notes)

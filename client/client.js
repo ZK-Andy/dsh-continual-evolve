@@ -25,13 +25,15 @@
  * reads as another product). The stylesheet is injected once, like the
  * host's own CSS-module tags.
  *
- * Content (v0.14): aligned with ZCode's Settings → Memory viewer, which the
- * .evolve store shape was itself aligned with — one workspace selected at a
- * time (chips; the known-workspace LRU is bounded at 8), a file search box,
- * per-file relative updated times, and a click-to-preview body served by the
- * host's content endpoint (5 MiB cap, deleted/changed guards). The drift
- * warnings (dangling index rows / unindexed files) stay: they are this
- * plugin's OBSERVATION surface and a deliberate superset of ZCode's viewer.
+ * Content (v0.14, scope selector v0.15): aligned with ZCode's Settings → Memory
+ * viewer, which the .evolve store shape was itself aligned with — one workspace
+ * selected at a time behind a dropdown scope selector (workspaces come from the
+ * host registry, so the selector lists the same workspaces the workspace picker
+ * does), a file search box, per-file relative updated times, and a
+ * click-to-preview body served by the host's content endpoint (5 MiB cap,
+ * deleted/changed guards). The drift warnings (dangling index rows / unindexed
+ * files) stay: they are this plugin's OBSERVATION surface and a deliberate
+ * superset of ZCode's viewer.
  * Locale/theme/primitives wiring unchanged from v0.13: `ctx.locale.register`
  * + `bind`, `var(--dsw-alias-*)` tokens, primitives with plain-element
  * fallbacks so an old host never blanks the settings dialog. Read-only
@@ -87,11 +89,12 @@ window.__ModuleLoader__.load({
 			hint: "事实源是各工作区 .evolve/memory/ 下的 markdown 文件——模型原生读写；本卡片只展示，编辑请直接改文件。",
 			loading: "读取中…",
 			loadFailed: "卡片数据加载失败：",
-			empty: "本进程还没有服务过任何工作区会话——在某个工作区开一次会话后回来刷新。",
+			empty: "还没有任何工作区有记忆库——在某个工作区开一次会话后回来刷新。",
 			absent: "该工作区尚无记忆库（开一次会话自动创建）。",
 			readFailed: "记忆库读取失败：",
 			stats: "{files} 条记忆 · 索引 {index} 行",
 			filesHeading: "文件",
+			scopeLabel: "选择工作区",
 			searchPlaceholder: "搜索记忆文件…",
 			searchEmpty: "没有匹配的记忆文件。",
 			missing: "索引失联（索引引用但文件已删）：",
@@ -114,11 +117,12 @@ window.__ModuleLoader__.load({
 			hint: "The source of truth is the markdown files under each workspace's .evolve/memory/ — read and written by the model; this card only displays them, edit the files directly.",
 			loading: "Loading…",
 			loadFailed: "Failed to load card data: ",
-			empty: "This process has not served any workspace session yet — open a session in a workspace, then come back and refresh.",
+			empty: "No workspace has a memory store yet — open a session in a workspace, then come back and refresh.",
 			absent: "No memory store in this workspace yet (one is created when you open a session).",
 			readFailed: "Failed to read the memory store: ",
 			stats: "{files} memories · {index} index rows",
 			filesHeading: "Files",
+			scopeLabel: "Choose workspace",
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
 			missing: "Dangling index (indexed but deleted): ",
@@ -178,7 +182,7 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Assemble the card's view model: the workspace allowlist, then one
+		 * Assemble the card's view model: the workspace catalogue, then one
 		 * snapshot per workspace. Network or API failure per workspace degrades
 		 * to an `error` string on that workspace's entry — one bad store never
 		 * blanks the whole card.
@@ -196,17 +200,20 @@ window.__ModuleLoader__.load({
 			var entries = await Promise.all(
 				workspaces.map(async function (workspace) {
 					var root = typeof workspace.root === "string" ? workspace.root : "";
-					var lastSeen = typeof workspace.lastSeen === "string" ? workspace.lastSeen : "";
+					var label =
+						typeof workspace.label === "string" && workspace.label.trim().length > 0
+							? workspace.label
+							: workspaceLabel(root);
 					try {
 						var snapshotResponse = await fetchImpl(API_ROOT + "/memory?root=" + encodeURIComponent(root));
 						if (!snapshotResponse.ok) {
-							return { root: root, lastSeen: lastSeen, snapshot: null, error: "HTTP " + snapshotResponse.status };
+							return { root: root, label: label, snapshot: null, error: "HTTP " + snapshotResponse.status };
 						}
-						return { root: root, lastSeen: lastSeen, snapshot: await snapshotResponse.json(), error: null };
+						return { root: root, label: label, snapshot: await snapshotResponse.json(), error: null };
 					} catch (error) {
 						return {
 							root: root,
-							lastSeen: lastSeen,
+							label: label,
 							snapshot: null,
 							error: error instanceof Error ? error.message : String(error),
 						};
@@ -290,9 +297,18 @@ window.__ModuleLoader__.load({
 				".dce-body{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);margin:0 16px;padding:12px 0 14px;display:flex;flex-direction:column;gap:10px}",
 				".dce-hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}",
 				".dce-empty{border:1px dashed var(--dsw-alias-border-l3,#d1d9e0);border-radius:10px;padding:16px;text-align:center;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:20px}",
-				".dce-chips{display:flex;flex-wrap:wrap;gap:6px}",
-				".dce-chip{font:inherit;cursor:pointer;background:0 0;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:var(--dsw-radius-md,8px);color:var(--dsw-alias-label-secondary,#6b7280);padding:3px 10px;font-size:12px;line-height:18px}",
-				'.dce-chip[data-active="true"]{background:var(--dsw-alias-bg-module-platform,#eef1f4);border-color:var(--dsw-alias-border-l3,#d1d9e0);color:var(--dsw-alias-label-primary,#1f2328)}',
+				".dce-scope-wrap{position:relative;display:inline-flex;min-width:0;max-width:100%;align-self:flex-start}",
+				".dce-scope{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:4px 10px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:999px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;line-height:18px;cursor:pointer}",
+				".dce-scope:hover{border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}",
+				".dce-scope:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:1px}",
+				".dce-scope-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				".dce-scope-caret{display:inline-flex;color:var(--dsw-alias-label-tertiary,#8b93a1)}",
+				".dce-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:240px;max-width:min(420px,80vw);max-height:320px;overflow:auto;padding:4px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 8px 24px rgba(0,0,0,.12)}",
+				".dce-menu-item{display:flex;flex-direction:column;gap:2px;width:100%;padding:6px 10px;border:0;border-radius:8px;background:0 0;font:inherit;color:inherit;text-align:left;cursor:pointer}",
+				".dce-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.03))}",
+				'.dce-menu-item[data-active="true"]{background:var(--dsw-alias-bg-module-platform,#eef1f4)}',
+				".dce-menu-label{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				".dce-menu-path{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 				".dce-search{width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l4,#d8dee4);border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-1,#fff);height:32px;color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;padding:0 10px;outline:none}",
 				".dce-search::placeholder{color:var(--dsw-alias-label-tertiary,#8b93a1)}",
 				".dce-search:focus-visible{border-color:var(--dsw-alias-brand-primary,#4f6ef7)}",
@@ -393,6 +409,147 @@ window.__ModuleLoader__.load({
 			return createElement("li", { className: "dce-item" }, children);
 		}
 
+		/** Leading "switch scope" marker from the host primitives, or nothing. */
+		function ScopeMark() {
+			if (
+				primitives !== undefined &&
+				primitives !== null &&
+				typeof primitives.IconChevronsUpDownOutlineRegular !== "undefined" &&
+				primitives.IconChevronsUpDownOutlineRegular !== null
+			) {
+				return createElement(primitives.IconChevronsUpDownOutlineRegular, { size: 14, "aria-hidden": "true" });
+			}
+			return null;
+		}
+
+		/**
+		 * The workspace scope selector, ZCode's Settings → Memory shape: one
+		 * scope at a time behind a dropdown (leading marker + current workspace
+		 * label + chevron), never a row of chips. A chip row can only render
+		 * when several workspaces are known, so in the common single-workspace
+		 * case it renders nothing at all and the capability reads as missing.
+		 * The menu closes on select, on Escape and on a click outside.
+		 */
+		function WorkspaceScopeMenu(props) {
+			var workspaces = props.workspaces;
+			var selected = props.selected;
+			var onSelect = props.onSelect;
+			var t = props.t;
+			var UI = props.UI;
+			var openState = useState(false);
+			var open = openState[0];
+			var setOpen = openState[1];
+			useEffect(
+				function () {
+					if (!open || typeof document === "undefined") {
+						return undefined;
+					}
+					var close = function () {
+						setOpen(false);
+					};
+					var onKeyDown = function (event) {
+						if (event.key === "Escape") {
+							close();
+						}
+					};
+					document.addEventListener("click", close);
+					document.addEventListener("keydown", onKeyDown);
+					return function () {
+						document.removeEventListener("click", close);
+						document.removeEventListener("keydown", onKeyDown);
+					};
+				},
+				[open],
+			);
+			var current = null;
+			for (var index = 0; index < workspaces.length; index++) {
+				if (workspaces[index].root === selected) {
+					current = workspaces[index];
+					break;
+				}
+			}
+			if (current === null && workspaces.length > 0) {
+				current = workspaces[0];
+			}
+			var label = current === null ? "" : current.label || workspaceLabel(current.root);
+			var scopeChildren = [
+				createElement(ScopeMark, { key: "mark" }),
+				createElement("span", { key: "label", className: "dce-scope-label" }, label),
+				createElement("span", { key: "caret", className: "dce-scope-caret" }, createElement(Chevron, null)),
+			];
+			var triggerProps = {
+				type: "button",
+				"aria-haspopup": "menu",
+				"aria-expanded": open ? "true" : "false",
+				"aria-label": t("scopeLabel"),
+				onClick: function () {
+					setOpen(!open);
+				},
+			};
+			var trigger = null;
+			if (UI !== null && UI !== undefined && typeof UI.Button !== "undefined" && UI.Button !== null) {
+				trigger = createElement(
+					UI.Button,
+					{
+						key: "trigger",
+						variant: "outline",
+						size: "sm",
+						type: triggerProps.type,
+						"aria-haspopup": triggerProps["aria-haspopup"],
+						"aria-expanded": triggerProps["aria-expanded"],
+						"aria-label": triggerProps["aria-label"],
+						onClick: triggerProps.onClick,
+					},
+					scopeChildren,
+				);
+			} else {
+				trigger = createElement(
+					"button",
+					{
+						key: "trigger",
+						type: triggerProps.type,
+						className: "dce-scope",
+						"aria-haspopup": triggerProps["aria-haspopup"],
+						"aria-expanded": triggerProps["aria-expanded"],
+						"aria-label": triggerProps["aria-label"],
+						onClick: triggerProps.onClick,
+					},
+					scopeChildren,
+				);
+			}
+			var menu = null;
+			if (open) {
+				menu = createElement(
+					"div",
+					{ key: "menu", className: "dce-menu", role: "menu", "aria-label": t("scopeLabel") },
+					workspaces.map(function (workspace) {
+						return createElement(
+							"button",
+							{
+								key: workspace.root,
+								type: "button",
+								role: "menuitemradio",
+								"aria-checked": workspace.root === selected ? "true" : "false",
+								className: "dce-menu-item",
+								"data-active": workspace.root === selected ? "true" : "false",
+								onClick: function () {
+									setOpen(false);
+									if (workspace.root !== selected) {
+										onSelect(workspace.root);
+									}
+								},
+							},
+							// The registry allows duplicate titles, so the root
+							// disambiguates two workspaces that read the same.
+							createElement("span", { key: "label", className: "dce-menu-label" }, workspace.label || workspaceLabel(workspace.root)),
+							createElement("span", { key: "root", className: "dce-menu-path" }, workspace.root),
+						);
+					}),
+				);
+			}
+			return createElement("div", { key: "scope", className: "dce-scope-wrap" }, trigger, menu);
+		}
+
 		/** One workspace's memory store: stats, drift warnings, searchable file list with previews. */
 		function WorkspaceBlock(props) {
 			var entry = props.entry;
@@ -407,33 +564,21 @@ window.__ModuleLoader__.load({
 			var onRefresh = props.onRefresh;
 			var query = props.query;
 			var onQueryChange = props.onQueryChange;
-			var chips = [];
-			if (entry.workspaces.length > 1) {
-				chips = createElement(
-					"div",
-					{ key: "chips", className: "dce-chips", role: "tablist", "aria-label": t("filesHeading") },
-					entry.workspaces.map(function (workspace) {
-						return createElement(
-							"button",
-							{
-								key: workspace.root,
-								type: "button",
-								className: "dce-chip",
-								"data-active": workspace.root === selected ? "true" : "false",
-								onClick: function () {
-									onSelect(workspace.root);
-								},
-							},
-							workspaceLabel(workspace.root),
-						);
-					}),
-				);
-			}
+			var scope = createElement(WorkspaceScopeMenu, {
+				key: "scope",
+				workspaces: entry.workspaces.map(function (workspace) {
+					return { root: workspace.root, label: workspace.label };
+				}),
+				selected: selected,
+				onSelect: onSelect,
+				t: t,
+				UI: UI,
+			});
 			var active = entry.workspaces.find(function (workspace) {
 				return workspace.root === selected;
 			});
 			if (active === undefined) {
-				return createElement("div", { key: "block" }, chips);
+				return createElement("div", { key: "block", className: "dce-workspace" }, scope);
 			}
 			var body = null;
 			if (active.error !== null && active.error !== undefined) {
@@ -536,7 +681,7 @@ window.__ModuleLoader__.load({
 				}
 				body = parts;
 			}
-			return createElement("div", { key: "block", className: "dce-workspace" }, chips, body);
+			return createElement("div", { key: "block", className: "dce-workspace" }, scope, body);
 		}
 
 		/**

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -72,7 +72,7 @@ describe("apply", () => {
 });
 
 describe("apply card wiring", () => {
-	function makeCtxWithWebServer(): {
+	function makeCtxWithWebServer(services: Record<string, unknown> = {}): {
 		sections: RecordedSection[];
 		routes: Map<string, unknown>;
 		host: Parameters<typeof apply>[0];
@@ -86,12 +86,64 @@ describe("apply card wiring", () => {
 			},
 		};
 		const host = Object.assign(base.host, {
-			inject: (services: string[], callback: (scoped: unknown) => void) => {
-				callback(services.includes("webServer") ? { webServer } : {});
+			inject: (wanted: string[], callback: (scoped: unknown) => void) => {
+				const scoped: Record<string, unknown> = { get: (name: string) => services[name] };
+				if (wanted.includes("webServer")) {
+					scoped.webServer = webServer;
+				}
+				callback(scoped);
 			},
 		}) as Parameters<typeof apply>[0];
 		return { sections: base.sections, routes, host };
 	}
+
+	/** Call one mounted GET route and return the recorded response. */
+	function get(routes: Map<string, unknown>, key: string, url = key): { status: number; body: string } {
+		const route = routes.get(key) as {
+			handler: (
+				request: { method?: string; url?: string },
+				response: {
+					writeHead: (status: number, headers?: Record<string, string>) => unknown;
+					end: (body?: string) => void;
+				},
+			) => void;
+		};
+		let status = 0;
+		let body = "";
+		route.handler(
+			{ method: "GET", url: url },
+			{
+				writeHead: (code) => {
+					status = code;
+				},
+				end: (text) => {
+					body = text ?? "";
+				},
+			},
+		);
+		return { status, body };
+	}
+
+	it("reads the host workspace registry for the card catalogue", () => {
+		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-registry-"));
+		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
+		const canonical = realpathSync(workspace);
+		const { routes, host } = makeCtxWithWebServer({
+			workspaceRegistry: { list: () => [{ id: "w1", path: workspace, title: "Registered" }] },
+		});
+		apply(host, fullConfig);
+		const list = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
+		expect(list.status).toBe(200);
+		expect(JSON.parse(list.body)).toEqual({ workspaces: [{ root: canonical, label: "Registered" }] });
+		// The fence follows the same catalogue: a registry workspace reads fine.
+		const snapshot = get(
+			routes,
+			"/dsh-continual-evolve/api/v1/memory",
+			`/dsh-continual-evolve/api/v1/memory?root=${encodeURIComponent(canonical)}`,
+		);
+		expect(snapshot.status).toBe(200);
+		expect(JSON.parse(snapshot.body).root).toBe(canonical);
+	});
 
 	it("mounts the card routes on webServer by default", () => {
 		const { routes, host } = makeCtxWithWebServer();

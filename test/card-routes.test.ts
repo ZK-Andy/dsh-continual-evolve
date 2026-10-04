@@ -13,6 +13,7 @@ import {
 } from "../src/card-routes.js";
 import { createKnownWorkspaces } from "../src/known-workspaces.js";
 import { MEMORY_FILE_PREVIEW_LIMIT } from "../src/memory-snapshot.js";
+import { createWorkspaceCatalog, type WorkspaceCatalog } from "../src/workspace-catalog.js";
 
 let workspace = "";
 
@@ -42,6 +43,15 @@ function makeWebServer(): { routes: Map<string, CardRoute>; webServer: CardWebSe
 		},
 	};
 	return { routes, webServer, disposers };
+}
+
+/** A catalogue over the served-roots source, the fallback used without a registry. */
+function catalogFor(...roots: string[]): WorkspaceCatalog {
+	const served = createKnownWorkspaces();
+	for (const root of roots) {
+		served.remember(root);
+	}
+	return createWorkspaceCatalog({ served });
 }
 
 async function call(
@@ -74,7 +84,7 @@ function jsonBody(recorded: RecordedResponse): unknown {
 describe("mountCardRoutes", () => {
 	it("registers all three routes and the disposer unregisters them", () => {
 		const { routes, webServer } = makeWebServer();
-		const disposer = mountCardRoutes(webServer, createKnownWorkspaces());
+		const disposer = mountCardRoutes(webServer, catalogFor());
 		expect([...routes.keys()]).toEqual([
 			CARD_API_WORKSPACES_PATH,
 			CARD_API_MEMORY_PATH,
@@ -86,23 +96,26 @@ describe("mountCardRoutes", () => {
 
 	it("the disposer tolerates hosts whose register returns nothing", () => {
 		const bare: CardWebServer = { register: () => undefined };
-		const disposer = mountCardRoutes(bare, createKnownWorkspaces());
+		const disposer = mountCardRoutes(bare, catalogFor());
 		expect(() => disposer()).not.toThrow();
 	});
 
-	it("serves the workspace allowlist", async () => {
+	it("serves the catalogued workspaces that have a memory directory", async () => {
 		const { routes, webServer } = makeWebServer();
-		const known = createKnownWorkspaces();
-		known.remember(workspace);
-		mountCardRoutes(webServer, known);
+		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
+		mountCardRoutes(webServer, catalogFor(workspace, "/etc"));
 		const recorded = await call(routes.get(CARD_API_WORKSPACES_PATH), { method: "GET", url: CARD_API_WORKSPACES_PATH });
 		expect(recorded.status).toBe(200);
-		expect(jsonBody(recorded)).toEqual({ workspaces: [{ root: workspace, lastSeen: expect.any(String) }] });
+		// Only the workspace with a store is listed, and it carries its label;
+		// /etc is known to the registry-less source but has no store.
+		expect(jsonBody(recorded)).toEqual({
+			workspaces: [{ root: workspace, label: workspace.split("/").pop() }],
+		});
 	});
 
 	it("answers 405 for non-GET requests on both routes", async () => {
 		const { routes, webServer } = makeWebServer();
-		mountCardRoutes(webServer, createKnownWorkspaces());
+		mountCardRoutes(webServer, catalogFor());
 		const workspaces = await call(routes.get(CARD_API_WORKSPACES_PATH), { method: "POST", url: CARD_API_WORKSPACES_PATH });
 		expect(workspaces.status).toBe(405);
 		const memory = await call(routes.get(CARD_API_MEMORY_PATH), { method: "PUT", url: CARD_API_MEMORY_PATH });
@@ -111,9 +124,7 @@ describe("mountCardRoutes", () => {
 
 	it("answers 400 when the root parameter is missing or relative", async () => {
 		const { routes, webServer } = makeWebServer();
-		const known = createKnownWorkspaces();
-		known.remember(workspace);
-		mountCardRoutes(webServer, known);
+		mountCardRoutes(webServer, catalogFor(workspace));
 		const missing = await call(routes.get(CARD_API_MEMORY_PATH), {
 			method: "GET",
 			url: CARD_API_MEMORY_PATH,
@@ -126,9 +137,9 @@ describe("mountCardRoutes", () => {
 		expect(relative.status).toBe(404);
 	});
 
-	it("answers 404 for a root the process never served (allowlist fence)", async () => {
+	it("answers 404 for a root outside the catalogue", async () => {
 		const { routes, webServer } = makeWebServer();
-		mountCardRoutes(webServer, createKnownWorkspaces());
+		mountCardRoutes(webServer, catalogFor());
 		const recorded = await call(routes.get(CARD_API_MEMORY_PATH), {
 			method: "GET",
 			url: `${CARD_API_MEMORY_PATH}?root=${encodeURIComponent("/etc")}`,
@@ -137,11 +148,9 @@ describe("mountCardRoutes", () => {
 		expect(jsonBody(recorded)).toEqual({ error: "unknown workspace root" });
 	});
 
-	it("serves the read-only snapshot for a known root", async () => {
+	it("serves the read-only snapshot for a catalogued root", async () => {
 		const { routes, webServer } = makeWebServer();
-		const known = createKnownWorkspaces();
-		known.remember(workspace);
-		mountCardRoutes(webServer, known);
+		mountCardRoutes(webServer, catalogFor(workspace));
 		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
 		writeFileSync(join(workspace, ".evolve", "memory", "MEMORY.md"), "- [x](a.md) — y\n");
 		const recorded = await call(routes.get(CARD_API_MEMORY_PATH), {
@@ -158,13 +167,11 @@ describe("mountCardRoutes", () => {
 });
 
 describe("the memory file content route", () => {
-	function setup(): { routes: Map<string, CardRoute>; known: ReturnType<typeof createKnownWorkspaces> } {
+	function setup(): { routes: Map<string, CardRoute> } {
 		const { routes, webServer } = makeWebServer();
-		const known = createKnownWorkspaces();
-		known.remember(workspace);
-		mountCardRoutes(webServer, known);
+		mountCardRoutes(webServer, catalogFor(workspace));
 		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
-		return { routes, known };
+		return { routes };
 	}
 
 	it("answers 405 for non-GET and 400 for a missing file parameter", async () => {
