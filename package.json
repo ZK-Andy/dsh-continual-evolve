@@ -1,6 +1,6 @@
 {
   "name": "dsh-continual-evolve",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "ZCode-style workspace memory for DeepSeek Harness: a per-workspace markdown store (<workspace>/.evolve/memory/) with session-start index injection — the model reads and writes the files with its native tools.",
   "license": "MIT",
   "repository": {
