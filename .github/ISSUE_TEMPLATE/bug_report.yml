@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with dsh-continual-evolve (install, activation, commands, gate behavior).
+description: Report a problem with dsh-continual-evolve (install, activation, memory injection, file read/write).
 title: "[Bug]: "
 labels: ["bug", "triage"]
 body:
@@ -65,10 +65,10 @@ body:
     validations:
       required: true
   - type: textarea
-    id: evolve-log
+    id: injection-sample
     attributes:
-      label: Plugin log (optional but very helpful)
-      description: Run `/evolve log 200` in the session, or paste the tail of `~/.dsh/evolve/plugin.log`
+      label: Injected section (optional but very helpful)
+      description: Ask the agent to quote the `# 持久记忆` / `<memories>` section from its system prompt, or paste the `.evolve/memory/MEMORY.md` content
   - type: textarea
     id: repro
     attributes:

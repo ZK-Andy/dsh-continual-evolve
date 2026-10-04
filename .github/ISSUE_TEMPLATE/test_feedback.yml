@@ -43,11 +43,11 @@ body:
     attributes:
       label: Result / 使用效果
       description: 哪些命令/流程试了、效果如何、期望 vs 实际
-      placeholder: "1. 运行 /evolve … 2. 期望… 实际…"
+      placeholder: "1. 让模型记住/回忆一条事实 … 2. 期望… 实际…"
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: Logs / Screenshots / 日志或截图
-      description: 相关日志（`/evolve log 200` 或 `~/.dsh/evolve/plugin.log`）或截图（可拖入本框；注意脱敏）
+      description: 系统提示词里 `# 持久记忆` 段的摘录、`.evolve/memory/` 目录内容或截图（可拖入本框；注意脱敏）
