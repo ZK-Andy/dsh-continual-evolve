@@ -19,11 +19,13 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": "./client/client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/**/*.js",
     "lib/**/*.d.ts",
+    "client/client.js",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
@@ -31,6 +33,10 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
     }
   },
   "engines": {

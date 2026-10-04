@@ -70,3 +70,73 @@ describe("apply", () => {
 		expect(text).not.toBe("");
 	});
 });
+
+describe("apply card wiring", () => {
+	function makeCtxWithWebServer(): {
+		sections: RecordedSection[];
+		routes: Map<string, unknown>;
+		host: Parameters<typeof apply>[0];
+	} {
+		const base = makeCtx();
+		const routes = new Map<string, unknown>();
+		const webServer = {
+			register: (route: { kind: string; path: string }) => {
+				routes.set(route.path, route);
+				return () => routes.delete(route.path);
+			},
+		};
+		const host = Object.assign(base.host, {
+			inject: (services: string[], callback: (scoped: unknown) => void) => {
+				callback(services.includes("webServer") ? { webServer } : {});
+			},
+		}) as Parameters<typeof apply>[0];
+		return { sections: base.sections, routes, host };
+	}
+
+	it("mounts the card routes on webServer by default", () => {
+		const { routes, host } = makeCtxWithWebServer();
+		apply(host, fullConfig);
+		expect([...routes.keys()]).toEqual([
+			"/dsh-continual-evolve/api/v1/workspaces",
+			"/dsh-continual-evolve/api/v1/memory",
+		]);
+	});
+
+	it("skips card wiring when memoryCard is disabled", () => {
+		const { routes, host } = makeCtxWithWebServer();
+		apply(host, { ...fullConfig, memoryCard: { enabled: false } });
+		expect(routes.size).toBe(0);
+	});
+
+	it("feeds served workspaces into the card allowlist", () => {
+		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-card-"));
+		const { sections, routes, host } = makeCtxWithWebServer();
+		apply(host, fullConfig);
+		const render = sections[0].text as (context: { agent: unknown }) => string;
+		render({ agent: { id: "s1", session: { header: { cwd: workspace } } } });
+		const memoryRoute = routes.get("/dsh-continual-evolve/api/v1/memory") as {
+			handler: (
+				request: { method?: string; url?: string },
+				response: {
+					writeHead: (status: number, headers?: Record<string, string>) => unknown;
+					end: (body?: string) => void;
+				},
+			) => void;
+		};
+		let status = 0;
+		let body = "";
+		memoryRoute.handler(
+			{ method: "GET", url: `/dsh-continual-evolve/api/v1/memory?root=${encodeURIComponent(workspace)}` },
+			{
+				writeHead: (code) => {
+					status = code;
+				},
+				end: (text) => {
+					body = text ?? "";
+				},
+			},
+		);
+		expect(status).toBe(200);
+		expect(JSON.parse(body).root).toBe(workspace);
+	});
+});

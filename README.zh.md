@@ -7,9 +7,9 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-33%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-98%25-green)]()
+[![Coverage · branches](https://img.shields.io/badge/coverage_branches-95%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的工作区记忆插件：每个工作区一个纯 markdown 记忆库（`<workspace>/.evolve/memory/`），会话开局注入索引，模型用**原生文件读写工具**直接使用——仅此而已。
@@ -23,6 +23,7 @@ Agent 每个会话积累的可复用经验（用户偏好、踩坑教训、项�
 1. **开局注入** —— 插件只注册一个 system-prompt section：注入 `MEMORY.md` 索引正文（超预算按整行截断并提示读目录）、记忆目录绝对路径、when_to_save 指南。该 section 每会话只算一次并逐字节复用，system prompt 稳定、prompt cache 持续命中；空 store 零 token。
 2. **原生读写** —— DSH 对工作区内文件读写全放行（读路径从不设防，写围栏只围工作区外，见 [`docs/FAQ.md`](docs/FAQ.md) #6）。模型直接 Read/Write/Edit 记忆文件并维护索引；store 不存在时自动 bootstrap。
 3. **治理即文件** —— 无版本、无快照、无审批、无后台提取：一条坏记忆就是工作区里一个可见的文件，删掉它就是退役。记忆是个人上下文——bootstrap 时若工作区是 git 仓库会自动把 `.evolve/` 追加进 `.gitignore`（非 git 工作区不碰任何文件）。
+4. **只读卡片** —— 插件在官方插件管理的本 bundle 页面挂一张只读记忆卡片（`plugins.bundle.config` slot，老宿主自动降级为无卡片）：最近服务过的工作区、各自记忆库的条目数/索引行数、索引漂移警告（未索引文件与索引失联文件）。卡片是磁盘文件的请求时投影——单一事实源永远是 `.evolve/memory/` 里的文件，卡片没有编辑路径，编辑请直接改文件。
 
 记忆文件格式（与 ZCode 一致）：frontmatter 带 `name` / `description`（决定未来会话会不会想起它）/ `metadata.type`（`user | feedback | project | reference`）；`feedback` 正文必带 **Why:** 与 **How to apply:**。
 
@@ -40,7 +41,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ## 使用
 
-无需命令、无需工具。重启后第一场会话，`.evolve/memory/` 会自动生成，索引自动注入开场；对模型直接说"记住……"/"忘掉……"即可，写入的记忆文件 + 索引行就是全部持久状态。会话中途写入的记忆下个会话生效（会话内冻结守 prompt cache）；需要立即查看时，模型直接读目录。
+无需命令、无需工具。重启后第一场会话，`.evolve/memory/` 会自动生成，索引自动注入开场；对模型直接说"记住……"/"忘掉……"即可，写入的记忆文件 + 索引行就是全部持久状态。会话中途写入的记忆下个会话生效（会话内冻结守 prompt cache）；需要立即查看时，模型直接读目录。想看记忆库全貌，打开官方插件管理里本插件的页面：只读卡片展示各工作区的记忆条目与索引漂移。
 
 ## 配置
 
@@ -50,6 +51,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 | `memoryIndex.guide` | `true` | 是否注入 when_to_save 指南（关闭且索引为空时该 section 零 token） |
 | `memoryIndex.order` | `400` | section 顺序（上游命名槽位自 `PLAN_POLICY=500` 起） |
 | `memoryIndex.maxChars` | `6000` | 注入索引的硬字符预算 |
+| `memoryCard.enabled` | `true` | 官方插件管理内的只读记忆卡片（宿主缺 `webServer`/`plugins.bundle.config` 时自动降级为无卡片） |
 
 profile patch 示例：
 
@@ -64,7 +66,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（33 例）
+pnpm test                    # vitest（62 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```
@@ -73,10 +75,15 @@ pnpm lint                    # oxlint src test
 
 ```
 ├── src/
-│   ├── index.ts           # 注册：唯一 section + 配置
+│   ├── index.ts           # 注册：唯一 section + 配置 + 卡片路由接线
 │   ├── memory-section.ts  # 注入：读索引 / bootstrap / 截断 / 会话冻结
-│   └── memory-guide.ts    # 指南：when_to_save 与维护纪律（改编自 ZCode）
-├── test/                  # vitest 测试（3 个文件）
+│   ├── memory-guide.ts    # 指南：when_to_save 与维护纪律（改编自 ZCode）
+│   ├── memory-snapshot.ts # 卡片：记忆库只读投影（条目 / 漂移 / 错误降级）
+│   ├── known-workspaces.ts# 卡片：进程内 LRU 工作区白名单（API 读围栏）
+│   └── card-routes.ts     # 卡片：webServer 上的 GET-only 只读 API
+├── client/
+│   └── client.js          # 手写 client bundle：官方插件管理内只读卡片
+├── test/                  # vitest 测试（7 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/                  # design.md（设计）· FAQ.md（踩坑）
 └── .agents/               # AI 协作层（AGENTS.md、技能、ADR 笔记）
