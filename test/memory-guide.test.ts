@@ -28,4 +28,10 @@ describe("MEMORY_GUIDE_RULES", () => {
 		expect(MEMORY_GUIDE_RULES).toContain("重新推导出来的事实不存");
 		expect(MEMORY_GUIDE_RULES).toContain("2026-10-08");
 	});
+
+	it("teaches read-time verification: fix or delete a memory that disagrees with reality", () => {
+		expect(MEMORY_GUIDE_RULES).toContain("引用记忆前若发现与现实不符");
+		expect(MEMORY_GUIDE_RULES).toContain("当场修正或删除");
+		expect(MEMORY_GUIDE_RULES).toContain("退役不留给用户");
+	});
 });
