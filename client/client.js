@@ -651,6 +651,7 @@ window.__ModuleLoader__.load({
 						setSelection({ root: root, query: "", expandedFile: null });
 						setPreview({ file: null, status: "loading", content: "", message: "" });
 					},
+					onRefresh: refresh,
 					t: t,
 					UI: UI,
 					now: now,

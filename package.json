@@ -60,7 +60,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "lint": "oxlint src test",
+    "lint": "oxlint src test client",
     "clean": "rm -rf lib",
     "check:docs": "tsx scripts/run-gates.ts docs",
     "check:handoff": "tsx scripts/verify-handoff-structure.ts --self-test && tsx scripts/verify-handoff-structure.ts",

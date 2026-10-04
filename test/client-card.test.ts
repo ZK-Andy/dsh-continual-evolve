@@ -49,6 +49,68 @@ function makeReact(): Record<string, unknown> {
 	};
 }
 
+interface ElementLike {
+	type: unknown;
+	props?: Record<string, unknown> | null;
+	children?: unknown[];
+}
+
+/**
+ * A react stub whose hooks really store state, so a test can drive the card
+ * from collapsed/loading into the open/ready tree the file list (and its
+ * refresh button) only exists in. `setters` is indexed by hook order; `begin()`
+ * rewinds the cursor before each render call.
+ */
+function makeHookReact() {
+	const states: unknown[] = [];
+	const setters: Array<(value: unknown) => void> = [];
+	let cursor = 0;
+	return {
+		states,
+		setters,
+		begin: () => {
+			cursor = 0;
+		},
+		react: {
+			createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }),
+			useState: (initial: unknown) => {
+				const slot = cursor++;
+				if (setters[slot] === undefined) {
+					states[slot] = typeof initial === "function" ? (initial as () => unknown)() : initial;
+					setters[slot] = (value: unknown) => {
+						states[slot] = typeof value === "function" ? (value as (current: unknown) => unknown)(states[slot]) : value;
+					};
+				}
+				return [states[slot], setters[slot]];
+			},
+			useEffect: () => undefined,
+		},
+	};
+}
+
+/** Every element in the tree whose component function carries this name. */
+function findAllByName(node: unknown, name: string): ElementLike[] {
+	const found: ElementLike[] = [];
+	const walk = (current: unknown): void => {
+		if (Array.isArray(current)) {
+			for (const child of current) {
+				walk(child);
+			}
+			return;
+		}
+		if (current === null || typeof current !== "object") {
+			return;
+		}
+		const element = current as ElementLike;
+		if (typeof element.type === "function" && (element.type as { name?: string }).name === name) {
+			found.push(element);
+		}
+		walk(element.children);
+	};
+	walk(node);
+	return found;
+}
+
 function makeCtx(locale?: {
 	register: (ns: string, dicts: unknown) => unknown;
 	bind: (ns: string) => (key: string) => string;
@@ -225,6 +287,34 @@ describe("client bundle", () => {
 			expect(meta.meta.title.length).toBeGreaterThan(0);
 			expect(meta.meta.description.length).toBeGreaterThan(0);
 		}
+	});
+});
+
+describe("card refresh wiring", () => {
+	// Hook order in the card: 0 open, 1 model, 2 reload counter, 3 selection, 4 preview, 5 now.
+	it("wires the file-list refresh button to the card's own reload", () => {
+		const harness = makeHookReact();
+		const { exports } = loadBundle(harness.react);
+		const { ctx, registrations } = makeCtx();
+		(exports.apply as (ctx: unknown) => void)(ctx);
+		const card = registrations[0].render({}) as ElementLike;
+		const render = (): ElementLike => {
+			harness.begin();
+			return (card.type as (props: unknown) => ElementLike)(card.props);
+		};
+		// Collapsed by default: the viewer — and its refresh button — is not in the tree yet.
+		expect(findAllByName(render(), "WorkspaceBlock")).toHaveLength(0);
+		harness.setters[0](true);
+		harness.setters[1]({ status: "ready", model: { workspaces: [{ root: "/ws/a" }] }, message: "" });
+		const blocks = findAllByName(render(), "WorkspaceBlock");
+		expect(blocks).toHaveLength(1);
+		const onRefresh = blocks[0].props?.onRefresh;
+		expect(typeof onRefresh).toBe("function");
+		// Clicking it must put the card back into loading and bump the reload
+		// counter the snapshot effect depends on; an inert button leaves both alone.
+		(onRefresh as () => void)();
+		expect(harness.states[1]).toMatchObject({ status: "loading", model: null });
+		expect(harness.states[2]).toBe(1);
 	});
 });
 
