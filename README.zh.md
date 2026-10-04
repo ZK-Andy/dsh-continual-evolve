@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-98%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -22,7 +22,7 @@ Agent 每个会话积累的可复用经验（用户偏好、踩坑教训、项�
 
 1. **开局注入** —— 插件只注册一个 system-prompt section：注入 `MEMORY.md` 索引正文（超预算按整行截断并提示读目录）、记忆目录绝对路径、when_to_save 指南。该 section 每会话只算一次并逐字节复用，system prompt 稳定、prompt cache 持续命中；空 store 零 token。
 2. **原生读写** —— DSH 对工作区内文件读写全放行（读路径从不设防，写围栏只围工作区外，见 [`docs/FAQ.md`](docs/FAQ.md) #6）。模型直接 Read/Write/Edit 记忆文件并维护索引；store 不存在时自动 bootstrap。
-3. **治理即文件** —— 无版本、无快照、无审批、无后台提取：一条坏记忆就是工作区里一个可见的文件，删掉它就是退役。记忆是个人上下文，`.evolve/` 默认不进 git。
+3. **治理即文件** —— 无版本、无快照、无审批、无后台提取：一条坏记忆就是工作区里一个可见的文件，删掉它就是退役。记忆是个人上下文——bootstrap 时若工作区是 git 仓库会自动把 `.evolve/` 追加进 `.gitignore`（非 git 工作区不碰任何文件）。
 
 记忆文件格式（与 ZCode 一致）：frontmatter 带 `name` / `description`（决定未来会话会不会想起它）/ `metadata.type`（`user | feedback | project | reference`）；`feedback` 正文必带 **Why:** 与 **How to apply:**。
 
@@ -64,7 +64,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + tsc -> lib/
-pnpm test                    # vitest（27 例）
+pnpm test                    # vitest（32 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test
 ```

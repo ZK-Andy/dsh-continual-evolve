@@ -7,7 +7,7 @@ English | [中文](README.zh.md)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-98%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-98%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -22,7 +22,7 @@ Reusable experience gathered in one session (user preferences, pitfalls, project
 
 1. **Session-start injection** — the plugin registers a single system-prompt section: the `MEMORY.md` index content (whole-line truncated over budget, with a read-the-directory hint), the absolute store path, and the when_to_save guide. The section is computed once per session and reused byte-for-byte, keeping the system prompt stable and the prompt cache warm; an empty store costs zero tokens.
 2. **Native read/write** — DSH fully permits file access inside the workspace (reads are never fenced; the write fence only covers paths outside the workspace, see [`docs/FAQ.md`](docs/FAQ.md) #6). The model reads, writes, and edits memory files and maintains the index directly; the store is bootstrapped on first use.
-3. **Governance is the file** — no versions, no snapshots, no approvals, no background extraction: a bad memory is a visible file in the workspace, and deleting it is the retirement path. Memories are personal context; `.evolve/` stays out of git by default.
+3. **Governance is the file** — no versions, no snapshots, no approvals, no background extraction: a bad memory is a visible file in the workspace, and deleting it is the retirement path. Memories are personal context — on bootstrap in a git workspace the store appends `.evolve/` to the workspace `.gitignore` (non-git workspaces are left untouched).
 
 Memory file format (same as ZCode): frontmatter with `name` / `description` (the hook that decides whether a future session recalls it) / `metadata.type` (`user | feedback | project | reference`); `feedback` bodies must carry **Why:** and **How to apply:** lines.
 
@@ -64,7 +64,7 @@ Profile patch example:
 
 ```bash
 pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (27 tests)
+pnpm test                    # vitest (32 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds
 pnpm lint                    # oxlint src test
 ```

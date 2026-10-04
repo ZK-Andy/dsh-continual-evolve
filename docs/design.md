@@ -17,7 +17,7 @@
 - **开局注入**（`src/memory-section.ts`）：`evolve:memory-index` section（order 400）注入索引正文 + 记忆目录绝对路径 + when_to_save 指南。会话内逐字节冻结守 prompt cache；索引超预算按整行截断并提示直接读目录；store 不存在时自动 bootstrap（mkdir + 起始索引）；guide 关闭且索引为空时零 token。
 - **原生读写**：DSH 的读路径从不设防、写围栏只围工作区外（`dsh-fs-sandbox`：reads pass through untouched）——工作区内点目录读写全通、免审批。模型用原生 Read/Write/Edit 直接操作记忆文件并维护索引，插件不注册任何工具或命令。
 - **指南随行**（`src/memory-guide.ts`）：when_to_save 分类学（user/feedback/project/reference，feedback 必带 Why + How to apply）、可重推导不存、相对日期转绝对、更新优先于新建、[[名字]] 互引——改编自 ZCode 的持久记忆提示词。
-- **零治理**：无快照/版本/回滚/审批/审计/提取/benchmark。坏记忆的归宿是工作区里一个可见的文件——删掉它就是退役（ZCode 同款取舍）。
+- **零治理**：无快照/版本/回滚/审批/审计/提取/benchmark。坏记忆的归宿是工作区里一个可见的文件——删掉它就是退役（ZCode 同款取舍）。bootstrap 时若工作区是 git 仓库（cwd 有 `.git`），自动把 `.evolve/` 追加进工作区 `.gitignore`；非 git 工作区不碰任何文件。
 
 ## 为什么不是原来的样子（各一句话）
 

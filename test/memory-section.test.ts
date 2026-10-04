@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	createFrozenMemorySection,
 	cwdOf,
+	ensureGitIgnored,
 	fitIndex,
 	memoryDirFor,
 	memorySectionText,
@@ -159,6 +160,42 @@ describe("memorySectionText", () => {
 	it("skips bootstrap when asked, leaving no store behind", () => {
 		memorySectionText(agentAt(workspace), { bootstrap: false });
 		expect(existsSync(memoryDirFor(workspace))).toBe(false);
+	});
+});
+
+describe("ensureGitIgnored", () => {
+	it("creates .gitignore with the entry in a git workspace", () => {
+		mkdirSync(join(workspace, ".git"), { recursive: true });
+		ensureGitIgnored(workspace);
+		const text = readFileSync(join(workspace, ".gitignore"), "utf8");
+		expect(text).toContain("# workspace memory (dsh-continual-evolve)");
+		expect(text.split("\n")).toContain(".evolve/");
+	});
+
+	it("appends to an existing .gitignore, adding the missing newline first", () => {
+		mkdirSync(join(workspace, ".git"), { recursive: true });
+		writeFileSync(join(workspace, ".gitignore"), "node_modules/", "utf8");
+		ensureGitIgnored(workspace);
+		const text = readFileSync(join(workspace, ".gitignore"), "utf8");
+		expect(text).toBe("node_modules/\n# workspace memory (dsh-continual-evolve)\n.evolve/\n");
+	});
+
+	it("is idempotent when the entry already exists", () => {
+		mkdirSync(join(workspace, ".git"), { recursive: true });
+		writeFileSync(join(workspace, ".gitignore"), ".evolve/\n", "utf8");
+		ensureGitIgnored(workspace);
+		expect(readFileSync(join(workspace, ".gitignore"), "utf8")).toBe(".evolve/\n");
+	});
+
+	it("touches nothing in a non-git workspace", () => {
+		ensureGitIgnored(workspace);
+		expect(existsSync(join(workspace, ".gitignore"))).toBe(false);
+	});
+
+	it("runs from bootstrap: a git workspace gets its .gitignore on first use", () => {
+		mkdirSync(join(workspace, ".git"), { recursive: true });
+		memorySectionText(agentAt(workspace));
+		expect(readFileSync(join(workspace, ".gitignore"), "utf8")).toContain(".evolve/");
 	});
 });
 

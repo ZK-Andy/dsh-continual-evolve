@@ -37,6 +37,9 @@ const INDEX_FILE = "MEMORY.md";
 const STARTER_INDEX =
 	"# 记忆索引\n\n<!-- 一行一条：- [标题](文件名.md) — 一句话相关性钩子；写新记忆后在此追加一行 -->\n";
 
+/** Appended to the workspace .gitignore on bootstrap (git workspaces only). */
+const GITIGNORE_ENTRY = "# workspace memory (dsh-continual-evolve)\n.evolve/\n";
+
 /** Minimal agent shape the section needs (duck-typed). */
 interface CwdAgentLike {
 	session?: {
@@ -72,6 +75,29 @@ export function memoryDirFor(cwd: string): string {
 }
 
 /**
+ * Ensure `.evolve/` is ignored when the workspace is a git repository, so
+ * the memory store never shows up in git status. Best-effort hygiene: a
+ * non-git workspace (no `.git` entry at the cwd) is left untouched — no
+ * `.gitignore` is created — and any write failure is swallowed.
+ */
+export function ensureGitIgnored(cwd: string): void {
+	try {
+		if (!existsSync(join(cwd, ".git"))) {
+			return;
+		}
+		const gitignore = join(cwd, ".gitignore");
+		const existing = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
+		if (existing.split("\n").some((line) => line.trim() === ".evolve/")) {
+			return;
+		}
+		const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+		writeFileSync(gitignore, `${existing}${prefix}${GITIGNORE_ENTRY}`, "utf8");
+	} catch {
+		// Never blocks the store; worst case is a visible .evolve/ in git status.
+	}
+}
+
+/**
  * Ensure the store exists (creating the directory and a starter index on
  * first use), then return the trimmed index text. Any filesystem failure
  * degrades to "" — injection must never break an assembly.
@@ -81,6 +107,7 @@ export function readMemoryIndex(dir: string, bootstrap: boolean = true): string 
 		if (bootstrap && !existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
 			writeFileSync(join(dir, INDEX_FILE), STARTER_INDEX, "utf8");
+			ensureGitIgnored(resolve(dir, "..", ".."));
 		}
 		return readFileSync(join(dir, INDEX_FILE), "utf8").trim();
 	} catch {
