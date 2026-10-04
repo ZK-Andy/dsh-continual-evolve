@@ -107,3 +107,16 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 - 接线要求：package.json `exports` 加 `"./locale/*.json": "./locale/*.json"`，`files` 加 `locale/*.json`。参照 dshmarket 的 `locale/zh.json`。
 
 **要点**：双语显示名/描述 = locale 文件各写各的；package.json `description` 保持纯英文（npm 展示同一句）。
+
+## 8. 自绘下拉"点了没反应"：React 18 离散事件会同步 flush `useEffect`
+
+**症状**（2026-10-05，v0.14.1 卡片工作区选择器桌面端验收）：点触发按钮，下拉一闪即关（或干脆不出现），观感是"按钮坏了 / 切换不了"。
+
+**根因**：React 18 对 click 这类**离散事件**会在事件处理末尾**同步 flush 被动副作用**。于是"打开下拉的那次 click"里挂上的 `document.addEventListener("click", close)`，会在**同一个 click 继续冒泡到 `document` 时立刻命中**——刚开就关。
+
+**正解**（按优先级）：
+
+1. **用宿主原语**：DSH 自带 `Menu`（`@deepseek-ai/dsh-client-ui-primitives`；owner 控制 `open` / `onClose` / `onSelect` / `selectedId`，`anchor` 传触发元素，`portal: true` 渲染到 `document.body`），外点与 Escape 由它处理，dshmarket 生产在用。自绘下拉几乎总是重复实现且更差（本插件的老宿主回退路径即为此）。
+2. **必须自绘时**：监听 **`pointerdown`**（不是 `click`）并做**容器包含判断**（`useRef` + `node.contains(event.target)`）。打开的那次 click 早已过了 pointerdown 阶段，不会再命中自己；Escape 仍走 `keydown`。
+
+**要点**：`click` 监听 + "监听器刚挂上就被同一次事件触发" = 自绘 popover 的经典死法；有宿主原语就别自绘。

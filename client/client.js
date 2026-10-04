@@ -76,6 +76,7 @@ window.__ModuleLoader__.load({
 		var createElement = react.createElement;
 		var useState = react.useState;
 		var useEffect = react.useEffect;
+		var useRef = react.useRef;
 
 		var NS = "dsh-continual-evolve";
 		var SLOT = "plugins.bundle.config";
@@ -298,6 +299,7 @@ window.__ModuleLoader__.load({
 				".dce-hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}",
 				".dce-empty{border:1px dashed var(--dsw-alias-border-l3,#d1d9e0);border-radius:10px;padding:16px;text-align:center;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:20px}",
 				".dce-scope-wrap{position:relative;display:inline-flex;min-width:0;max-width:100%;align-self:flex-start}",
+				".dce-scope-pill{border-radius:999px}",
 				".dce-scope{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:4px 10px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:999px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;line-height:18px;cursor:pointer}",
 				".dce-scope:hover{border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}",
 				".dce-scope:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:1px}",
@@ -307,8 +309,6 @@ window.__ModuleLoader__.load({
 				".dce-menu-item{display:flex;flex-direction:column;gap:2px;width:100%;padding:6px 10px;border:0;border-radius:8px;background:0 0;font:inherit;color:inherit;text-align:left;cursor:pointer}",
 				".dce-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.03))}",
 				'.dce-menu-item[data-active="true"]{background:var(--dsw-alias-bg-module-platform,#eef1f4)}',
-				".dce-menu-label{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-				".dce-menu-path{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 				".dce-search{width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l4,#d8dee4);border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-1,#fff);height:32px;color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;padding:0 10px;outline:none}",
 				".dce-search::placeholder{color:var(--dsw-alias-label-tertiary,#8b93a1)}",
 				".dce-search:focus-visible{border-color:var(--dsw-alias-brand-primary,#4f6ef7)}",
@@ -321,6 +321,7 @@ window.__ModuleLoader__.load({
 				".dce-row{display:flex;width:100%;align-items:center;gap:10px;padding:8px 12px;background:0 0;border:0;font:inherit;color:inherit;text-align:left;cursor:pointer}",
 				".dce-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.03))}",
 				".dce-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}",
+				".dce-file-icon{display:inline-flex;flex:none;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--dsw-alias-bg-module-platform,#eef1f4)}",
 				".dce-file-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500;line-height:18px}",
 				".dce-file-time{flex:none;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px}",
 				".dce-preview{margin:0;padding:8px 12px 10px;background:var(--dsw-alias-bg-module-platform,#eef1f4);border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}",
@@ -369,9 +370,20 @@ window.__ModuleLoader__.load({
 			var expanded = props.expanded;
 			var preview = props.preview;
 			var onToggle = props.onToggle;
-			var rowChildren = [
-				createElement("span", { key: "name", className: "dce-file-name" }, file.file),
-			];
+			var UI = props.UI;
+			var rowChildren = [];
+			if (UI !== null && UI !== undefined && UI.FileIcon !== undefined && UI.FileIcon !== null) {
+				// ZCode's memory rows open with a category tile; the host classifies
+				// the file itself, so a memory .md gets the markdown glyph.
+				rowChildren.push(
+					createElement(
+						"span",
+						{ key: "icon", className: "dce-file-icon" },
+						createElement(UI.FileIcon, { path: file.file, size: 16 }),
+					),
+				);
+			}
+			rowChildren.push(createElement("span", { key: "name", className: "dce-file-name" }, file.file));
 			var time = formatRelative(file.updatedAt, now, t);
 			if (time !== "") {
 				rowChildren.push(createElement("span", { key: "time", className: "dce-file-time" }, time));
@@ -409,26 +421,31 @@ window.__ModuleLoader__.load({
 			return createElement("li", { className: "dce-item" }, children);
 		}
 
-		/** Leading "switch scope" marker from the host primitives, or nothing. */
-		function ScopeMark() {
-			if (
-				primitives !== undefined &&
-				primitives !== null &&
-				typeof primitives.IconChevronsUpDownOutlineRegular !== "undefined" &&
-				primitives.IconChevronsUpDownOutlineRegular !== null
-			) {
-				return createElement(primitives.IconChevronsUpDownOutlineRegular, { size: 14, "aria-hidden": "true" });
+		/** The host's folder marker for a workspace, or nothing on an old host. */
+		function FolderMark(props) {
+			var UI = props.UI;
+			if (UI !== null && UI !== undefined && UI.Folder !== undefined && UI.Folder !== null) {
+				return createElement(UI.Folder, { size: 16, "aria-hidden": "true" });
 			}
 			return null;
 		}
 
 		/**
 		 * The workspace scope selector, ZCode's Settings → Memory shape: one
-		 * scope at a time behind a dropdown (leading marker + current workspace
-		 * label + chevron), never a row of chips. A chip row can only render
+		 * scope at a time behind a dropdown (folder marker + current workspace
+		 * label + chevron), never a row of chips — a chip row can only render
 		 * when several workspaces are known, so in the common single-workspace
 		 * case it renders nothing at all and the capability reads as missing.
-		 * The menu closes on select, on Escape and on a click outside.
+		 *
+		 * The list is the host's own `Menu` primitive whenever the host provides
+		 * it: the same surface the rest of the settings UI uses, and it owns
+		 * outside-click/Escape handling. A hand-rolled document listener gets
+		 * that wrong — React flushes this component's effect synchronously for
+		 * the discrete click that opens the list, so a listener attached there
+		 * catches that very click and closes the list again (the button then
+		 * looks dead). The hand-rolled list stays as the old-host fallback and
+		 * closes on a pointerdown outside its wrapper, which cannot be the click
+		 * that opened it.
 		 */
 		function WorkspaceScopeMenu(props) {
 			var workspaces = props.workspaces;
@@ -439,27 +456,41 @@ window.__ModuleLoader__.load({
 			var openState = useState(false);
 			var open = openState[0];
 			var setOpen = openState[1];
+			var wrapRef = useRef(null);
+			var hostMenu =
+				UI !== null && UI !== undefined && UI.Menu !== undefined && UI.Menu !== null ? UI.Menu : null;
 			useEffect(
 				function () {
-					if (!open || typeof document === "undefined") {
+					if (hostMenu !== null || !open || typeof document === "undefined") {
 						return undefined;
 					}
-					var close = function () {
-						setOpen(false);
+					var onPointerDown = function (event) {
+						var node = wrapRef.current;
+						var target = event.target;
+						var inside =
+							node !== null &&
+							node !== undefined &&
+							typeof node.contains === "function" &&
+							target !== null &&
+							target !== undefined &&
+							node.contains(target);
+						if (!inside) {
+							setOpen(false);
+						}
 					};
 					var onKeyDown = function (event) {
 						if (event.key === "Escape") {
-							close();
+							setOpen(false);
 						}
 					};
-					document.addEventListener("click", close);
+					document.addEventListener("pointerdown", onPointerDown);
 					document.addEventListener("keydown", onKeyDown);
 					return function () {
-						document.removeEventListener("click", close);
+						document.removeEventListener("pointerdown", onPointerDown);
 						document.removeEventListener("keydown", onKeyDown);
 					};
 				},
-				[open],
+				[open, hostMenu],
 			);
 			var current = null;
 			for (var index = 0; index < workspaces.length; index++) {
@@ -473,18 +504,11 @@ window.__ModuleLoader__.load({
 			}
 			var label = current === null ? "" : current.label || workspaceLabel(current.root);
 			var scopeChildren = [
-				createElement(ScopeMark, { key: "mark" }),
 				createElement("span", { key: "label", className: "dce-scope-label" }, label),
 				createElement("span", { key: "caret", className: "dce-scope-caret" }, createElement(Chevron, null)),
 			];
-			var triggerProps = {
-				type: "button",
-				"aria-haspopup": "menu",
-				"aria-expanded": open ? "true" : "false",
-				"aria-label": t("scopeLabel"),
-				onClick: function () {
-					setOpen(!open);
-				},
+			var toggle = function () {
+				setOpen(!open);
 			};
 			var trigger = null;
 			if (UI !== null && UI !== undefined && typeof UI.Button !== "undefined" && UI.Button !== null) {
@@ -493,12 +517,14 @@ window.__ModuleLoader__.load({
 					{
 						key: "trigger",
 						variant: "outline",
-						size: "sm",
-						type: triggerProps.type,
-						"aria-haspopup": triggerProps["aria-haspopup"],
-						"aria-expanded": triggerProps["aria-expanded"],
-						"aria-label": triggerProps["aria-label"],
-						onClick: triggerProps.onClick,
+						size: "md",
+						icon: createElement(FolderMark, { UI: UI }),
+						className: "dce-scope-pill",
+						type: "button",
+						"aria-haspopup": "menu",
+						"aria-expanded": open ? "true" : "false",
+						"aria-label": t("scopeLabel"),
+						onClick: toggle,
 					},
 					scopeChildren,
 				);
@@ -507,15 +533,43 @@ window.__ModuleLoader__.load({
 					"button",
 					{
 						key: "trigger",
-						type: triggerProps.type,
+						type: "button",
 						className: "dce-scope",
-						"aria-haspopup": triggerProps["aria-haspopup"],
-						"aria-expanded": triggerProps["aria-expanded"],
-						"aria-label": triggerProps["aria-label"],
-						onClick: triggerProps.onClick,
+						"aria-haspopup": "menu",
+						"aria-expanded": open ? "true" : "false",
+						"aria-label": t("scopeLabel"),
+						onClick: toggle,
 					},
 					scopeChildren,
 				);
+			}
+			if (hostMenu !== null) {
+				return createElement(hostMenu, {
+					key: "scope",
+					open: open,
+					anchor: trigger,
+					items: workspaces.map(function (workspace) {
+						return {
+							id: workspace.root,
+							label: workspace.label || workspaceLabel(workspace.root),
+							icon: createElement(FolderMark, { UI: UI }),
+						};
+					}),
+					selectedId: selected,
+					onSelect: function (id) {
+						setOpen(false);
+						if (id !== selected) {
+							onSelect(id);
+						}
+					},
+					onClose: function () {
+						setOpen(false);
+					},
+					align: "start",
+					side: "bottom",
+					portal: true,
+					selection: "check",
+				});
 			}
 			var menu = null;
 			if (open) {
@@ -539,15 +593,12 @@ window.__ModuleLoader__.load({
 									}
 								},
 							},
-							// The registry allows duplicate titles, so the root
-							// disambiguates two workspaces that read the same.
-							createElement("span", { key: "label", className: "dce-menu-label" }, workspace.label || workspaceLabel(workspace.root)),
-							createElement("span", { key: "root", className: "dce-menu-path" }, workspace.root),
+							workspace.label || workspaceLabel(workspace.root),
 						);
 					}),
 				);
 			}
-			return createElement("div", { key: "scope", className: "dce-scope-wrap" }, trigger, menu);
+			return createElement("div", { key: "scope", className: "dce-scope-wrap", ref: wrapRef }, trigger, menu);
 		}
 
 		/** One workspace's memory store: stats, drift warnings, searchable file list with previews. */
@@ -669,6 +720,7 @@ window.__ModuleLoader__.load({
 									file: file,
 									now: now,
 									t: t,
+									UI: UI,
 									expanded: expandedFile === file.file,
 									preview: preview,
 									onToggle: function () {
@@ -896,7 +948,15 @@ window.__ModuleLoader__.load({
 			}
 			var UI = null;
 			if (primitives !== undefined && primitives !== null && typeof primitives.Button !== "undefined") {
-				UI = { Button: primitives.Button };
+				// The scope selector prefers the host's own Menu and folder icon;
+				// each stays optional so a host with only Button still gets the
+				// hand-rolled list and a plain trigger.
+				UI = {
+					Button: primitives.Button,
+					Menu: primitives.Menu,
+					Folder: primitives.IconFolderOpenOutlineRegular,
+					FileIcon: primitives.FileTypeIcon,
+				};
 			}
 			ctx.slots.inject(SLOT, function () {
 				return ctx.slots.register(

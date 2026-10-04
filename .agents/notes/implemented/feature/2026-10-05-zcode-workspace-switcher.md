@@ -12,13 +12,15 @@ v0.14.0 把卡片内容对齐 ZCode 记忆选项卡时，"每个工作区一次�
 
 根因是结构错配：ZCode 的项目记忆集中在数据根下（`getZCodeDataRootDir()/cli/memories/projects/<slug>-<16hex>/memory/`，`listProjectMemories()` 扫一遍目录即得全量目录），而本插件的记忆是**每工作区一份**（`<root>/.evolve/memory`），没有可扫的单一根，必须外接一份工作区目录。当初的需求只记成"工作区选择"四个字（[2026-10-05-zcode-memory-viewer-card.md](2026-10-05-zcode-memory-viewer-card.md)），没写目录源与形态，实现取了手边唯一现成的列表。
 
+v0.14.1 的桌面端验收又暴露两处：①**下拉点了没反应**——自绘列表在"打开菜单的那次 click"里挂 `document` click 监听，而 React 18 对离散事件同步 flush 副作用，同一次 click 冒泡到 `document` 就把列表关掉了（根因与正解见 `docs/FAQ.md` #8）；②**外观与 ZCode 仍有可见差距**——触发按钮用了 `sm` 尺寸且无前导图标，列表是自绘卡片而非宿主菜单面，文件行缺类型图标。
+
 ## Decision
 
 - **目录源接宿主注册表**：新增 `src/workspace-catalog.ts`；目录取 `ctx.workspaceRegistry.list()`（`@deepseek-ai/dsh-workspace` 的 durable 记录，stable registry order——与 GUI 的工作区选择器同源），条目 `{id, path(realpath), title}`。渲染名取 `title`，缺则取目录名。
 - **两级回退**：注册表服务不可用（老宿主、注入不到）时读 `$DSH_HOME/storages/workspace.json` 的 `tables.workspaces`；两者皆空时退回进程内 served 根。三源按 canonical path 去重，注册表条目在前。
 - **两个问题两个方法**：`known()` 是读围栏（这个根能否读），`list()` 是展示投影（此刻有记忆目录者）。列表按 ZCode 规则只列"有 `memory` 目录"的工作区（plain directory、拒 symlink）；围栏**不能**跟着这个过滤走——列表与读取之间被删掉的库必须降级成该条目的空态，而不是 404。
 - **服务每次请求解析**（`ctx.get("workspaceRegistry")`，取不到即回退），所以卡片开着时新建的工作区，点刷新就出现；这也让上一版修好的刷新按钮真正有意义。
-- **选择器改 ZCode 形**：`WorkspaceScopeMenu` 替换 chips——圆角触发按钮（primitives 的 `IconChevronsUpDownOutlineRegular` 作前导标记 + 当前工作区名 + chevron；老宿主降级为同主题裸 button）、`role="menu"` 面板、`role="menuitemradio"` + `aria-checked` 选项（第二行显示根路径——注册表允许重名标题）、选中/Escape/点击外部关闭。**只要有一个工作区就渲染**。
+- **选择器改 ZCode 形**：`WorkspaceScopeMenu` 替换 chips。列表用**宿主原生 `Menu` 原语**绘制（`open` / `onClose` / `onSelect` / `selectedId`，`anchor` 传触发元素，`portal: true`，`selection: "check"`——外点、Escape 与键盘行走由宿主处理，dshmarket 生产在用）；触发按钮走宿主 `Button`（`variant: outline`、`size: md`、`icon` 传 `IconFolderOpenOutlineRegular`、`dce-scope-pill` 圆角胶囊）。老宿主降级为自绘列表 + 同主题裸 button，该路径监听 `pointerdown` 并做容器包含判断——**不能用 `click`**，原因见 `docs/FAQ.md` #8。**只要有一个工作区就渲染**。
 - API 与文案：`/workspaces` 条目由 `{root,lastSeen}` 改为 `{root,label}`；空态文案改为"还没有任何工作区有记忆库"。
 
 ## Alternatives considered
@@ -36,4 +38,5 @@ v0.14.0 把卡片内容对齐 ZCode 记忆选项卡时，"每个工作区一次�
 - **只列有库的工作区**意味着从未用过记忆的工作区不出现在列表里（ZCode 同），空态文案已按此改写。
 - **围栏从"本进程服务过的根"放宽为"宿主注册表里的根"**：读取面仍是"工作区根 + 纯 `.md` 文件名 + 5 MiB 上限"，但确实比 v0.14 宽（放宽到的都是宿主自己已经记录的工作区）。这是本决定的主要安全代价，明确记在此处；[2026-10-04-plugin-management-card.md](2026-10-04-plugin-management-card.md) 的围栏表述已同步改写。
 - `known-workspaces.ts` 降级为最后回退源，不再是围栏本身（模块与测试保留）。
-- 测试 81 → 91（8 文件）：新增 `test/workspace-catalog.test.ts` 7 例（服务优先/文件回退/去重/坏数据不抛/symlink 库不算/空源）；`card-routes.test.ts` 的围栏与列表形状改写；`client-card.test.ts` 新增选择器 2 例（单工作区也渲染、点选落到 selection 状态）。
+- 测试 81 → 92（8 文件）：新增 `test/workspace-catalog.test.ts` 7 例（服务优先/文件回退/去重/坏数据不抛/symlink 库不算/空源）；`card-routes.test.ts` 的围栏与列表形状改写；`client-card.test.ts` 新增选择器 3 例（单工作区也渲染、自绘路径点选落到 selection 状态、宿主 `Menu` 路径的 items/selectedId/onSelect 与文件夹图标、文件行类型图标）。
+- 列表交给宿主 `Menu` 后，外点/Escape/键盘行为与设置页其余菜单一致；自绘路径只剩老宿主会走。

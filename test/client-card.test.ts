@@ -58,6 +58,7 @@ interface ElementLike {
 interface HookStore {
 	states: unknown[];
 	setters: Array<(value: unknown) => void>;
+	refs: unknown[];
 }
 
 /**
@@ -78,7 +79,7 @@ function makeHookReact() {
 		if (existing !== undefined) {
 			return existing;
 		}
-		const created: HookStore = { states: [], setters: [] };
+		const created: HookStore = { states: [], setters: [], refs: [] };
 		stores.set(key, created);
 		return created;
 	};
@@ -108,6 +109,14 @@ function makeHookReact() {
 				return [target.states[slot], target.setters[slot]];
 			},
 			useEffect: () => undefined,
+			useRef: (initial: unknown) => {
+				const target = store();
+				const slot = cursor++;
+				if (target.refs[slot] === undefined) {
+					target.refs[slot] = { current: initial };
+				}
+				return target.refs[slot];
+			},
 		},
 	};
 }
@@ -316,6 +325,15 @@ describe("client bundle", () => {
 		expect(code).toContain('role: "menu"');
 		expect(code).toContain('role: "menuitemradio"');
 		expect(code).not.toContain("dce-chip");
+		// The list is the host Menu primitive when available, and the old-host
+		// fallback closes on pointerdown outside its wrapper — never on a click
+		// listener, which the opening click itself would trigger.
+		expect(code).toContain("UI.Menu");
+		expect(code).toContain("dce-scope-pill");
+		expect(code).toContain("IconFolderOpenOutlineRegular");
+		expect(code).toContain("FileTypeIcon");
+		expect(code).toContain('addEventListener("pointerdown"');
+		expect(code).not.toContain('addEventListener("click"');
 		// Theme tokens still route through the alias layer.
 		expect(code).toContain("var(--dsw-alias-bg-layer-1");
 		expect(code).toContain("UI.Button");
@@ -376,8 +394,9 @@ describe("workspace scope selector", () => {
 	function renderBlockTree(
 		harness: ReturnType<typeof makeHookReact>,
 		entries: Array<Record<string, unknown>>,
+		modules: Record<string, unknown> = {},
 	): ElementLike {
-		const { exports } = loadBundle(harness.react);
+		const { exports } = loadBundle(harness.react, modules);
 		const { ctx, registrations } = makeCtx();
 		(exports.apply as (ctx: unknown) => void)(ctx);
 		const card = registrations[0].render({}) as ElementLike;
@@ -442,6 +461,79 @@ describe("workspace scope selector", () => {
 		harness.begin();
 		expect(harness.states[3]).toMatchObject({ root: "/ws/b", query: "", expandedFile: null });
 	});
+
+	it("draws the list with the host Menu primitive when the host provides it", () => {
+		const harness = makeHookReact();
+		const FakeMenu = function FakeMenu(): null {
+			return null;
+		};
+		const FakeButton = function FakeButton(): null {
+			return null;
+		};
+		const FakeFolder = function FakeFolder(): null {
+			return null;
+		};
+		const FakeFileIcon = function FakeFileIcon(): null {
+			return null;
+		};
+		const snapshot = {
+			exists: true,
+			fileCount: 1,
+			indexEntryCount: 1,
+			files: [{ file: "note.md", name: "note", description: "", type: "user", updatedAt: Date.now() }],
+			missingFiles: [],
+			unindexedFiles: [],
+			readError: null,
+		};
+		const tree = renderBlockTree(
+			harness,
+			[
+				{ root: "/ws/a", label: "A", snapshot: snapshot, error: null },
+				{ root: "/ws/b", label: "B", snapshot: snapshot, error: null },
+			],
+			{
+				"@deepseek-ai/dsh-client-ui-primitives": {
+					Button: FakeButton,
+					Menu: FakeMenu,
+					IconFolderOpenOutlineRegular: FakeFolder,
+					FileTypeIcon: FakeFileIcon,
+				},
+			},
+		);
+		const scope = findAllByName(tree, "WorkspaceScopeMenu")[0] as ElementLike;
+		harness.begin("menu");
+		const rendered = (scope.type as (props: unknown) => ElementLike)(scope.props);
+		// The list is the host's own menu surface (it owns outside-click and
+		// Escape), anchored on the host Button carrying the folder marker.
+		expect(rendered.type).toBe(FakeMenu);
+		const anchor = rendered.props?.anchor as ElementLike;
+		expect(anchor.type).toBe(FakeButton);
+		// The Button's leading icon resolves to the host's folder glyph.
+		const iconElement = anchor.props?.icon as ElementLike;
+		harness.begin("folder");
+		const icon = (iconElement.type as (props: unknown) => ElementLike)(iconElement.props);
+		expect(icon.type).toBe(FakeFolder);
+		expect(rendered.props?.selectedId).toBe("/ws/a");
+		expect(rendered.props?.items).toEqual([
+			{ id: "/ws/a", label: "A", icon: expect.anything() },
+			{ id: "/ws/b", label: "B", icon: expect.anything() },
+		]);
+		// Row activation is the host menu's own path and must switch scope.
+		const activate = rendered.props?.onSelect as ((id: string) => void) | undefined;
+		expect(typeof activate).toBe("function");
+		(activate as (id: string) => void)("/ws/b");
+		harness.begin();
+		expect(harness.states[3]).toMatchObject({ root: "/ws/b" });
+		// File rows open with the host's category tile, like ZCode's viewer.
+		const row = findAllByName(tree, "FileRow")[0] as ElementLike;
+		harness.begin("row");
+		const rowTree = (row.type as (props: unknown) => ElementLike)(row.props);
+		// FileRow renders an <li> whose first child array holds the row button.
+		const rowButton = ((rowTree.children as unknown[])[0] as ElementLike[])[0];
+		const cells = (rowButton.children as unknown[])[0] as ElementLike[];
+		expect(cells[0].props?.className).toBe("dce-file-icon");
+		expect(((cells[0].children as ElementLike[])[0] as ElementLike).type).toBe(FakeFileIcon);
+	});
 });
 
 describe("loadCardModel", () => {
@@ -454,7 +546,7 @@ describe("loadCardModel", () => {
 		const fetchImpl = (async (url: string | URL) => {
 			calls.push(String(url));
 			if (String(url).endsWith("/workspaces")) {
-				return jsonResponse({ workspaces: [{ root: "/ws/a", lastSeen: "t1" }] });
+				return jsonResponse({ workspaces: [{ root: "/ws/a", label: "A" }] });
 			}
 			return jsonResponse({ root: "/ws/a", exists: true, fileCount: 2 });
 		}) as unknown as typeof fetch;
