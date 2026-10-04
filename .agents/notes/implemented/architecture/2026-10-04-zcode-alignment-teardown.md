@@ -17,7 +17,7 @@ v0.11.0 发布后用户在实际使用中否定了整套"自进化"机制：模�
 - 单一 store：`<工作区根>/.evolve/memory/`（`MEMORY.md` 索引 + 一事一文 md，ZCode 同款格式与 frontmatter）。工作区内点目录读写全通、免审批，零 DSH 改动。
 - 开局注入：一个 system-prompt section（沿用 order 400 与 `memoryIndex.{enabled,guide,order,maxChars}` 配置）注入索引正文 + 记忆目录绝对路径 + when_to_save 指南；会话内冻结守 prompt cache；超预算截断并提示直接读目录。
 - 模型用原生 Read/Write/Edit 直接操作记忆文件并维护索引；无任何专用工具、无 /evolve 命令面、无层级（global/local/project 全删）、无治理（快照/版本/回滚/审批/审计全删）、无后台提取、无 benchmark、无技能物化与热挂载。
-- src 从 70 文件收缩到 3 文件（index / memory-section / memory-guide），测试从 58 文件收缩到 ~3。旧 `~/.dsh/evolve/` 原地冷备，插件不再读写。
+- src 从 70 文件收缩到 3 文件（index / memory-section / memory-guide），测试从 58 文件收缩到 ~3。旧 `~/.dsh/evolve/` 已整体删除（同日用户指示），插件不再读写。
 
 ## Alternatives considered
 
