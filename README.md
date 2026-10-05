@@ -7,9 +7,9 @@ English | [中文](README.zh.md)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-168%20passing-brightgreen)]()
-[![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
+[![Tests](https://img.shields.io/badge/tests-170%20passing-brightgreen)]()
+[![Coverage · statements](https://img.shields.io/badge/coverage_statements-97%25-brightgreen)]()
+[![Coverage · branches](https://img.shields.io/badge/coverage_branches-91%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
 
 A workspace-memory plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`): every memory lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace), the index is injected at session start, and the plugin's code is the literal **sole writer** — the model proposes, code gates and lands.
@@ -21,7 +21,7 @@ Reusable experience gathered in one session (user preferences, pitfalls, project
 ## How it works
 
 1. **Session-start injection** — the plugin registers a single system-prompt section: the workspace's memory index as a store query (hooks only, whole-line truncated over budget, ordered feedback > user > reference), the central-library path, and a three-line guide. The section is computed once per session and reused byte-for-byte, keeping the system prompt stable and the prompt cache warm; an empty store costs zero tokens.
-2. **Two tools, one writer** — `memory_write` (create/update/delete) is the explicit path for "remember …" / "forget …": every proposal passes the code gates (id shape, type enum, the feedback Why/How contract, secret screening carried over from v1, 64KB body cap) inside one transaction. `memory_read` fetches bodies and searches by keyword — the injected index carries hooks only. On hosts without the tools service the plugin degrades to "tell the user" phrasing and stays functional.
+2. **Two tools, one writer** — `memory_write` (create/update/delete) is the explicit path for "remember …" / "forget …": every proposal passes the code gates (id shape, type enum, the feedback Why/How contract, secret screening carried over from v1, 64KB body cap) inside one transaction. `memory_read` fetches bodies by id and searches by keyword — whitespace-separated terms are AND-combined, with literal substring matching for short terms and whenever the trigram index misses; the injected index carries hooks only. On hosts without the tools service the plugin degrades to "tell the user" phrasing and stays functional.
 3. **Proposal-based extraction** — the only background automation, audited in the `extraction_log`: every `agent/turn-stopping` rearms an idle debounce (default 10 min, `memoryIndex.debounceMin`, single-flight with burst coalescing; `compaction/start` and session close flush). A run reads the session increment since its cursor, feeds FTS-similar existing memories to one LLM call, and the model's structured proposal lands through the same gates; failures and rejections never advance the cursor. Internal agents, empty increments, turns without real user prose, and turns that already carried an explicit `memory_write` are mechanically skipped — and every skip is ledgered.
 4. **Rollback is a ledger, not a mechanism** — every mutation lands an `extraction_log` row with full before/after snapshots; undo means rewriting the `before` values. A hygiene pass rides on every applied run: orphan FTS rows are dropped and secret-bearing rows are quarantined (hidden, never deleted). The read-only card surfaces quarantine anomalies.
 5. **Read-only card** — mounted on the plugin's page in the official plugin manager (the `plugins.bundle.config` slot; hosts without it silently degrade to no card), shaped like the market's own settings card and aligned with ZCode's Settings → Memory viewer: a dropdown scope selector over the store's workspace partitions, a search box, per-entry relative updated times, click-to-preview bodies (5 MiB cap), and patrol warnings. Localized through the host's `locale/*.json` metadata channel; host theme tokens, the `Button` primitive, and zh/en copy that tracks the DSH language. The card is a request-time projection of the database and has no edit path.
@@ -71,10 +71,11 @@ Profile patch example:
 ## Development
 
 ```bash
-pnpm install && pnpm build   # deps + tsc -> lib/
-pnpm test                    # vitest (168 tests)
+pnpm install && pnpm build   # deps + clean build -> lib/
+pnpm test                    # vitest (170 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds
 pnpm lint                    # oxlint src test client
+pnpm check:pack              # published-artifact consistency (also runs on prepack)
 ```
 
 Layout:

@@ -1,6 +1,6 @@
 # dsh-continual-evolve — 项目规则
 
-DeepSeek Harness 的工作区记忆插件：每个工作区一个纯 markdown 记忆库（`<workspace>/.evolve/memory/`），会话开局注入索引，模型用原生文件读写工具直接使用。TypeScript npm 库，以 cordis 插件形态挂载（`cordis.patch.yml`）。
+DeepSeek Harness 的工作区记忆插件：全部记忆住中央 SQLite 库（`~/.dsh/evolve/memory.db`，按工作区路径行分区），会话开局注入索引，插件代码是字面唯一写者。TypeScript npm 库，以 cordis 插件形态挂载（`cordis.patch.yml`）。
 
 ## 协作模式（AI + 人）
 
@@ -46,6 +46,7 @@ web 检索优先 anysearch 纵向面（zone/tag/params 富参数）；GitHub 归
 ```sh
 pnpm typecheck && pnpm lint && pnpm test   # TS 工程链（vitest + oxlint）
 pnpm check:docs                            # 文档门禁（tsx run-gates：adr/预算/链接/治理）
+pnpm check:pack                            # 发布产物一致性（prepack 与 CI 强制）
 scripts/change-scope.sh [<base> <head>]    # 变更范围（评审/push 前置）
 ```
 
