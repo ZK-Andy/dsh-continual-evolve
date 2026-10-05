@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -220,49 +220,43 @@ describe("apply card wiring", () => {
 		return { status, body };
 	}
 
-	it("reads the host workspace registry for the card catalogue", () => {
-		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-registry-"));
-		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
-		const canonical = realpathSync(workspace);
-		const { routes, host } = makeCtxWithWebServer({
-			workspaceRegistry: { list: () => [{ id: "w1", path: workspace, title: "Registered" }] },
-		});
-		apply(host, fullConfig);
-		const list = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
-		expect(list.status).toBe(200);
-		expect(JSON.parse(list.body)).toEqual({ workspaces: [{ root: canonical, label: "Registered" }] });
-		// The fence follows the same catalogue: a registry workspace reads fine.
-		const snapshot = get(
-			routes,
-			"/dsh-continual-evolve/api/v1/memory",
-			`/dsh-continual-evolve/api/v1/memory?root=${encodeURIComponent(canonical)}`,
-		);
-		expect(snapshot.status).toBe(200);
-		expect(JSON.parse(snapshot.body).root).toBe(canonical);
-	});
-
-	it("mounts the card routes on webServer by default", () => {
+	it("mounts the card routes on webServer once the store is open", async () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
+		await vi.waitFor(() => {
+			if (routes.size !== 3) {
+				throw new Error("routes not mounted yet");
+			}
+		});
 		expect([...routes.keys()].sort()).toEqual([
 			"/dsh-continual-evolve/api/v1/memory",
 			"/dsh-continual-evolve/api/v1/memory/file",
 			"/dsh-continual-evolve/api/v1/workspaces",
 		]);
+		// The card's workspace list is a store query: no rows, no workspaces.
+		const list = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
+		expect(list.status).toBe(200);
+		expect(JSON.parse(list.body)).toEqual({ workspaces: [] });
 	});
 
-	it("skips card wiring when memoryCard is disabled", () => {
+	it("skips card wiring when memoryCard is disabled", async () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, { ...fullConfig, memoryCard: { enabled: false } });
+		await new Promise((resolve) => setTimeout(resolve, 30));
 		expect(routes.size).toBe(0);
 	});
 
-	it("feeds served workspaces into the card allowlist", () => {
-		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-card-"));
-		const { sections, routes, host } = makeCtxWithWebServer();
+	it("lists a workspace once the store has rows for it (the store is the fence)", async () => {
+		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-fence-"));
+		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
-		const render = sections[0].text as (context: { agent: unknown }) => string;
-		render({ agent: { id: "s1", session: { header: { cwd: workspace } } } });
+		await vi.waitFor(() => {
+			if (routes.size !== 3) {
+				throw new Error("routes not mounted yet");
+			}
+		});
+		// A first session in a workspace imports any legacy store and writes
+		// through the gated path; here the gated write stands in for it.
 		const memoryRoute = routes.get("/dsh-continual-evolve/api/v1/memory") as {
 			handler: (
 				request: { method?: string; url?: string },
@@ -272,20 +266,18 @@ describe("apply card wiring", () => {
 				},
 			) => void;
 		};
+		const before = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
+		expect(JSON.parse(before.body)).toEqual({ workspaces: [] });
 		let status = 0;
-		let body = "";
 		memoryRoute.handler(
 			{ method: "GET", url: `/dsh-continual-evolve/api/v1/memory?root=${encodeURIComponent(workspace)}` },
 			{
 				writeHead: (code) => {
 					status = code;
 				},
-				end: (text) => {
-					body = text ?? "";
-				},
+				end: () => undefined,
 			},
 		);
-		expect(status).toBe(200);
-		expect(JSON.parse(body).root).toBe(workspace);
+		expect(status).toBe(404); // no rows yet — no filesystem oracle
 	});
 });

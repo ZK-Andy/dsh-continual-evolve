@@ -85,25 +85,24 @@ window.__ModuleLoader__.load({
 
 		var zh = {
 			title: "工作区记忆",
-			desc: "各工作区 .evolve/memory/ 的只读投影。",
+			desc: "中央记忆库（~/.dsh/evolve/memory.db）的只读投影。",
 			refresh: "刷新",
-			hint: "事实源是各工作区 .evolve/memory/ 下的 markdown 文件——模型原生读写；本卡片只展示，编辑请直接改文件。",
+			hint: "事实源是中央记忆库——模型经 memory_write 提案、代码校验后落库（代码是唯一写者）；本卡片只展示。",
 			loading: "读取中…",
 			loadFailed: "卡片数据加载失败：",
-			empty: "还没有任何工作区有记忆库——在某个工作区开一次会话后回来刷新。",
-			absent: "该工作区尚无记忆库（开一次会话自动创建）。",
+			empty: "还没有任何工作区写过记忆——在某个工作区正常使用后回来刷新。",
+			absent: "该工作区还没有记忆。",
 			readFailed: "记忆库读取失败：",
-			stats: "{files} 条记忆 · 索引 {index} 行",
+			stats: "{files} 条记忆",
 			filesHeading: "文件",
 			scopeLabel: "选择工作区",
-			searchPlaceholder: "搜索记忆文件…",
+			searchPlaceholder: "搜索记忆…",
 			searchEmpty: "没有匹配的记忆文件。",
-			missing: "索引失联（索引引用但文件已删）：",
-			unindexed: "未入索引（文件存在但索引没有行）：",
-			readError: "读取失败：",
-			previewLoading: "正在加载文件…",
+			quarantined: "巡检隔离（疑似密钥泄漏等异常，已隐藏）：",
+						readError: "读取失败：",
+			previewLoading: "正在加载记忆…",
 			previewTooLarge: "该记忆文件超过 5 MiB 预览上限。",
-			previewDeleted: "该记忆文件已被删除，请刷新文件列表。",
+			previewDeleted: "该记忆已被删除，请刷新列表。",
 			previewFailed: "内容读取失败：",
 			justNow: "刚刚",
 			minutesAgo: "{count} 分钟前",
@@ -113,25 +112,24 @@ window.__ModuleLoader__.load({
 		};
 		var en = {
 			title: "Workspace Memory",
-			desc: "Read-only projection of each workspace's .evolve/memory/.",
+			desc: "Read-only projection of the central memory store (~/.dsh/evolve/memory.db).",
 			refresh: "Refresh",
-			hint: "The source of truth is the markdown files under each workspace's .evolve/memory/ — read and written by the model; this card only displays them, edit the files directly.",
+			hint: "The source of truth is the central memory store — the model proposes through memory_write, code validates and lands it (code is the sole writer); this card only displays it.",
 			loading: "Loading…",
 			loadFailed: "Failed to load card data: ",
-			empty: "No workspace has a memory store yet — open a session in a workspace, then come back and refresh.",
-			absent: "No memory store in this workspace yet (one is created when you open a session).",
+			empty: "No workspace has memories yet — use a workspace normally, then come back and refresh.",
+			absent: "No memories in this workspace yet.",
 			readFailed: "Failed to read the memory store: ",
-			stats: "{files} memories · {index} index rows",
+			stats: "{files} memories",
 			filesHeading: "Files",
 			scopeLabel: "Choose workspace",
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
-			missing: "Dangling index (indexed but deleted): ",
-			unindexed: "Unindexed (on disk, missing from the index): ",
-			readError: "Read failed: ",
-			previewLoading: "Loading file…",
+			quarantined: "Quarantined by patrol (suspected secrets, hidden): ",
+						readError: "Read failed: ",
+			previewLoading: "Loading memory…",
 			previewTooLarge: "This memory file exceeds the 5 MiB preview limit.",
-			previewDeleted: "This memory file has been deleted — refresh the file list.",
+			previewDeleted: "This memory has been deleted — refresh the list.",
 			previewFailed: "Failed to read the content: ",
 			justNow: "Just now",
 			minutesAgo: "{count} min ago",
@@ -231,11 +229,11 @@ window.__ModuleLoader__.load({
 		 *
 		 * @param {typeof fetch} fetchImpl - injectable for tests.
 		 * @param {string} root - known workspace root.
-		 * @param {string} file - plain .md file name inside that memory store.
+		 * @param {string} id - the memory id inside that workspace's partition.
 		 * @returns {Promise<{status: "ready"|"deleted"|"tooLarge"|"failed", content: string, message: string}>}
 		 */
-		async function loadFileContent(fetchImpl, root, file) {
-			var url = API_ROOT + "/memory/file?root=" + encodeURIComponent(root) + "&file=" + encodeURIComponent(file);
+		async function loadFileContent(fetchImpl, root, id) {
+			var url = API_ROOT + "/memory/file?root=" + encodeURIComponent(root) + "&id=" + encodeURIComponent(id);
 			try {
 				var response = await fetchImpl(url);
 				if (response.ok) {
@@ -379,11 +377,11 @@ window.__ModuleLoader__.load({
 					createElement(
 						"span",
 						{ key: "icon", className: "dce-file-icon" },
-						createElement(UI.FileIcon, { path: file.file, size: 16 }),
+						createElement(UI.FileIcon, { path: file.id + ".md", size: 16 }),
 					),
 				);
 			}
-			rowChildren.push(createElement("span", { key: "name", className: "dce-file-name" }, file.file));
+			rowChildren.push(createElement("span", { key: "name", className: "dce-file-name" }, file.title));
 			var time = formatRelative(file.updatedAt, now, t);
 			if (time !== "") {
 				rowChildren.push(createElement("span", { key: "time", className: "dce-file-time" }, time));
@@ -403,7 +401,7 @@ window.__ModuleLoader__.load({
 			];
 			if (expanded) {
 				var body = null;
-				if (preview === null || preview.file !== file.file) {
+				if (preview === null || preview.file !== file.id) {
 					body = createElement("div", { className: "dce-hint" }, t("previewLoading"));
 				} else if (preview.status === "loading") {
 					body = createElement("div", { className: "dce-hint" }, t("previewLoading"));
@@ -651,7 +649,7 @@ window.__ModuleLoader__.load({
 					if (normalizedQuery.length === 0) {
 						return true;
 					}
-					return [file.file, file.name, file.description, file.type]
+					return [file.id, file.title, file.description, file.type]
 						.filter(function (value) {
 							return typeof value === "string";
 						})
@@ -663,21 +661,12 @@ window.__ModuleLoader__.load({
 					createElement(
 						"div",
 						{ key: "stats", className: "dce-stats" },
-						t("stats", { files: snapshot.fileCount, index: snapshot.indexEntryCount }),
+						t("stats", { files: snapshot.fileCount }),
 					),
 				];
-				if (snapshot.missingFiles.length > 0) {
+				if (snapshot.quarantined.length > 0) {
 					parts.push(
-						createElement("div", { key: "missing", className: "dce-warn" }, t("missing") + snapshot.missingFiles.join("、")),
-					);
-				}
-				if (snapshot.unindexedFiles.length > 0) {
-					parts.push(
-						createElement(
-							"div",
-							{ key: "unindexed", className: "dce-warn" },
-							t("unindexed") + snapshot.unindexedFiles.join("、"),
-						),
+						createElement("div", { key: "quarantined", className: "dce-warn" }, t("quarantined") + snapshot.quarantined.map(function (entry) { return entry.id; }).join("、")),
 					);
 				}
 				parts.push(
@@ -716,15 +705,15 @@ window.__ModuleLoader__.load({
 							{ key: "files", className: "dce-list" },
 							files.map(function (file) {
 								return createElement(FileRow, {
-									key: file.file,
+									key: file.id,
 									file: file,
 									now: now,
 									t: t,
 									UI: UI,
-									expanded: expandedFile === file.file,
+									expanded: expandedFile === file.id,
 									preview: preview,
 									onToggle: function () {
-										onToggleFile(file.file);
+										onToggleFile(file.id);
 									},
 								});
 							}),

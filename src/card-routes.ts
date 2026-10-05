@@ -3,18 +3,16 @@
  *
  * Mounted through the host's `webServer` service (same registration shape
  * dshmarket uses: `kind: "exact"` routes on the profile's web server), the
- * three endpoints are GET-only projections: the workspace catalogue, the
- * memory snapshot for a known root, and one memory file's body for the card's
- * content preview. The catalogue IS the security fence — the memory endpoints
- * resolve their `root` parameter only against workspaces the host's registry
- * (or, on hosts without one, a root this process has served) knows about, and
- * the file endpoint additionally accepts only plain .md entries of that
- * workspace's memory directory, so the API cannot read arbitrary paths.
- * Handlers are synchronous and never throw past the response.
+ * three endpoints are GET-only projections of the central SQLite store: the
+ * workspace list (active partitions whose directory still exists), the
+ * memory snapshot for a known workspace, and one record's body by id. The
+ * store itself is the security fence — a `root` parameter only resolves
+ * when the database has rows for it, so the API cannot probe the
+ * filesystem; the content endpoint takes an id, never a path. Handlers are
+ * synchronous and never throw past the response.
  */
-import { resolve } from "node:path";
-import { memoryFileContent, memorySnapshot } from "./memory-snapshot.js";
-import type { CatalogEntry, WorkspaceCatalog } from "./workspace-catalog.js";
+import { memoryEntryContent, listCardWorkspaces, memorySnapshot } from "./memory-snapshot.js";
+import type { MemoryStore } from "./store.js";
 
 /** URL prefix of the card API (kind-exact routes registered under it). */
 export const CARD_API_WORKSPACES_PATH = "/dsh-continual-evolve/api/v1/workspaces";
@@ -54,13 +52,18 @@ function isGet(request: CardRequest): boolean {
 	return (request.method ?? "GET") === "GET";
 }
 
+/** The card's read fence: a root only resolves when the store has rows for it. */
+function isKnownRoot(store: MemoryStore, root: string): boolean {
+	return listCardWorkspaces(store).some((workspace) => workspace.root === root);
+}
+
 /**
- * Register the two card routes and return a disposer that removes them.
+ * Register the card routes and return a disposer that removes them.
  * Registration return values are passed through untouched: whatever disposer
  * shape the host hands back (or none, as on some host versions), the
  * disposer calls only the functions among them.
  */
-export function mountCardRoutes(webServer: CardWebServer, catalog: WorkspaceCatalog): () => void {
+export function mountCardRoutes(webServer: CardWebServer, store: MemoryStore): () => void {
 	const disposers: unknown[] = [];
 	disposers.push(
 		webServer.register({
@@ -72,9 +75,7 @@ export function mountCardRoutes(webServer: CardWebServer, catalog: WorkspaceCata
 					response.end();
 					return;
 				}
-				// The listed set is the display projection (workspaces with a
-				// memory directory); the read fence is `known` below.
-				sendJson(response, 200, { workspaces: catalog.list() });
+				sendJson(response, 200, { workspaces: listCardWorkspaces(store) });
 			},
 		}),
 	);
@@ -93,14 +94,13 @@ export function mountCardRoutes(webServer: CardWebServer, catalog: WorkspaceCata
 					sendJson(response, 400, { error: "root query parameter is required and must be an absolute path" });
 					return;
 				}
-				const known = knownEntryOf(catalog, root);
-				if (known === undefined) {
-					// The catalogue answers 404 without distinguishing "not a
-					// workspace here" from "wrong path": no filesystem oracle.
+				if (!isKnownRoot(store, root)) {
+					// The store answers 404 without distinguishing "no rows" from
+					// "wrong path": no filesystem oracle.
 					sendJson(response, 404, { error: "unknown workspace root" });
 					return;
 				}
-				sendJson(response, 200, memorySnapshot(known.root));
+				sendJson(response, 200, memorySnapshot(store, root));
 			},
 		}),
 	);
@@ -119,37 +119,32 @@ export function mountCardRoutes(webServer: CardWebServer, catalog: WorkspaceCata
 					sendJson(response, 400, { error: "root query parameter is required and must be an absolute path" });
 					return;
 				}
-				const file = fileParamOf(request);
-				if (file === null) {
-					sendJson(response, 400, { error: "file query parameter is required" });
+				const id = idParamOf(request);
+				if (id === null) {
+					sendJson(response, 400, { error: "id query parameter is required" });
 					return;
 				}
-				const known = knownEntryOf(catalog, root);
-				if (known === undefined) {
-					// Same fence as the snapshot route: 404 without distinguishing
-					// "not a workspace here" from "wrong path".
+				if (!isKnownRoot(store, root)) {
+					// Same fence as the snapshot route.
 					sendJson(response, 404, { error: "unknown workspace root" });
 					return;
 				}
-				const content = memoryFileContent(known.root, file);
+				const content = memoryEntryContent(store, root, id);
 				if (!content.ok) {
-					// The fence reasons stay indistinguishable from absence in status
-					// terms only where safe: "outside" answers 400 (a client bug),
-					// absence 404, oversized 413 — never a body leak either way.
-					if (content.reason === "outside") {
-						sendJson(response, 400, { error: "file must be a plain .md entry of the memory directory" });
-					} else if (content.reason === "too-large") {
-						sendJson(response, 413, { error: "memory file exceeds the 5 MiB preview limit" });
+					// Absence answers 404; the oversized case is theoretically
+					// unreachable (bodies are schema-capped at 64KB) but keeps its
+					// own status for the day the preview limit shrinks.
+					if (content.reason === "too-large") {
+						sendJson(response, 413, { error: "memory body exceeds the 5 MiB preview limit" });
 					} else {
-						sendJson(response, 404, { error: "memory file not found" });
+						sendJson(response, 404, { error: "memory not found" });
 					}
 					return;
 				}
 				sendJson(response, 200, {
-					file: content.file,
+					id: content.id,
 					content: content.content,
-					mtimeMs: content.mtimeMs,
-					changed: content.changed,
+					updatedAtMs: content.updatedAtMs,
 				});
 			},
 		}),
@@ -161,12 +156,6 @@ export function mountCardRoutes(webServer: CardWebServer, catalog: WorkspaceCata
 			}
 		}
 	};
-}
-
-/** The catalogued workspace a `root` query parameter resolves to, if any. */
-function knownEntryOf(catalog: WorkspaceCatalog, root: string): CatalogEntry | undefined {
-	const target = resolve(root);
-	return catalog.known().find((workspace) => workspace.root === target);
 }
 
 /** The decoded `root` query parameter, or null when absent/relative. */
@@ -185,15 +174,15 @@ function rootParamOf(request: CardRequest): string | null {
 	}
 }
 
-/** The decoded `file` query parameter, or null when absent. */
-function fileParamOf(request: CardRequest): string | null {
+/** The decoded `id` query parameter, or null when absent. */
+function idParamOf(request: CardRequest): string | null {
 	try {
 		const url = new URL(request.url ?? "/", "http://dsh-card.invalid");
-		const file = url.searchParams.get("file");
-		if (file === null || file.trim().length === 0) {
+		const id = url.searchParams.get("id");
+		if (id === null || id.trim().length === 0) {
 			return null;
 		}
-		return file;
+		return id;
 	} catch (error) {
 		void error;
 		return null;

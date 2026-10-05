@@ -1,160 +1,189 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-	MEMORY_FILE_PREVIEW_LIMIT,
-	memoryFileContent,
-	memorySnapshot,
-	parseMemoryFrontmatter,
-	parseMemoryIndexRows,
-} from "../src/memory-snapshot.js";
+import { importWorkspaceMd } from "../src/import-md.js";
+import { listCardWorkspaces, memoryEntryContent, memorySnapshot } from "../src/memory-snapshot.js";
+import { openMemoryStore, MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore } from "../src/store.js";
 
+let store: MemoryStore;
 let workspace = "";
 
-beforeEach(() => {
+beforeEach(async () => {
+	store = await openMemoryStore(join(mkdtempSync(join(tmpdir(), "evolve-snapshot-db-")), "memory.db"));
 	workspace = mkdtempSync(join(tmpdir(), "evolve-snapshot-"));
 });
 
 afterEach(() => {
+	store.close();
 	rmSync(workspace, { recursive: true, force: true });
 });
 
-function memoryDir(): string {
-	return join(workspace, ".evolve", "memory");
-}
-
-function writeFile(relativePath: string, content: string): void {
-	mkdirSync(join(memoryDir(), relativePath, ".."), { recursive: true });
-	writeFileSync(join(memoryDir(), relativePath), content, "utf8");
-}
-
-describe("parseMemoryIndexRows", () => {
-	it("parses index rows; comments, headings, and non-md links are ignored", () => {
-		const index = [
-			"# 记忆索引",
-			"<!-- 一行一条 -->",
-			"",
-			"- [DSH 配置位置](dsh-config.md) — 安装版配置在 ~/.dsh",
-			"  - [嵌套行](nested.md) — 缩进行经 trim 后同样合法（md 索引本就允许）",
-			"- [看板](https://example.com) — 非 md 链接忽略",
-			"- 纯文本行忽略",
-		].join("\n");
-		const rows = parseMemoryIndexRows(index);
-		expect(rows).toEqual([
-			{ title: "DSH 配置位置", file: "dsh-config.md" },
-			{ title: "嵌套行", file: "nested.md" },
+function seed(id: string = "fedora-env", type: "user" | "feedback" | "reference" = "user", body: string = "Fedora 44"): boolean {
+	const outcomes = store
+		.applyProposals({ workspaceId: workspace, trigger: "explicit" }, [
+			{
+				action: "create",
+				id,
+				type,
+				title: `${id} 标题`,
+				description: `${id} 的钩子`,
+				body: type === "feedback" ? `${body}\n**Why:** 因\n**How to apply:** 用` : body,
+			},
 		]);
-	});
-});
-
-describe("parseMemoryFrontmatter", () => {
-	it("reads name/description/type and strips quotes", () => {
-		const text = `---\nname: "dsh-config"\ndescription: '配置位置'\ntype: reference\n---\n\n正文`;
-		expect(parseMemoryFrontmatter(text)).toEqual({
-			name: "dsh-config",
-			description: "配置位置",
-			type: "reference",
-		});
-	});
-
-	it("returns empty fields for body-only or unterminated frontmatter", () => {
-		expect(parseMemoryFrontmatter("只有正文")).toEqual({ name: "", description: "", type: "" });
-		expect(parseMemoryFrontmatter("---\nname: x\n没有收尾")).toEqual({
-			name: "",
-			description: "",
-			type: "",
-		});
-	});
-});
+	return outcomes[0]?.ok === true;
+}
 
 describe("memorySnapshot", () => {
-	it("reports a missing store as absent without bootstrap", () => {
-		const snapshot = memorySnapshot(workspace);
+	it("reports the empty state for a workspace without rows", () => {
+		const snapshot = memorySnapshot(store, workspace);
 		expect(snapshot.exists).toBe(false);
-		expect(snapshot.fileCount).toBe(0);
 		expect(snapshot.readError).toBeNull();
-		expect(snapshot.memoryDir).toBe(join(workspace, ".evolve", "memory"));
-	});
-
-	it("projects a populated store: counts, frontmatter, no drift", () => {
-		writeFile(
-			"MEMORY.md",
-			"# 记忆索引\n\n- [配置](dsh-config.md) — 安装版配置位置\n- [偏好](user-pref.md) — 用户偏好\n",
-		);
-		writeFile("dsh-config.md", "---\nname: dsh-config\ndescription: 配置位置\ntype: reference\n---\n正文");
-		writeFile("user-pref.md", "---\nname: user-pref\ndescription: 用户偏好\ntype: user\n---\n正文");
-		const snapshot = memorySnapshot(workspace);
-		expect(snapshot.exists).toBe(true);
-		expect(snapshot.fileCount).toBe(2);
-		expect(snapshot.indexEntryCount).toBe(2);
-		expect(snapshot.files).toEqual([
-			{ file: "dsh-config.md", name: "dsh-config", description: "配置位置", type: "reference", updatedAt: expect.any(Number) },
-			{ file: "user-pref.md", name: "user-pref", description: "用户偏好", type: "user", updatedAt: expect.any(Number) },
-		]);
-		expect(snapshot.files[0].updatedAt).toBeGreaterThan(0);
-		expect(snapshot.missingFiles).toEqual([]);
-		expect(snapshot.unindexedFiles).toEqual([]);
-	});
-
-	it("reports drift in both directions: missing files and unindexed files", () => {
-		writeFile("MEMORY.md", "- [失联](gone.md) — 索引引用但文件已删\n");
-		writeFile("orphan.md", "没有索引行的文件");
-		const snapshot = memorySnapshot(workspace);
-		expect(snapshot.missingFiles).toEqual(["gone.md"]);
-		expect(snapshot.unindexedFiles).toEqual(["orphan.md"]);
-	});
-
-	it("degrades a read failure to readError instead of throwing", () => {
-		// MEMORY.md as a directory: existsSync passes, readFileSync throws.
-		mkdirSync(join(memoryDir(), "MEMORY.md"), { recursive: true });
-		const snapshot = memorySnapshot(workspace);
-		expect(snapshot.exists).toBe(true);
-		expect(snapshot.readError).not.toBeNull();
+		expect(snapshot.files).toEqual([]);
 		expect(snapshot.fileCount).toBe(0);
+	});
+
+	it("projects rows as card entries with millisecond timestamps", () => {
+		expect(seed("fedora-env", "user", "Fedora 44")).toBe(true);
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.exists).toBe(true);
+		expect(snapshot.fileCount).toBe(1);
+		const file = snapshot.files[0]!;
+		expect(file).toMatchObject({ id: "fedora-env", title: "fedora-env 标题", type: "user", status: "active" });
+		expect(file.updatedAt).toBeGreaterThan(0);
+	});
+
+	it("renders nothing when the store query throws (the card must observe, never break)", () => {
+		const hostile = new Proxy({}, {
+			get(_target, prop) {
+				if (prop === "listAll") {
+					throw new Error("boom");
+				}
+				return undefined;
+			},
+		}) as unknown as MemoryStore;
+		const snapshot = memorySnapshot(hostile, workspace);
+		expect(snapshot.exists).toBe(true);
+		expect(snapshot.readError).toContain("boom");
+	});
+
+	it("tolerates a corrupt or mismatched patrol state with a generic reason", () => {
+		expect(seed("leak", "reference", "普通正文")).toBe(true);
+		const raw = new DatabaseSync(store.path);
+		raw
+			.prepare(
+				"INSERT INTO memories (workspace_id, id, type, title, description, body, status, created_at, updated_at) VALUES (?, 'smug', 'user', 't', 'd', 'b', 'quarantined', 't', 't')",
+			)
+			.run(workspace);
+		raw.close();
+		// Corrupt JSON in the state row.
+		store.setState("", "patrol:last", "{not json");
+		let snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.lastPatrol).toBeNull();
+		expect(snapshot.quarantined[0]?.reason).toContain("巡检异常");
+		// Valid JSON whose quarantined list names a different id.
+		store.setState("", "patrol:last", JSON.stringify({ ts: "t", orphanFtsRows: 0, quarantined: [{ id: "other", reason: "x" }] }));
+		snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.lastPatrol).toEqual({ ts: "t", orphanFtsRows: 0, quarantined: 1 });
+		expect(snapshot.quarantined[0]?.reason).toContain("巡检异常");
+	});
+
+	it("excludes quarantined rows from the list but surfaces them as patrol anomalies", () => {
+		expect(seed("clean", "user", "干净正文")).toBe(true);
+		expect(seed("leak", "reference", "普通正文")).toBe(true);
+		// A second connection smuggles a row below the write gates (defence in
+		// depth); patrol must catch it.
+		const raw = new DatabaseSync(store.path);
+		raw
+			.prepare(
+				"INSERT INTO memories (workspace_id, id, type, title, description, body, status, created_at, updated_at) VALUES (?, 'smug', 'user', 't', 'd', ?, 'active', 't', 't')",
+			)
+			.run(workspace, "apiKey = '0123456789abcdefghij'");
+		raw.close();
+		store.patrol();
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.files.map((f) => f.id).sort()).toEqual(["clean", "leak"]);
+		expect(snapshot.quarantined.map((q) => q.id)).toEqual(["smug"]);
+		expect(snapshot.quarantined[0]?.reason).toContain("credential");
+		expect(snapshot.lastPatrol).not.toBeNull();
 	});
 });
 
-describe("memoryFileContent", () => {
-	it("reads a plain memory file with its mtime and unchanged flag", () => {
-		writeFile("note.md", "正文内容");
-		const result = memoryFileContent(workspace, "note.md");
-		expect(result).toEqual({
-			ok: true,
-			file: "note.md",
-			content: "正文内容",
-			mtimeMs: statSync(join(memoryDir(), "note.md")).mtimeMs,
-			changed: false,
-		});
+describe("memoryEntryContent", () => {
+	it("serves the body by id with its update time", () => {
+		expect(seed("note", "reference", "正文内容")).toBe(true);
+		const content = memoryEntryContent(store, workspace, "note");
+		expect(content).toMatchObject({ ok: true, id: "note", content: "正文内容" });
+		expect(content.ok && content.updatedAtMs).toBeGreaterThan(0);
 	});
 
-	it("serves the index file too: the preview shows MEMORY.md as well", () => {
-		writeFile("MEMORY.md", "- [配置](note.md) — 索引行\n");
-		const result = memoryFileContent(workspace, "MEMORY.md");
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.content).toContain("[配置](note.md)");
-		}
+	it("answers absent for unknown ids and empty requests", () => {
+		expect(memoryEntryContent(store, workspace, "ghost")).toEqual({ ok: false, reason: "absent" });
+		expect(memoryEntryContent(store, workspace, "")).toEqual({ ok: false, reason: "absent" });
 	});
 
-	it("rejects traversal and non-plain names without touching the filesystem", () => {
-		writeFile("note.md", "正文内容");
-		for (const bad of ["../note.md", "sub/note.md", "a\\note.md", "note.txt", ".", "", "note.md/.."]) {
-			expect(memoryFileContent(workspace, bad)).toEqual({ ok: false, reason: "outside" });
-		}
-		// A directory inside the memory dir must not become a read target either.
-		mkdirSync(join(memoryDir(), "nested.md"), { recursive: true });
-		expect(memoryFileContent(workspace, "nested.md")).toEqual({ ok: false, reason: "absent" });
+	it("degrades a failing store read to absent and tolerates a garbage timestamp", () => {
+		const hostile = new Proxy({}, {
+			get(_target, prop) {
+				if (prop === "get") {
+					throw new Error("boom");
+				}
+				return undefined;
+			},
+		}) as unknown as MemoryStore;
+		expect(memoryEntryContent(hostile, workspace, "x")).toEqual({ ok: false, reason: "absent" });
+		const raw = new DatabaseSync(store.path);
+		raw
+			.prepare(
+				"INSERT INTO memories (workspace_id, id, type, title, description, body, status, created_at, updated_at) VALUES (?, 'odd', 'user', 't', 'd', 'b', 'active', 'garbage', 'garbage')",
+			)
+			.run(workspace);
+		raw.close();
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.files[0]?.updatedAt).toBe(0);
+	});
+});
+
+describe("listCardWorkspaces", () => {
+	it("lists partitions with surviving directories and hides vanished ones", () => {
+		expect(listCardWorkspaces(store)).toEqual([]);
+		expect(seed()).toBe(true);
+		expect(listCardWorkspaces(store)).toEqual([{ root: workspace, label: workspace.split("/").pop() }]);
+		const vanished = mkdtempSync(join(tmpdir(), "evolve-snapshot-vanished-"));
+		store.applyProposals({ workspaceId: vanished, trigger: "explicit" }, [
+			{ action: "create", type: "user", title: "t", description: "d", body: "b" },
+		]);
+		rmSync(vanished, { recursive: true, force: true });
+		expect(listCardWorkspaces(store).map((w) => w.root)).toEqual([workspace]);
 	});
 
-	it("answers absent for a file that does not exist", () => {
-		writeFile("MEMORY.md", "");
-		expect(memoryFileContent(workspace, "ghost.md")).toEqual({ ok: false, reason: "absent" });
+	it("keeps serving after a legacy MD import (the import feeds the same store)", () => {
+		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
+		writeFileSync(
+			join(workspace, ".evolve", "memory", "legacy.md"),
+			["---", "name: legacy", "description: 迁移来的记忆", "metadata:", "  type: reference", "---", "", "正文"].join("\n"),
+			"utf8",
+		);
+		const result = importWorkspaceMd(store, workspace);
+		expect(result.imported).toBe(1);
+		expect(memorySnapshot(store, workspace).fileCount).toBe(1);
+		expect(memoryEntryContent(store, workspace, "legacy")).toMatchObject({ ok: true, content: "正文" });
 	});
 
-	it("answers too-large without reading a body beyond the 5 MiB cap", () => {
-		writeFile("MEMORY.md", "");
-		writeFile("big.md", "x".repeat(MEMORY_FILE_PREVIEW_LIMIT + 1));
-		expect(memoryFileContent(workspace, "big.md")).toEqual({ ok: false, reason: "too-large" });
+	it("keeps the 5 MiB preview limit constant (client contract)", () => {
+		expect(MEMORY_FILE_PREVIEW_LIMIT).toBe(5 * 1024 * 1024);
+	});
+
+	it("degrades a failing workspace listing to an empty list", () => {
+		const hostile = new Proxy({}, {
+			get(_target, prop) {
+				if (prop === "listWorkspaces") {
+					throw new Error("boom");
+				}
+				return undefined;
+			},
+		}) as unknown as MemoryStore;
+		expect(listCardWorkspaces(hostile)).toEqual([]);
 	});
 });

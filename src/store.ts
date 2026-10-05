@@ -29,11 +29,12 @@ export const PATROL_STATE_KEY = "patrol:last";
 export const MD_IMPORT_STATE_KEY = "md-imported";
 /** Global partition id for workspace-independent state rows. */
 export const GLOBAL_WORKSPACE = "";
+/** Preview size cap for the card's content endpoint (ZCode's viewer uses 5 MiB). */
+export const MEMORY_FILE_PREVIEW_LIMIT = 5 * 1024 * 1024;
 
 const DDL = `
 PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;
-CREATE TABLE IF NOT EXISTS memories (
+PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
   workspace_id TEXT NOT NULL,
   id TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
@@ -128,6 +129,8 @@ export interface MemoryStore {
 	get(workspaceId: string, id: string): MemoryRecord | undefined;
 	/** Active records, injection order: feedback > user > reference, then newest. */
 	list(workspaceId: string): MemoryRecord[];
+	/** Every non-archived record regardless of status (the card's projection). */
+	listAll(workspaceId: string): MemoryRecord[];
 	/** FTS search (trigram, workspace-scoped); <3-char queries fall back to LIKE. */
 	search(workspaceId: string, query: string, limit?: number): MemoryRecord[];
 	/** The sole write gate: validate all proposals, apply atomically, ledger. */
@@ -212,6 +215,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
 		list: database.prepare(`SELECT * FROM memories WHERE workspace_id = ? AND status = 'active' ${LIST_ORDER}`),
+		listAll: database.prepare(`SELECT * FROM memories WHERE workspace_id = ? AND status != 'archived' ${LIST_ORDER}`),
 		fts: database.prepare(
 			`SELECT m.* FROM memories m WHERE (m.workspace_id, m.id) IN (
 				 SELECT workspace_id, id FROM memories_fts WHERE memories_fts MATCH ? AND workspace_id = ?
@@ -253,6 +257,9 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		},
 		list(workspaceId) {
 			return (stmts.list.all(workspaceId) as unknown as MemoryRow[]).map(recordOf);
+		},
+		listAll(workspaceId) {
+			return (stmts.listAll.all(workspaceId) as unknown as MemoryRow[]).map(recordOf);
 		},
 		search(workspaceId, query, limit = 20) {
 			const trimmed = query.trim();

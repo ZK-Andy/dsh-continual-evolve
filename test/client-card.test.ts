@@ -479,10 +479,9 @@ describe("workspace scope selector", () => {
 		const snapshot = {
 			exists: true,
 			fileCount: 1,
-			indexEntryCount: 1,
-			files: [{ file: "note.md", name: "note", description: "", type: "user", updatedAt: Date.now() }],
-			missingFiles: [],
-			unindexedFiles: [],
+			files: [{ id: "note", title: "note", description: "", type: "user", status: "active", updatedAt: Date.now() }],
+			quarantined: [],
+			lastPatrol: null,
 			readError: null,
 		};
 		const tree = renderBlockTree(
@@ -610,7 +609,7 @@ describe("loadFileContent", () => {
 		}) as unknown as typeof fetch;
 		const result = (await load(fetchImpl, ROOT, FILE)) as { status: string; content: string };
 		expect(result).toEqual({ status: "ready", content: "正文", message: "" });
-		expect(calls[0]).toContain("/memory/file?root=" + encodeURIComponent(ROOT) + "&file=" + encodeURIComponent(FILE));
+		expect(calls[0]).toContain("/memory/file?root=" + encodeURIComponent(ROOT) + "&id=" + encodeURIComponent(FILE));
 	});
 
 	it("maps 404 to deleted and 413 to tooLarge without messages", async () => {

@@ -4,13 +4,15 @@
  * The v0.15 SQLite single-store redesign (ADR
  * `2026-10-06-sqlite-single-store`): every memory lives in one central
  * database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace path)
- * and the plugin's code is the literal sole writer. This entry wires three
+ * and the plugin's code is the literal sole writer. This entry wires four
  * surfaces over the store:
  *
  * - the session-start section (`memory-section.ts`): a store query rendered
  *   as the injected index, frozen per session for the prompt cache;
  * - the model tools (`memory-tools.ts`): `memory_write` for explicit
  *   "记住/忘掉" instructions, `memory_read` for bodies and search;
+ * - the extraction scheduler (`extraction.ts`): turn-level, debounced,
+ *   single-flight; proposals land only through the store's gates;
  * - the read-only card routes (`card-routes.ts`) in the official plugin
  *   manager.
  *
@@ -25,7 +27,6 @@
  */
 import z from "@deepseek-ai/schemastery";
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
-import { createKnownWorkspaces } from "./known-workspaces.js";
 import { createExtractionScheduler, type LlmStream, type SchedulerHost } from "./extraction.js";
 import type { SurfaceReader } from "./extraction-surface.js";
 import {
@@ -37,8 +38,8 @@ import {
 	memorySectionText,
 } from "./memory-section.js";
 import { registerMemoryTools } from "./memory-tools.js";
+import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
-import { createWorkspaceCatalog, type WorkspaceRegistryLike } from "./workspace-catalog.js";
 
 export const name = "continual-evolve";
 
@@ -115,11 +116,7 @@ interface StoreState {
 	toolsAvailable: boolean;
 }
 
-/**
- * Register the memory tools through a nested inject, so a host without the
- * tools service degrades to the guide's "tell the user" phrasing instead of
- * blocking plugin activation (the workflowEngine pitfall, docs/FAQ.md #1).
- */
+/** Register the memory tools through a nested inject (see memory-tools.ts). */
 function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: StoreState): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
@@ -183,13 +180,10 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
 
 /**
  * Mount the card routes on the host web server through a nested inject, so
- * the plugin stays mountable on hosts without that service. Called only when
- * the card is enabled. The workspace registry is looked up inside the scoped
- * context (nothing else injects it: a host without the service must still get
- * the card) and read per request, so a workspace created while the card is
- * open appears on the next refresh.
+ * the plugin stays mountable on hosts without that service. Called once the
+ * store is ready — the routes are projections of the store, not of files.
  */
-function mountCardWhenAvailable(host: HostContext, served: ReturnType<typeof createKnownWorkspaces>): void {
+function mountCardWhenAvailable(host: HostContext, store: MemoryStore): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
 		host.logger("continual-evolve").warn(
@@ -205,35 +199,8 @@ function mountCardWhenAvailable(host: HostContext, served: ReturnType<typeof cre
 			);
 			return;
 		}
-		const catalog = createWorkspaceCatalog({
-			registry: registryLookup(scoped),
-			served: served,
-			homeDir: process.env.DSH_HOME,
-		});
-		mountCardRoutes(webServer, catalog);
+		mountCardRoutes(webServer, store);
 	});
-}
-
-/**
- * A live `ctx.workspaceRegistry` getter over the scoped context. The service
- * is a sibling, so it is reached with `ctx.get` (property access only walks
- * fiber ancestors) and treated as optional: an absent, foreign or throwing
- * service degrades the catalogue to its fallback sources instead of taking the
- * card down.
- */
-function registryLookup(scoped: unknown): () => WorkspaceRegistryLike | undefined {
-	const context = scoped as { get?: (name: string) => unknown };
-	return () => {
-		if (typeof context.get !== "function") {
-			return undefined;
-		}
-		try {
-			const service = context.get("workspaceRegistry");
-			return service === undefined || service === null ? undefined : (service as WorkspaceRegistryLike);
-		} catch {
-			return undefined;
-		}
-	};
 }
 
 export function apply(host: HostContext, config: EvolveConfig): void {
@@ -247,6 +214,9 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			state.store = store;
 			mountToolsWhenAvailable(host, store, state);
 			mountExtractionWhenAvailable(host, store, config);
+			if (config.memoryCard?.enabled !== false) {
+				mountCardWhenAvailable(host, store);
+			}
 		},
 		(error: unknown) => {
 			// node:sqlite missing (old runtime) or the database unusable:
@@ -256,21 +226,28 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			);
 		},
 	);
-	const workspaces = createKnownWorkspaces();
 	const frozen = createFrozenMemorySection();
 	host.systemPrompt.section({
 		name: MEMORY_SECTION_NAME,
 		order: config.memoryIndex?.order ?? DEFAULT_MEMORY_SECTION_ORDER,
 		text: (context) => {
-			const cwd = cwdOf(context.agent);
-			if (cwd !== undefined) {
-				workspaces.remember(cwd);
-			}
 			const store = state.store;
 			if (store === undefined) {
 				// Still loading or unavailable: render nothing (and freeze
 				// nothing — the first assembly after readiness builds for real).
 				return "";
+			}
+			const cwd = cwdOf(context.agent);
+			if (cwd !== undefined) {
+				// First contact with this workspace migrates any legacy MD-era
+				// store into the database; flag-guarded, so it is a no-op after.
+				try {
+					importWorkspaceMd(store, cwd);
+				} catch (error) {
+					log.warn(
+						`legacy memory import failed for ${cwd}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
 			}
 			return frozen.textFor(context.agent, (agent) =>
 				memorySectionText(agent, {
@@ -283,8 +260,4 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 		},
 	});
 	log.info("continual-evolve memory section registered (central SQLite store, sole-writer gates)");
-	if (config.memoryCard?.enabled === false) {
-		return;
-	}
-	mountCardWhenAvailable(host, workspaces);
 }
