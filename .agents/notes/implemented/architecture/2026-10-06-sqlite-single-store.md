@@ -16,12 +16,12 @@ Status: implemented
 **全部记忆状态就是一个中央数据库文件 `~/.dsh/evolve/memory.db`（按 `workspace_id` 行分区），插件代码是字面唯一写者，所有模型意图（显式指令与自动沉淀）都经结构化提案过机械门禁后由代码原子落盘。**
 
 - **存储**：SQLite 单库（`node:sqlite`，Node ≥ 22.5，不可用时插件整体降级为无操作 + log 告警）。表：`memories`（STRICT，type/status 枚举 CHECK、body ≤64KB）、`memories_fts`（FTS5 trigram，查询恒带 workspace 过滤）、`extraction_log`（快照账本，update/delete 内嵌 before/after 全文，skip 也记账）、`state`（提取游标 seq:<n>）。WAL 模式；约束即门禁；**不设 MEMORY.md 文件**——注入索引是查询结果。规模护栏：账本超 12 个月导出归档后清除；启动对账孤儿行（工作区目录已删 → 行标记失联，不显示不阻塞）。
-- **写路径 A（主会话显式指令）**：`memory_write` 工具（`defineTool` 注册，`action: create|update|delete` + 字段）。代码侧统一校验后落盘：id 规范、type 枚举（user/feedback/reference）、feedback 必带 Why/How、secret 正则筛查（复用 v1 `2026-08-28-secret-leak-guard` 模式）、update/delete 前快照旧文入账本。老宿主工具注册失败 → 降级为指南提示口头管理 + 控制台告警，不阻塞注入。
+- **写路径 A（主会话显式指令）**：`memory_write` 工具（`defineTool` 等价形状经 `ctx.tools.register` 裸注册，`action: create|update|delete` + 字段）。代码侧统一校验后落盘：id 规范、type 枚举（user/feedback/reference）、feedback 必带 Why/How、secret 正则筛查（复用 v1 `2026-08-28-secret-leak-guard` 模式）、update/delete 前快照旧文入账本。老宿主工具注册失败 → 降级为指南提示口头管理 + 控制台告警，不阻塞注入。
 - **写路径 B（自动沉淀，提案制提取）**：`turn/end`（`agent/turn-stopping`）轮级触发 + 空闲去抖（默认 10min，`memoryIndex.debounceMin` 可配）+ 单飞行合并突发 + `compaction/start` 强制 flush；内部 agent、空增量、无真实用户文本（≥3 词，CJK-aware）机械跳过并记账。执行 = 单次 LLM 调用（无工具、无 agent loop）：代码读 `readSurface` 增量、FTS 取相似候选喂模型，模型经 `outputSchema` 产出提案（create/update/delete/no-op），代码逐条校验后事务内原子应用、写账本、推进游标；失败不推进。ctx.llm 直调必须转发 host `GenerateOptions.sessionId`。
 - **读路径**：开局注入改查库生成索引 section（order 400、会话内冻结、6k 预算整行截断逻辑沿用）；排序 feedback > user > reference；空库零 token。主会话指南缩为三行（库位置 / 显式记住忘掉走工具 / 其余沉淀有专职流程）。卡片改查库（条目/搜索/相对时间/预览）；工作区列表 = `SELECT DISTINCT workspace_id … WHERE status='active'`，原目录探测（`workspace-catalog.ts` + `known-workspaces.ts`）作废；`/memory/file` 按文件名取内容作废，改按 id。
 - **巡检**：每次提取应用后代码执行（orphan FTS 行、超尺寸、secret 模式）→ 违规条目 `status='quarantined'`，账本记录，卡片显形；不物理删除。
 - **迁移**：首次启动检测各工作区 `.evolve/memory/*.md` → 逐条导入对应 `workspace_id` 分区（frontmatter 解析复用原卡片逻辑）→ 原 MD 目录改名 `.evolve/memory-imported-<date>/`（不删不丢）。
-- 本笔记 supersede `2026-10-04-zcode-alignment-teardown` 中"无工具、文件即真相"的拍板：**机械门禁优先于文件透明性**（拆解 ADR 自己的判据"模型提议，代码保证"以提案制形式回归）；工具面仅 1 个、职责单一，不复现 v0.11 时代的工具堆。10-04 拍板中仍然成立的部分（机制要少、层级虚空、治理三件套不做）保持不变——本决定只加"一个库 + 一个工具 + 一条提取轨"，不复活任何被拆机制。
+- 本笔记 supersede `2026-10-04-zcode-alignment-teardown` 中"无工具、文件即真相"的拍板：**机械门禁优先于文件透明性**（拆解 ADR 自己的判据"模型提议，代码保证"以提案制形式回归）；工具面共 2 个（`memory_write` 写 + `memory_read` 读——注入只有索引钩子，模型取正文需要它），职责单一，不复现 v0.11 时代的工具堆。10-04 拍板中仍然成立的部分（机制要少、层级虚空、治理三件套不做）保持不变——本决定只加"一个库 + 两个工具 + 一条提取轨"，不复活任何被拆机制。
 
 ## Alternatives considered
 

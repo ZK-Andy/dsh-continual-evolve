@@ -131,7 +131,7 @@ describe("apply tool wiring", () => {
 				}
 				if (wanted.includes("webServer")) {
 					scoped.webServer = {
-						register: (route: { kind: string; path: string }) => () => undefined,
+						register: (_route: { kind: string; path: string }) => () => undefined,
 					};
 				}
 				callback(scoped);

@@ -26,6 +26,8 @@
 import z from "@deepseek-ai/schemastery";
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
 import { createKnownWorkspaces } from "./known-workspaces.js";
+import { createExtractionScheduler, type LlmStream, type SchedulerHost } from "./extraction.js";
+import type { SurfaceReader } from "./extraction-surface.js";
 import {
 	createFrozenMemorySection,
 	cwdOf,
@@ -81,6 +83,14 @@ export const Config = z.object({
 		guide: z.boolean(),
 		order: z.natural(),
 		maxChars: z.natural(),
+		/**
+		 * The proposal-based extraction run (trigger: turn-level with idle
+		 * debounce; writes land only through the store's gates). Off keeps
+		 * the plugin injection + explicit tools only.
+		 */
+		extraction: z.boolean(),
+		/** Idle debounce minutes between turn end and an extraction run (0 = per turn). */
+		debounceMin: z.natural(),
 	}),
 	/**
 	 * The read-only memory card in the official plugin manager
@@ -129,6 +139,45 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
 		registerMemoryTools(tools as Parameters<typeof registerMemoryTools>[0], store);
 		state.toolsAvailable = true;
 		host.logger("continual-evolve").info("memory_write and memory_read registered");
+	});
+}
+
+/**
+ * Arm the extraction scheduler through a nested inject: the session reader
+ * and LLM services are siblings, so they are resolved inside the scoped
+ * context while the event listeners use the plugin's own context. A host
+ * without either service (or without `.on`) simply never arms — injection
+ * and the explicit tools remain functional.
+ */
+function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig): void {
+	const log = host.logger("continual-evolve");
+	if (config.memoryIndex?.extraction === false) {
+		log.info("extraction disabled by config — injection and memory_write remain active");
+		return;
+	}
+	const nested = host as HostContext & Partial<NestedInjectHost>;
+	const events = host as HostContext & Partial<SchedulerHost>;
+	if (typeof nested.inject !== "function" || typeof events.on !== "function") {
+		log.warn("host context exposes no inject/on — extraction not armed (injection and tools unaffected)");
+		return;
+	}
+	nested.inject(["sessionQuery", "llm"], (scoped: unknown) => {
+		const context = scoped as {
+			sessionQuery?: unknown;
+			llm?: unknown;
+			get?: (name: string) => unknown;
+		};
+		const surface = context.sessionQuery as SurfaceReader | undefined;
+		const llm = (context.llm ?? context.get?.("llm")) as LlmStream | undefined;
+		if (surface === undefined || typeof surface.readSurface !== "function") {
+			log.warn("sessionQuery service present but empty — extraction not armed (injection and tools unaffected)");
+			return;
+		}
+		createExtractionScheduler(
+			events as SchedulerHost,
+			{ store, surface, llm },
+			{ debounceMin: config.memoryIndex?.debounceMin ?? 10 },
+		);
 	});
 }
 
@@ -197,6 +246,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 		(store) => {
 			state.store = store;
 			mountToolsWhenAvailable(host, store, state);
+			mountExtractionWhenAvailable(host, store, config);
 		},
 		(error: unknown) => {
 			// node:sqlite missing (old runtime) or the database unusable:
