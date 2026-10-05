@@ -53,18 +53,20 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "prepare": "tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "prepack": "npm run build && npm run check:pack",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "lint": "oxlint src test client",
-    "clean": "rm -rf lib",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
     "check:docs": "tsx scripts/run-gates.ts docs",
     "check:handoff": "tsx scripts/verify-handoff-structure.ts --self-test && tsx scripts/verify-handoff-structure.ts",
-    "check:governance": "tsx scripts/verify-governance.ts"
+    "check:governance": "tsx scripts/verify-governance.ts",
+    "check:pack": "tsx scripts/verify-pack-contents.ts"
   },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"

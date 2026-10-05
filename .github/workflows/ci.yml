@@ -46,3 +46,6 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: 产物一致性门禁
+        run: pnpm check:pack
