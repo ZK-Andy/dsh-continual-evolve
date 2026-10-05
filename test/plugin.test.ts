@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apply, type EvolveConfig } from "../src/index.js";
 import { MEMORY_SECTION_NAME } from "../src/memory-section.js";
 
@@ -27,13 +27,41 @@ const fullConfig: EvolveConfig = {
 };
 
 let workspace = "";
+let dshHome = "";
+let previousDshHome: string | undefined;
+
+beforeEach(() => {
+	// The store opens at $DSH_HOME/evolve/memory.db: point DSH_HOME at a
+	// scratch dir so tests never touch the real ~/.dsh.
+	previousDshHome = process.env.DSH_HOME;
+	dshHome = mkdtempSync(join(tmpdir(), "evolve-plugin-home-"));
+	process.env.DSH_HOME = dshHome;
+});
 
 afterEach(() => {
+	if (previousDshHome === undefined) {
+		delete process.env.DSH_HOME;
+	} else {
+		process.env.DSH_HOME = previousDshHome;
+	}
 	if (workspace) {
 		rmSync(workspace, { recursive: true, force: true });
 		workspace = "";
 	}
+	rmSync(dshHome, { recursive: true, force: true });
 });
+
+/** Wait for the async store open, then return the rendered section text. */
+async function renderAfterStore(section: RecordedSection, agent: unknown): Promise<string> {
+	const render = section.text as (context: { agent: unknown }) => string;
+	return vi.waitFor(() => {
+		const text = render({ agent });
+		if (text === "") {
+			throw new Error("store not open yet");
+		}
+		return text;
+	});
+}
 
 describe("apply", () => {
 	it("registers exactly one memory section with the defaults", () => {
@@ -57,17 +85,85 @@ describe("apply", () => {
 		expect(sections[0].order).toBe(450);
 	});
 
-	it("the registered provider renders a section for an agent in a workspace", () => {
+	it("renders an empty section until the store is open, then the real one", async () => {
 		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-"));
 		const { sections, host } = makeCtx();
 		apply(host, fullConfig);
 		const render = sections[0].text as (context: { agent: unknown }) => string;
 		const agent = { id: "s1", session: { header: { cwd: workspace } } };
-		const text = render({ agent });
+		// Before/during the async open the section is a plain string (typically
+		// "" — never a throw and never a frozen placeholder).
+		expect(typeof render({ agent })).toBe("string");
+		const text = await renderAfterStore(sections[0], agent);
 		expect(text).toContain("# 持久记忆");
 		expect(text).toContain("<memories>");
-		// First render in a fresh workspace bootstraps its store.
-		expect(text).not.toBe("");
+		expect(text).toContain("（暂无记忆）");
+	});
+
+	it("does not create any per-workspace store directory (the store is central)", async () => {
+		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-"));
+		const { sections, host } = makeCtx();
+		apply(host, fullConfig);
+		await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
+		const { existsSync } = await import("node:fs");
+		expect(existsSync(join(workspace, ".evolve"))).toBe(false);
+	});
+});
+
+describe("apply tool wiring", () => {
+	function makeCtxWithServices(services: Record<string, unknown> = {}, withTools: boolean = true): {
+		sections: RecordedSection[];
+		host: Parameters<typeof apply>[0];
+		tools: Map<string, unknown>;
+	} {
+		const base = makeCtx();
+		const tools = new Map<string, unknown>();
+		const host = Object.assign(base.host, {
+			inject: (wanted: string[], callback: (scoped: unknown) => void) => {
+				const scoped: Record<string, unknown> = { get: (name: string) => services[name] };
+				if (wanted.includes("tools") && withTools) {
+					scoped.tools = {
+						register: (definition: { name: string }) => {
+							tools.set(definition.name, definition);
+							return () => tools.delete(definition.name);
+						},
+					};
+				}
+				if (wanted.includes("webServer")) {
+					scoped.webServer = {
+						register: (route: { kind: string; path: string }) => () => undefined,
+					};
+				}
+				callback(scoped);
+			},
+		}) as Parameters<typeof apply>[0];
+		return { sections: base.sections, host, tools };
+	}
+
+	it("registers memory_write and memory_read once the store is open", async () => {
+		const { sections, host, tools } = makeCtxWithServices();
+		apply(host, fullConfig);
+		await vi.waitFor(() => {
+			if (tools.size !== 2) {
+				throw new Error("tools not registered yet");
+			}
+		});
+		expect([...tools.keys()].sort()).toEqual(["memory_read", "memory_write"]);
+		// The rendered guide names the tools now that they exist.
+		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-tools-"));
+		const text = await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
+		expect(text).toContain("memory_write");
+	});
+
+	it("keeps injection alive on a host without the tools service", async () => {
+		const { sections, host } = makeCtxWithServices({}, false);
+		apply(host, fullConfig);
+		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-notools-"));
+		const text = await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
+		expect(text).toContain("# 持久记忆");
+		expect(text).not.toContain("memory_write");
+		expect(text).not.toContain("memory_read");
+		expect(text).toContain("告诉用户");
 	});
 });
 
@@ -148,10 +244,10 @@ describe("apply card wiring", () => {
 	it("mounts the card routes on webServer by default", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
-		expect([...routes.keys()]).toEqual([
-			"/dsh-continual-evolve/api/v1/workspaces",
+		expect([...routes.keys()].sort()).toEqual([
 			"/dsh-continual-evolve/api/v1/memory",
 			"/dsh-continual-evolve/api/v1/memory/file",
+			"/dsh-continual-evolve/api/v1/workspaces",
 		]);
 	});
 

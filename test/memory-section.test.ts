@@ -1,29 +1,47 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	createFrozenMemorySection,
 	cwdOf,
-	ensureGitIgnored,
 	fitIndex,
 	memoryDirFor,
 	memorySectionText,
-	readMemoryIndex,
 } from "../src/memory-section.js";
+import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let workspace = "";
+let store: MemoryStore;
 
-beforeEach(() => {
+beforeEach(async () => {
 	workspace = mkdtempSync(join(tmpdir(), "evolve-memory-"));
+	store = await openMemoryStore(join(mkdtempSync(join(tmpdir(), "evolve-memory-db-")), "memory.db"));
 });
 
 afterEach(() => {
-	rmSync(workspace, { recursive: true, force: true });
+	store.close();
 });
 
 function agentAt(cwd: string, id: string = "agent-1"): unknown {
 	return { id, session: { header: { cwd } } };
+}
+
+function seed(id: string, type: "user" | "feedback" | "reference", title: string): boolean {
+	return store
+		.applyProposals({ workspaceId: workspace, trigger: "explicit" }, [
+			{
+				action: "create",
+				id,
+				type,
+				title,
+				description: `${title} 的钩子`,
+				body:
+					type === "feedback"
+						? `${title} 的规则\n**Why:** 有理由\n**How to apply:** 有场景`
+						: `${title} 的正文`,
+			},
+		])[0]?.ok === true;
 }
 
 describe("cwdOf", () => {
@@ -36,8 +54,7 @@ describe("cwdOf", () => {
 
 	it("returns undefined for a relative cwd and resolves an absolute one", () => {
 		expect(cwdOf({ session: { header: { cwd: "relative/path" } } })).toBeUndefined();
-		const resolved = cwdOf({ session: { header: { cwd: workspace } } });
-		expect(resolved).toBe(workspace);
+		expect(cwdOf({ session: { header: { cwd: workspace } } })).toBe(workspace);
 	});
 
 	it("falls back to header.meta.cwd", () => {
@@ -57,31 +74,10 @@ describe("cwdOf", () => {
 });
 
 describe("memoryDirFor", () => {
-	it("places the store at <workspace>/.evolve/memory", () => {
+	it("remains the legacy MD-era location (migration path)", () => {
 		expect(memoryDirFor(workspace)).toBe(join(workspace, ".evolve", "memory"));
 	});
 });
-
-describe("readMemoryIndex", () => {
-	it("bootstraps the store with a starter index on first use", () => {
-		const dir = memoryDirFor(workspace);
-		expect(readMemoryIndex(dir)).toContain("# 记忆索引");
-		expect(readFileSyncStarter(dir)).toContain("- [标题](文件名.md)");
-	});
-
-	it("reads an existing index and tolerates a missing one", () => {
-		const dir = memoryDirFor(workspace);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "MEMORY.md"), "- [a](a.md) — hook\n", "utf8");
-		expect(readMemoryIndex(dir)).toBe("- [a](a.md) — hook");
-		expect(readMemoryIndex(join(workspace, ".evolve", "absent"), false)).toBe("");
-	});
-});
-
-// Direct fs read helper keeping the assertion honest about what bootstrap wrote.
-function readFileSyncStarter(dir: string): string {
-	return readFileSync(join(dir, "MEMORY.md"), "utf8");
-}
 
 describe("fitIndex", () => {
 	it("returns the index untouched when it fits", () => {
@@ -104,98 +100,83 @@ describe("fitIndex", () => {
 });
 
 describe("memorySectionText", () => {
-	it("renders nothing for an agent without a workspace", () => {
-		expect(memorySectionText(undefined)).toBe("");
-		expect(memorySectionText({ session: { header: {} } })).toBe("");
+	it("renders nothing without a workspace or a store", async () => {
+		expect(memorySectionText(undefined, { store })).toBe("");
+		expect(memorySectionText({ session: { header: {} } }, { store })).toBe("");
+		expect(memorySectionText(agentAt(workspace), { store: undefined })).toBe("");
 	});
 
-	it("injects the index, hands out the absolute path, and wraps the guide", () => {
-		const dir = memoryDirFor(workspace);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "MEMORY.md"), "- [hook](hook.md) — 用户偏好\n", "utf8");
-		const text = memorySectionText(agentAt(workspace));
+	it("injects the store query as the index, with the central-library framing", () => {
+		expect(seed("fedora-env", "user", "Fedora 环境")).toBe(true);
+		const text = memorySectionText(agentAt(workspace), { store });
 		expect(text).toContain("# 持久记忆");
-		expect(text).toContain(`${dir}/`);
-		expect(text).toContain("<memories>\n- [hook](hook.md) — 用户偏好\n</memories>");
-		expect(text).toContain("## 何时写入记忆");
-		expect(text).toContain("## 如何维护");
+		expect(text).toContain(store.path);
+		expect(text).toContain(`<memories>\n- [fedora-env] Fedora 环境 — Fedora 环境 的钩子（user）\n</memories>`);
+		expect(text).toContain("memory_read");
+		expect(text).toContain("memory_write");
 	});
 
-	it("shows the empty marker when the index is missing or blank", () => {
-		expect(memorySectionText(agentAt(workspace), { bootstrap: false })).toContain("（暂无记忆）");
-		const dir = memoryDirFor(workspace);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "MEMORY.md"), "   \n", "utf8");
-		expect(memorySectionText(agentAt(workspace))).toContain("（暂无记忆）");
+	it("orders the index feedback > user > reference and shows hooks, not bodies", () => {
+		seed("zzz-reference", "reference", "参照");
+		seed("aaa-user", "user", "画像");
+		seed("mmm-feedback", "feedback", "规矩");
+		const text = memorySectionText(agentAt(workspace), { store, guide: false });
+		const lines = text.split("\n").filter((line) => line.startsWith("- ["));
+		expect(lines.map((line) => line.slice(3, line.indexOf("]")))).toEqual(["mmm-feedback", "aaa-user", "zzz-reference"]);
+		expect(text).not.toContain("的正文");
+		expect(text).not.toContain("Why:");
 	});
 
-	it("appends a truncation note when the index exceeds the budget", () => {
-		const dir = memoryDirFor(workspace);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "MEMORY.md"), "aaa\nbbb\nccc\n", "utf8");
-		const text = memorySectionText(agentAt(workspace), { maxChars: 5, guide: false });
-		expect(text).toContain("aaa");
-		expect(text).not.toContain("ccc");
+	it("shows the empty marker when the workspace has no memories", () => {
+		const text = memorySectionText(agentAt(workspace), { store });
+		expect(text).toContain("（暂无记忆）");
+		expect(memorySectionText(agentAt(workspace), { store, guide: false })).toBe("");
+	});
+
+	it("renders nothing for another workspace's partition", () => {
+		seed("fedora-env", "user", "Fedora 环境");
+		const other = join(workspace, "other");
+		expect(memorySectionText(agentAt(other), { store, guide: false })).toBe("");
+	});
+
+	it("appends a memory_read hint when the index exceeds the budget", () => {
+		seed("a", "user", "甲");
+		seed("b", "user", "乙");
+		seed("c", "user", "丙");
+		const text = memorySectionText(agentAt(workspace), { store, maxChars: 40, guide: false });
 		expect(text).toContain("已截断");
+		expect(text).toContain("memory_read");
+		const shown = text.split("\n").filter((line) => line.startsWith("- ["));
+		expect(shown.length).toBeLessThan(3);
 	});
 
-	it("renders the read-the-directory note when nothing fits", () => {
-		const dir = memoryDirFor(workspace);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "MEMORY.md"), "one-single-very-long-line\n", "utf8");
-		const text = memorySectionText(agentAt(workspace), { maxChars: 5, guide: false });
+	it("renders the search hint when nothing fits", () => {
+		seed("one-long-row", "user", "一行超长的索引行");
+		const text = memorySectionText(agentAt(workspace), { store, maxChars: 5, guide: false });
 		expect(text).not.toContain("<memories>");
 		expect(text).toContain("一行都放不下");
 	});
 
-	it("with the guide off renders only the block, and nothing when empty", () => {
-		const dir = memoryDirFor(workspace);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "MEMORY.md"), "- [x](x.md) — hook\n", "utf8");
-		const bare = memorySectionText(agentAt(workspace), { guide: false });
-		expect(bare).toBe("<memories>\n- [x](x.md) — hook\n</memories>");
-		expect(memorySectionText(agentAt(join(workspace, "absent-workspace")), { guide: false, bootstrap: false })).toBe("");
+	it("survives a store that throws on read", () => {
+		const hostile = new Proxy({}, {
+			get(_target, prop) {
+				if (prop === "list") {
+					throw new Error("boom");
+				}
+				if (prop === "path") {
+					return "/db";
+				}
+				return undefined;
+			},
+		}) as unknown as MemoryStore;
+		expect(memorySectionText(agentAt(workspace), { store: hostile })).toBe("");
 	});
 
-	it("skips bootstrap when asked, leaving no store behind", () => {
-		memorySectionText(agentAt(workspace), { bootstrap: false });
-		expect(existsSync(memoryDirFor(workspace))).toBe(false);
-	});
-});
-
-describe("ensureGitIgnored", () => {
-	it("creates .gitignore with the entry in a git workspace", () => {
-		mkdirSync(join(workspace, ".git"), { recursive: true });
-		ensureGitIgnored(workspace);
-		const text = readFileSync(join(workspace, ".gitignore"), "utf8");
-		expect(text).toContain("# workspace memory (dsh-continual-evolve)");
-		expect(text.split("\n")).toContain(".evolve/");
-	});
-
-	it("appends to an existing .gitignore, adding the missing newline first", () => {
-		mkdirSync(join(workspace, ".git"), { recursive: true });
-		writeFileSync(join(workspace, ".gitignore"), "node_modules/", "utf8");
-		ensureGitIgnored(workspace);
-		const text = readFileSync(join(workspace, ".gitignore"), "utf8");
-		expect(text).toBe("node_modules/\n# workspace memory (dsh-continual-evolve)\n.evolve/\n");
-	});
-
-	it("is idempotent when the entry already exists", () => {
-		mkdirSync(join(workspace, ".git"), { recursive: true });
-		writeFileSync(join(workspace, ".gitignore"), ".evolve/\n", "utf8");
-		ensureGitIgnored(workspace);
-		expect(readFileSync(join(workspace, ".gitignore"), "utf8")).toBe(".evolve/\n");
-	});
-
-	it("touches nothing in a non-git workspace", () => {
-		ensureGitIgnored(workspace);
-		expect(existsSync(join(workspace, ".gitignore"))).toBe(false);
-	});
-
-	it("runs from bootstrap: a git workspace gets its .gitignore on first use", () => {
-		mkdirSync(join(workspace, ".git"), { recursive: true });
-		memorySectionText(agentAt(workspace));
-		expect(readFileSync(join(workspace, ".gitignore"), "utf8")).toContain(".evolve/");
+	it("swaps to the no-tools phrasing when tool registration failed", () => {
+		seed("fedora-env", "user", "Fedora 环境");
+		const text = memorySectionText(agentAt(workspace), { store, toolsAvailable: false });
+		expect(text).not.toContain("memory_write");
+		expect(text).toContain("告诉用户");
 	});
 });
 

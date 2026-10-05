@@ -198,13 +198,15 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	let database: DatabaseSync;
 	try {
 		const { DatabaseSync } = await import("node:sqlite");
+		// The parent directory must exist before SQLite opens the file — a
+		// fresh `~/.dsh` has no `evolve/` yet.
+		mkdirSync(dirname(path), { recursive: true });
 		database = new DatabaseSync(path);
 	} catch (error) {
 		throw new StoreUnavailableError(
 			`node:sqlite unavailable (Node ≥ 22.5 required) — memory store disabled: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
-	mkdirSync(dirname(path), { recursive: true });
 	database.exec(DDL);
 
 	const stmts = {

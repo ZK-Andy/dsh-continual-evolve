@@ -1,25 +1,22 @@
 /**
- * The whole runtime of the plugin after the 2026-10-04 ZCode-alignment
- * teardown: the session-start memory section.
+ * The session-start memory section: a store query rendered into the system
+ * prompt (the v0.15 SQLite single-store redesign, ADR
+ * `2026-10-06-sqlite-single-store`).
  *
- * The store is plain markdown inside the workspace — `<cwd>/.evolve/memory/`
- * with a `MEMORY.md` index and one file per fact — so the model reads and
- * writes it with its native file tools (DSH fences only out-of-workspace
- * writes; dot-directories inside the workspace pass both ways). This module
- * hands out the absolute path, injects the index content, and wraps the
- * when-to-save guide around it. There are no tools, no scopes, and no
- * governance: the files are the store, and a bad memory is a visible file
- * the user deletes.
+ * The injected index is a query result, not a file: one line per active
+ * memory of the assembling agent's workspace, feedback > user > reference,
+ * hooks only (title + description). Bodies live in the database and are
+ * fetched on demand with `memory_read`; there is no MEMORY.md to maintain
+ * and nothing for the model to write directly.
  *
  * Session-freeze contract (the prompt-cache guard): the section is computed
  * once per agent id and reused byte-for-byte afterwards, so the system
  * prompt stays stable within a session and cache reads keep hitting. A
- * memory written mid-session becomes visible in the NEXT session; the model
- * can always read the directory directly for the immediate need.
+ * memory written mid-session becomes visible in the NEXT session.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { MEMORY_GUIDE_RULES, memoryGuideIntro } from "./memory-guide.js";
+import { memoryGuideIntro, MEMORY_GUIDE_RULES } from "./memory-guide.js";
+import type { MemoryStore } from "./store.js";
 
 /** Name of the injected section (unique — duplicate names throw upstream). */
 export const MEMORY_SECTION_NAME = "evolve:memory-index";
@@ -30,15 +27,14 @@ export const DEFAULT_MAX_CHARS = 6000;
 /** Sessions whose frozen section text is kept before LRU eviction. */
 export const DEFAULT_FROZEN_SESSIONS = 32;
 
-const MEMORY_DIR_SEGMENTS = [".evolve", "memory"] as const;
-const INDEX_FILE = "MEMORY.md";
-
-/** Starter index written on first use; the model maintains every line after. */
-const STARTER_INDEX =
-	"# 记忆索引\n\n<!-- 一行一条：- [标题](文件名.md) — 一句话相关性钩子；写新记忆后在此追加一行 -->\n";
-
-/** Appended to the workspace .gitignore on bootstrap (git workspaces only). */
-const GITIGNORE_ENTRY = "# workspace memory (dsh-continual-evolve)\n.evolve/\n";
+/**
+ * Legacy MD-era store location. Only the migration path (`import-md.ts`) and
+ * the not-yet-migrated card projection still resolve it; the injection path
+ * queries the central database.
+ */
+export function memoryDirFor(cwd: string): string {
+	return join(resolve(cwd), ".evolve", "memory");
+}
 
 /** Minimal agent shape the section needs (duck-typed). */
 interface CwdAgentLike {
@@ -69,52 +65,6 @@ export function cwdOf(agent: unknown): string | undefined {
 	}
 }
 
-/** Absolute memory directory for a workspace root. */
-export function memoryDirFor(cwd: string): string {
-	return join(resolve(cwd), ...MEMORY_DIR_SEGMENTS);
-}
-
-/**
- * Ensure `.evolve/` is ignored when the workspace is a git repository, so
- * the memory store never shows up in git status. Best-effort hygiene: a
- * non-git workspace (no `.git` entry at the cwd) is left untouched — no
- * `.gitignore` is created — and any write failure is swallowed.
- */
-export function ensureGitIgnored(cwd: string): void {
-	try {
-		if (!existsSync(join(cwd, ".git"))) {
-			return;
-		}
-		const gitignore = join(cwd, ".gitignore");
-		const existing = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
-		if (existing.split("\n").some((line) => line.trim() === ".evolve/")) {
-			return;
-		}
-		const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-		writeFileSync(gitignore, `${existing}${prefix}${GITIGNORE_ENTRY}`, "utf8");
-	} catch {
-		// Never blocks the store; worst case is a visible .evolve/ in git status.
-	}
-}
-
-/**
- * Ensure the store exists (creating the directory and a starter index on
- * first use), then return the trimmed index text. Any filesystem failure
- * degrades to "" — injection must never break an assembly.
- */
-export function readMemoryIndex(dir: string, bootstrap: boolean = true): string {
-	try {
-		if (bootstrap && !existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, INDEX_FILE), STARTER_INDEX, "utf8");
-			ensureGitIgnored(resolve(dir, "..", ".."));
-		}
-		return readFileSync(join(dir, INDEX_FILE), "utf8").trim();
-	} catch {
-		return "";
-	}
-}
-
 /** What fitting the index into the budget produced. */
 export interface IndexFit {
 	/** Index text actually shown (possibly truncated to a line boundary). */
@@ -125,9 +75,9 @@ export interface IndexFit {
 
 /**
  * Whole-line-preserving truncation of the index to `maxChars` characters.
- * Only index rows that fit whole are shown — a partial markdown row would
- * corrupt the line the model reads. When not even one row fits, `text` is
- * "" and `dropped` carries the full length.
+ * Only index rows that fit whole are shown — a partial row would corrupt the
+ * line the model reads. When not even one row fits, `text` is "" and
+ * `dropped` carries the full length.
  */
 export function fitIndex(index: string, maxChars: number): IndexFit {
 	const budget = Math.max(0, maxChars);
@@ -143,49 +93,69 @@ export function fitIndex(index: string, maxChars: number): IndexFit {
 	return { text, dropped: index.length - text.length };
 }
 
+/** One index line: hook only — bodies are a `memory_read` call away. */
+export function indexLineOf(record: {
+	id: string;
+	title: string;
+	description: string;
+	type: string;
+}): string {
+	return `- [${record.id}] ${record.title} — ${record.description}（${record.type}）`;
+}
+
 /** Options for {@link memorySectionText}. */
 export interface MemorySectionOptions {
+	/** The opened store; undefined while it is still loading or failed. */
+	store: MemoryStore | undefined;
 	/** Hard character budget for the injected index (default 6000). */
 	maxChars?: number;
-	/** Include the when_to_save guide (default true). */
+	/** Include the when-to-save guide (default true). */
 	guide?: boolean;
-	/** Skip store bootstrap (tests). */
-	bootstrap?: boolean;
+	/** Whether `memory_write`/`memory_read` are actually registered on this host. */
+	toolsAvailable?: boolean;
 }
 
 /**
- * Compose the full memory section for one assembling agent: the guide
- * wrapped around the budget-bounded index, with the absolute store path
- * handed out so the model can read and write the files directly. With the
- * guide off and an empty index the result is "" — the prompt renderer then
+ * Compose the full memory section for one assembling agent. Any store
+ * failure degrades to "" — injection must never break an assembly. With the
+ * guide off and an empty store the result is "" — the prompt renderer then
  * drops the section, so an empty workspace costs zero tokens.
  */
-export function memorySectionText(agent: unknown, opts?: MemorySectionOptions): string {
-	const guide = opts?.guide ?? true;
-	const maxChars = opts?.maxChars ?? DEFAULT_MAX_CHARS;
+export function memorySectionText(agent: unknown, opts: MemorySectionOptions): string {
+	const guide = opts.guide ?? true;
+	const maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
 	const cwd = cwdOf(agent);
-	if (!cwd) {
+	if (!cwd || opts.store === undefined) {
 		return "";
 	}
-	const dir = memoryDirFor(cwd);
-	const index = readMemoryIndex(dir, opts?.bootstrap ?? true);
+	let records;
+	try {
+		records = opts.store.list(cwd);
+	} catch {
+		return "";
+	}
+	const index = records.map(indexLineOf).join("\n");
 	const { text, dropped } = fitIndex(index, maxChars);
 
 	const parts: string[] = [];
-	if (index.length === 0) {
+	if (records.length === 0) {
 		parts.push("<memories>\n（暂无记忆）\n</memories>");
 	} else if (text.length > 0) {
 		parts.push(`<memories>\n${text}\n</memories>`);
 		if (dropped > 0) {
-			parts.push(`（索引超出 ${maxChars} 字符预算，已截断——其余记忆直接读取 \`${dir}/\` 目录）`);
+			parts.push(`（索引超出 ${maxChars} 字符预算，已截断——其余记忆用 \`memory_read\` 关键词检索）`);
 		}
 	} else {
-		parts.push(`（索引超出 ${maxChars} 字符预算，一行都放不下——记忆直接读取 \`${dir}/\` 目录）`);
+		parts.push(`（索引超出 ${maxChars} 字符预算，一行都放不下——记忆用 \`memory_read\` 关键词检索）`);
 	}
 	if (!guide) {
-		return index.length === 0 ? "" : parts.join("\n\n");
+		return records.length === 0 ? "" : parts.join("\n\n");
 	}
-	return [memoryGuideIntro(dir), ...parts, MEMORY_GUIDE_RULES].join("\n\n");
+	return [
+		memoryGuideIntro(opts.store.path, cwd, opts.toolsAvailable ?? true),
+		...parts,
+		MEMORY_GUIDE_RULES,
+	].join("\n\n");
 }
 
 /** A per-session frozen view of the memory section text. */

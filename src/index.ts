@@ -1,25 +1,27 @@
 /**
  * dsh-continual-evolve — plugin entry.
  *
- * After the 2026-10-04 ZCode-alignment teardown the plugin is one thing: a
- * session-start system-prompt section that injects the workspace memory
- * index (`<cwd>/.evolve/memory/MEMORY.md`), hands out the store path, and
- * teaches the when-to-save guide. The model reads and writes the markdown
- * files with its native tools; there are no plugin tools, no commands, no
- * background extraction, and no governance. See
- * .agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md.
+ * The v0.15 SQLite single-store redesign (ADR
+ * `2026-10-06-sqlite-single-store`): every memory lives in one central
+ * database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace path)
+ * and the plugin's code is the literal sole writer. This entry wires three
+ * surfaces over the store:
  *
- * The 2026-10-04 plugin-management card adds a read-only surface: the host's
- * workspace registry feeds a catalogue, and a `webServer` route triple projects
- * any catalogued workspace's store for the card in the official plugin manager
- * (`plugins.bundle.config`, client bundle in client/client.js). The card is a
- * viewer — see
- * .agents/notes/implemented/feature/2026-10-04-plugin-management-card.md and
- * .agents/notes/implemented/feature/2026-10-05-zcode-workspace-switcher.md.
+ * - the session-start section (`memory-section.ts`): a store query rendered
+ *   as the injected index, frozen per session for the prompt cache;
+ * - the model tools (`memory-tools.ts`): `memory_write` for explicit
+ *   "记住/忘掉" instructions, `memory_read` for bodies and search;
+ * - the read-only card routes (`card-routes.ts`) in the official plugin
+ *   manager.
  *
- * The host API surface is declared locally (the minimal shape this plugin
- * touches) instead of importing the DSH type packages — the section call is
- * the same one every prior release used, verified in production.
+ * The store opens asynchronously (dynamic `node:sqlite` import); until it is
+ * ready — or forever, if the runtime lacks `node:sqlite` — the section
+ * renders "" and the tools never register. Injection must never break an
+ * assembly, and a degraded plugin must never take the host down.
+ *
+ * The host API surface is declared locally (the minimal shapes this plugin
+ * touches) instead of importing the DSH type packages — verified in
+ * production across every prior release.
  */
 import z from "@deepseek-ai/schemastery";
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
@@ -32,6 +34,8 @@ import {
 	MEMORY_SECTION_NAME,
 	memorySectionText,
 } from "./memory-section.js";
+import { registerMemoryTools } from "./memory-tools.js";
+import { openMemoryStore, type MemoryStore } from "./store.js";
 import { createWorkspaceCatalog, type WorkspaceRegistryLike } from "./workspace-catalog.js";
 
 export const name = "continual-evolve";
@@ -45,9 +49,9 @@ interface SectionContext {
 
 /**
  * The nested `inject` shape (cordis Context), declared locally like every
- * other host surface. Used only for the optional card wiring: a host that
- * never provides `webServer` never runs the callback, and the card routes
- * simply do not exist there.
+ * other host surface. Used for the optional card and tool wiring: a host
+ * that never provides `webServer` or `tools` never runs those callbacks, and
+ * the plugin degrades instead of blocking on a missing service.
  */
 interface NestedInjectHost {
 	inject(services: string[], callback: (scoped: unknown) => void): void;
@@ -66,11 +70,11 @@ interface HostContext {
 
 export const Config = z.object({
 	/**
-	 * The memory section: injects the workspace memory index at session
-	 * start, frozen per session to keep the system prompt byte-stable
-	 * (prompt cache). `enabled`/`guide`/`order`/`maxChars` default to
-	 * true/true/400/6000; with `guide` off and an empty store the section
-	 * renders to "" and costs no tokens.
+	 * The memory section: injects the workspace memory index (a store query)
+	 * at session start, frozen per session to keep the system prompt
+	 * byte-stable (prompt cache). `enabled`/`guide`/`order`/`maxChars`
+	 * default to true/true/400/6000; with `guide` off and an empty store the
+	 * section renders to "" and costs no tokens.
 	 */
 	memoryIndex: z.object({
 		enabled: z.boolean(),
@@ -94,6 +98,39 @@ export const Config = z.object({
  * Derived from the schemastery schema — single source of truth, no manual sync.
  */
 export type EvolveConfig = Partial<Schemastery.TypeT<typeof Config>>;
+
+/** Mutable plugin state the async store open fills in. */
+interface StoreState {
+	store: MemoryStore | undefined;
+	toolsAvailable: boolean;
+}
+
+/**
+ * Register the memory tools through a nested inject, so a host without the
+ * tools service degrades to the guide's "tell the user" phrasing instead of
+ * blocking plugin activation (the workflowEngine pitfall, docs/FAQ.md #1).
+ */
+function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: StoreState): void {
+	const nested = host as HostContext & Partial<NestedInjectHost>;
+	if (typeof nested.inject !== "function") {
+		host.logger("continual-evolve").warn(
+			"host context exposes no inject — memory tools not registered (injection unaffected; explicit memory management falls back to telling the user)",
+		);
+		return;
+	}
+	nested.inject(["tools"], (scoped: unknown) => {
+		const tools = (scoped as { tools?: unknown }).tools;
+		if (tools === undefined || typeof (tools as { register?: unknown }).register !== "function") {
+			host.logger("continual-evolve").warn(
+				"tools service present but empty — memory tools not registered (injection unaffected)",
+			);
+			return;
+		}
+		registerMemoryTools(tools as Parameters<typeof registerMemoryTools>[0], store);
+		state.toolsAvailable = true;
+		host.logger("continual-evolve").info("memory_write and memory_read registered");
+	});
+}
 
 /**
  * Mount the card routes on the host web server through a nested inject, so
@@ -154,6 +191,21 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 	if (config.memoryIndex?.enabled === false) {
 		return;
 	}
+	const log = host.logger("continual-evolve");
+	const state: StoreState = { store: undefined, toolsAvailable: false };
+	void openMemoryStore().then(
+		(store) => {
+			state.store = store;
+			mountToolsWhenAvailable(host, store, state);
+		},
+		(error: unknown) => {
+			// node:sqlite missing (old runtime) or the database unusable:
+			// degrade to a no-op plugin, never take the host down.
+			log.warn(
+				`memory store unavailable — injection and tools disabled: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		},
+	);
 	const workspaces = createKnownWorkspaces();
 	const frozen = createFrozenMemorySection();
 	host.systemPrompt.section({
@@ -164,17 +216,23 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			if (cwd !== undefined) {
 				workspaces.remember(cwd);
 			}
+			const store = state.store;
+			if (store === undefined) {
+				// Still loading or unavailable: render nothing (and freeze
+				// nothing — the first assembly after readiness builds for real).
+				return "";
+			}
 			return frozen.textFor(context.agent, (agent) =>
 				memorySectionText(agent, {
+					store,
 					maxChars: config.memoryIndex?.maxChars ?? DEFAULT_MAX_CHARS,
 					guide: config.memoryIndex?.guide ?? true,
+					toolsAvailable: state.toolsAvailable,
 				}),
 			);
 		},
 	});
-	host.logger("continual-evolve").info(
-		"continual-evolve memory section registered (workspace .evolve/memory, native file read/write)",
-	);
+	log.info("continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 	if (config.memoryCard?.enabled === false) {
 		return;
 	}
