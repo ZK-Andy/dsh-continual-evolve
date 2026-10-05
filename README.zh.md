@@ -25,7 +25,7 @@ Agent 每个会话积累的可复用经验（用户偏好、踩坑教训、项�
 3. **治理即文件** —— 无版本、无快照、无审批、无后台提取：一条坏记忆就是工作区里一个可见的文件，删掉它就是退役。记忆是个人上下文——bootstrap 时若工作区是 git 仓库会自动把 `.evolve/` 追加进 `.gitignore`（非 git 工作区不碰任何文件）。
 4. **只读卡片** —— 插件在官方插件管理的本 bundle 页面挂一张只读记忆卡片（`plugins.bundle.config` slot，老宿主自动降级为无卡片）：形态对齐市场自家设置卡（默认收起、头部整行可点 + 旋转 chevron、hover/展开框态），内容对齐 ZCode 设置的记忆选项卡——工作区一次选一个（下拉作用域选择器，目录取宿主工作区注册表）、文件搜索框、每个文件的相对更新时间、点击行内展开文件内容预览（5 MiB 上限），外加索引漂移警告（未索引文件与索引失联文件）。插件的显示名与描述走宿主包元数据 `locale/*.json` 通道双语切换。卡片与市场同款——宿主主题 token、`Button` 原语刷新按钮、中英文案跟随 DSH 语言（老宿主降级为同主题裸元素）。卡片是磁盘文件的请求时投影——单一事实源永远是 `.evolve/memory/` 里的文件，卡片没有编辑路径，编辑请直接改文件。
 
-记忆文件格式（与 ZCode 一致）：frontmatter 带 `name` / `description`（决定未来会话会不会想起它）/ `metadata.type`（`user | feedback | project | reference`）；`feedback` 正文必带 **Why:** 与 **How to apply:**。
+记忆文件格式（与 ZCode 一致）：frontmatter 带 `name` / `description`（决定未来会话会不会想起它）/ `metadata.type`（`user | feedback | reference`）；`feedback` 正文必带 **Why:** 与 **How to apply:**。提取边界只收"跟人与环境走的知识"：指南要求纠正/确认出现的当轮就写，决策与取舍（天然属于仓库）重定向到仓库的 ADR 路线，不进记忆库。
 
 ## 安装
 
