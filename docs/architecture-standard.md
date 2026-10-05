@@ -1,11 +1,11 @@
 # TS 架构规范
 
-> 适用 `src/` 全部模块（2026-10-04 终极收敛后为三个文件：`index.ts` / `memory-section.ts` / `memory-guide.ts`）；`test/` 镜像被测文件归属。历史五层模型与机器门禁随机制拆除，见 ADR `2026-10-04-zcode-alignment-teardown`。
+> 适用 `src/` 全部模块（v0.15 SQLite 单库改造后：`store.ts` / `index.ts` / `memory-section.ts` / `memory-guide.ts` / `memory-write.ts` / `extraction.ts` 等，`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
 
 ## 1. 组装根唯一性
 
 - `index.ts` 是唯一组装根：唯一读 Config、唯一调用 host 注册 API、唯一声明 `inject`。
-- 宿主 API 形状在 `index.ts` 本地声明（不 import DSH 类型包）；section 渲染与文件操作在 `memory-section.ts`；提示词文案在 `memory-guide.ts`。
+- 宿主 API 形状在 `index.ts` 本地声明（不 import DSH 类型包）；section 渲染在 `memory-section.ts`；提示词文案在 `memory-guide.ts`；存储与门禁在 `store.ts`；写工具在 `memory-write.ts`；提取轨在 `extraction.ts`。
 - 一个 system-prompt section 一个注册点；section 名与 order 集中管理。
 
 ## 2. 模块规模预算
@@ -26,6 +26,6 @@
 
 ## 4. 不变量（任何重构永不妥协）
 
-1. 注入永不破坏会话组装：store 读取/ bootstrap 的任何失败都降级为空渲染，不抛进宿主。
+1. 注入永不破坏会话组装：查库/bootstrap 的任何失败都降级为空渲染，不抛进宿主；`node:sqlite` 不可用时插件整体降级为无操作 + 告警。
 2. prompt section 会话内字节稳定（prompt cache 契约）。
-3. 插件保持零后台自动化：不开 LLM 调用、不装监听器、不起定时器——任何"常驻自动化"提案先过 ROI 证明。
+3. **存储单写者**：插件代码是记忆库的字面唯一写者——模型意图（显式与自动）一律经结构化提案过机械门禁（约束/枚举/secret/去重）后由代码事务内落盘；任何"模型直写存储"的路径都违宪。后台提取（定时器/监听器/LLM 调用）是唯一获准的常驻自动化，其护栏：轮级触发 + 去抖合并、机械跳过记账、全程 `extraction_log` 可对账（ADR `2026-10-06-sqlite-single-store`）。
