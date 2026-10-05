@@ -131,7 +131,11 @@ export interface MemoryStore {
 	list(workspaceId: string): MemoryRecord[];
 	/** Every non-archived record regardless of status (the card's projection). */
 	listAll(workspaceId: string): MemoryRecord[];
-	/** FTS search (trigram, workspace-scoped); <3-char queries fall back to LIKE. */
+	/**
+	 * Keyword search, workspace-scoped: whitespace-separated tokens are
+	 * AND-combined — trigram FTS when every token is ≥3 chars, literal LIKE
+	 * substrings otherwise, and a LIKE fallback whenever FTS finds nothing.
+	 */
 	search(workspaceId: string, query: string, limit?: number): MemoryRecord[];
 	/** The sole write gate: validate all proposals, apply atomically, ledger. */
 	applyProposals(ctx: ProposalContext, proposals: readonly MemoryProposal[]): ProposalOutcome[];
@@ -190,9 +194,24 @@ function recordOf(row: MemoryRow): MemoryRecord {
 const LIST_ORDER =
 	"ORDER BY CASE type WHEN 'feedback' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, updated_at DESC";
 
-/** Quote a user query as an FTS5 phrase (trigram needs ≥3 chars to match). */
-function ftsPhrase(query: string): string {
-	return `"${query.replaceAll('"', '""')}"`;
+/** Quote one token as an FTS5 phrase (trigram needs ≥3 chars to match). */
+function ftsPhrase(token: string): string {
+	return `"${token.replaceAll('"', '""')}"`;
+}
+
+/**
+ * Split a query into keyword tokens on ASCII or full-width whitespace. Each
+ * token is matched on its own and AND-combined: trigram FTS can only match
+ * ≥3-char runs, so a keyword pair like `中文 交接` is unrepresentable as one
+ * FTS phrase and silently returns nothing under a phrase match.
+ */
+function queryTokens(query: string): string[] {
+	return query.split(/[\s\u3000]+/).filter((token) => token.length > 0);
+}
+
+/** `%token%` with LIKE metacharacters escaped — keywords match literally. */
+function likePattern(token: string): string {
+	return `%${token.replaceAll(/[\\%_]/g, "\\$&")}%`;
 }
 
 /** Open (creating on first use) the central store. */
@@ -221,10 +240,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				 SELECT workspace_id, id FROM memories_fts WHERE memories_fts MATCH ? AND workspace_id = ?
 				) AND m.status = 'active' ${LIST_ORDER} LIMIT ?`,
 		),
-		like: database.prepare(
-			`SELECT * FROM memories WHERE workspace_id = ? AND status = 'active'
-			 AND (title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ${LIST_ORDER} LIMIT ?`,
-		),
 		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
 		stateSet: database.prepare(
 			"INSERT INTO state (workspace_id, key, value) VALUES (?, ?, ?) " +
@@ -249,6 +264,27 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		quarantine: database.prepare("UPDATE memories SET status = 'quarantined' WHERE workspace_id = ? AND id = ?"),
 	};
 
+	// LIKE fallback: one OR-triplet per token, every token required. Statements
+	// are cached by token count — the query set repeats, the counts don't grow.
+	const likeStmts = new Map<number, ReturnType<DatabaseSync["prepare"]>>();
+	const likeSearch = (workspaceId: string, tokens: readonly string[], limit: number): MemoryRecord[] => {
+		let stmt = likeStmts.get(tokens.length);
+		if (stmt === undefined) {
+			const clause = tokens
+				.map(() => "(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
+				.join(" AND ");
+			stmt = database.prepare(
+				`SELECT * FROM memories WHERE workspace_id = ? AND status = 'active' AND ${clause} ${LIST_ORDER} LIMIT ?`,
+			);
+			likeStmts.set(tokens.length, stmt);
+		}
+		const patterns = tokens.flatMap((token) => {
+			const pattern = likePattern(token);
+			return [pattern, pattern, pattern];
+		});
+		return (stmt.all(workspaceId, ...patterns, limit) as unknown as MemoryRow[]).map(recordOf);
+	};
+
 	const store: MemoryStore = {
 		path,
 		get(workspaceId, id) {
@@ -262,12 +298,17 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return (stmts.listAll.all(workspaceId) as unknown as MemoryRow[]).map(recordOf);
 		},
 		search(workspaceId, query, limit = 20) {
-			const trimmed = query.trim();
-			if (trimmed.length < 3) {
-				const like = `%${trimmed.replaceAll(/[\\%_]/g, "\\$&")}%`;
-				return (stmts.like.all(workspaceId, like, like, like, limit) as unknown as MemoryRow[]).map(recordOf);
+			const tokens = queryTokens(query);
+			if (tokens.length === 0) {
+				return [];
 			}
-			return (stmts.fts.all(ftsPhrase(trimmed), workspaceId, limit) as unknown as MemoryRow[]).map(recordOf);
+			if (tokens.every((token) => token.length >= 3)) {
+				const hits = stmts.fts.all(tokens.map(ftsPhrase).join(" AND "), workspaceId, limit) as unknown as MemoryRow[];
+				if (hits.length > 0) {
+					return hits.map(recordOf);
+				}
+			}
+			return likeSearch(workspaceId, tokens, limit);
 		},
 		applyProposals(ctx, proposals) {
 			return applyProposals({ database, now: () => new Date().toISOString() }, ctx, proposals).outcomes;

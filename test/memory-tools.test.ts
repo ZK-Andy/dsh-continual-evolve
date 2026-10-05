@@ -170,6 +170,10 @@ describe("memory_read", () => {
 		expect(hits).toContain("id: a");
 		expect(hits).toContain("id: c");
 		expect(hits).not.toContain("id: b");
+		// Multi-keyword queries AND-combine (2-char tokens go through LIKE).
+		const andHits = await run("memory_read", { query: "苹果 这里" });
+		expect(andHits).toContain("id: c");
+		expect(andHits).not.toContain("id: a");
 		const listed = await run("memory_read", {});
 		expect(listed).toContain("id: a");
 		expect(await run("memory_read", { query: "苹果", limit: 1 }).then((text) => text.split("---").length)).toBe(1);

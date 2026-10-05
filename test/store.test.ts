@@ -183,7 +183,33 @@ describe("reads", () => {
 		expect(store.search(WS, "中文标题").map((r) => r.id)).toEqual(["cjk"]);
 		expect(store.search(WS, 'with "quotes"').map((r) => r.id)).toEqual(["cjk"]);
 		expect(store.search(WS, "中文").map((r) => r.id)).toEqual(["cjk"]); // <3 chars → LIKE
+		// ≥3-char tokens that never appear adjacently: AND-combined, not a phrase.
+		expect(store.search(WS, "中文标题 quotes").map((r) => r.id)).toEqual(["cjk"]);
 		expect(store.search(WS, "unrelated", 0)).toEqual([]);
+	});
+
+	it("search AND-combines whitespace-separated keywords", () => {
+		expect(create({ id: "both", title: "中文交接流程", description: "d", body: "记忆与交接都要用中文" })).toBe(true);
+		expect(create({ id: "half", title: "只有中文", description: "d", body: "b" })).toBe(true);
+		// 2-char tokens can never be trigrams: both must appear, as substrings.
+		expect(store.search(WS, "中文 交接").map((r) => r.id)).toEqual(["both"]);
+		// Mixed token shapes (title holds one, body the other) still AND via LIKE.
+		expect(store.search(WS, "中文交接流程 记忆").map((r) => r.id)).toEqual(["both"]);
+		expect(store.search(WS, "中文 不存在的词").map((r) => r.id)).toEqual([]);
+		expect(store.search(WS, "   ")).toEqual([]);
+	});
+
+	it("search treats LIKE metacharacters literally", () => {
+		expect(create({ id: "pct", title: "折扣", description: "d", body: "全场 50%off 起" })).toBe(true);
+		expect(create({ id: "plain-o", title: "openSUSE", description: "d", body: "no percent here" })).toBe(true);
+		expect(create({ id: "snake", title: "t", description: "d", body: "snakeXcase token" })).toBe(true);
+		// `%` is escaped: only the row holding a literal "%o" matches.
+		expect(store.search(WS, "%o").map((r) => r.id)).toEqual(["pct"]);
+		// A lone `_` matches no row (unescaped it would match every non-empty body).
+		expect(store.search(WS, "_")).toEqual([]);
+		expect(store.search(WS, "snakeXcase").map((r) => r.id)).toEqual(["snake"]);
+		// FTS misses "snake_case" (no such trigram) → LIKE fallback, `_` literal → no hit.
+		expect(store.search(WS, "snake_case")).toEqual([]);
 	});
 
 	it("search excludes quarantined rows", () => {
