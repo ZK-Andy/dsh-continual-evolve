@@ -1,7 +1,7 @@
 {
   "name": "dsh-continual-evolve",
   "version": "0.14.2",
-  "description": "ZCode-style workspace memory for DeepSeek Harness: a per-workspace markdown store with session-start index injection.",
+  "description": "ZCode-style workspace memory for DeepSeek Harness: one central SQLite store partitioned by workspace, index injection, and sole-writer gated writes.",
   "license": "MIT",
   "repository": {
     "type": "git",

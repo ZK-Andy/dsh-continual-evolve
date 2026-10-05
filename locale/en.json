@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Workspace Memory",
-    "description": "Per-workspace markdown memory store with session-start index injection."
+    "description": "Central SQLite memory store partitioned by workspace: session-start index injection, gated explicit writes and proposal-based extraction."
   }
 }
