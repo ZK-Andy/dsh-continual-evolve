@@ -1,0 +1,287 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openMemoryStore, type MemoryStore } from "../src/store.js";
+
+let dbPath = "";
+let store: MemoryStore;
+const WS = "/tmp/work/store-tests";
+
+beforeEach(async () => {
+	dbPath = join(mkdtempSync(join(tmpdir(), "evolve-store-")), "memory.db");
+	store = await openMemoryStore(dbPath);
+});
+
+afterEach(() => {
+	store.close();
+});
+
+/** Raw second connection for constraint/ledger assertions the API hides. */
+function rawDb(): DatabaseSync {
+	return new DatabaseSync(dbPath);
+}
+
+function create(overrides: Record<string, unknown> = {}): boolean {
+	return store
+		.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[
+				{
+					action: "create",
+					type: "user",
+					title: "user env",
+					description: "用户的操作系统",
+					body: "Fedora 44",
+					...overrides,
+				},
+			],
+		)[0]?.ok === true;
+}
+
+describe("openMemoryStore", () => {
+	it("creates the database with WAL mode and STRICT schema", async () => {
+		const raw = rawDb();
+		expect(raw.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+		// STRICT + CHECK: a bad type is physically rejected even below the gates.
+		expect(() =>
+			raw
+				.prepare(
+					"INSERT INTO memories (workspace_id, id, type, title, description, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', 't', 't')",
+				)
+				.run(WS, "bad-type", "project", "t", "d", "b"),
+		).toThrow();
+		expect(() =>
+			raw
+				.prepare(
+					"INSERT INTO memories (workspace_id, id, type, title, description, body, status, created_at, updated_at) VALUES (?, ?, 'user', 't', 'd', ?, 'active', 't', 't')",
+				)
+				.run(WS, "big", "b".repeat(65_537)),
+		).toThrow();
+		raw.close();
+	});
+
+	it("keeps the store usable across reopen", async () => {
+		expect(create()).toBe(true);
+		store.close();
+		store = await openMemoryStore(dbPath);
+		expect(store.get(WS, "user-env")?.body).toBe("Fedora 44");
+	});
+});
+
+describe("applyProposals — create/update/delete", () => {
+	it("creates with provenance and derives the id from the title", () => {
+		const [outcome] = store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-9" },
+			[{ action: "create", type: "reference", title: "Exa 定价", description: "价格", body: "$7/1k" }],
+		);
+		expect(outcome?.ok).toBe(true);
+		const record = store.get(WS, outcome?.id ?? "")!;
+		expect(record.sourceSession).toBe("sess-9");
+		expect(record.sourceRun).toBe("explicit");
+		expect(record.status).toBe("active");
+		expect(record.sourceSeqs).toBeNull();
+	});
+
+	it("update merges fields, keeps created_at, and stays FTS-searchable by new text", () => {
+		expect(create({ title: "env facts" })).toBe(true);
+		const before = store.get(WS, "env-facts")!;
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "update", id: "env-facts", body: "now mentions openSUSE too" },
+		]);
+		expect(outcome?.ok).toBe(true);
+		const after = store.get(WS, "env-facts")!;
+		expect(after.body).toContain("openSUSE");
+		expect(after.createdAt).toBe(before.createdAt);
+		expect(after.updatedAt >= before.updatedAt).toBe(true);
+		expect(store.search(WS, "openSUSE").map((r) => r.id)).toEqual(["env-facts"]);
+	});
+
+	it("delete removes the row and its FTS entry", () => {
+		expect(create({ title: "to go", body: "quarantine me not" })).toBe(true);
+		expect(store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [{ action: "delete", id: "to-go" }])[0]?.ok).toBe(true);
+		expect(store.get(WS, "to-go")).toBeUndefined();
+		expect(store.search(WS, "quarantine")).toEqual([]);
+	});
+
+	it("rejects unknown actions, malformed ids, and unknown targets", () => {
+		const run = (proposal: unknown) =>
+			store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [proposal as never])[0]?.ok === false;
+		const runs = (proposal: unknown) =>
+			store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [proposal as never])[0]?.ok === true;
+		expect(run({ action: "upsert", id: "x" })).toBe(true);
+		expect(run({ action: "create", id: "Bad Id", type: "user", title: "t", description: "d", body: "b" })).toBe(true);
+		expect(runs({ action: "create", type: "user", title: "t", description: "d", body: "b" })).toBe(true); // id derived from the title
+		expect(run({ action: "update", id: "ghost" })).toBe(true);
+		expect(run({ action: "delete", id: "ghost" })).toBe(true);
+		expect(run({ action: "create", id: "t", type: "user", title: "t again", description: "d", body: "b" })).toBe(true); // duplicate of the derived-id create above
+		expect(run({ action: "create", type: "user" })).toBe(true); // no id derivable (no title)
+		expect(run({ action: "create", title: "no type", description: "d", body: "b" })).toBe(true); // required field missing
+	});
+});
+
+describe("applyProposals — gates and atomicity", () => {
+	it("rejects a whole batch when one proposal fails, leaving no trace", () => {
+		const outcomes = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", type: "user", title: "good one", description: "d", body: "b" },
+			{ action: "create", type: "user", title: "bad one", description: "", body: "b" },
+		]);
+		expect(outcomes.some((o) => !o.ok)).toBe(true);
+		expect(store.get(WS, "good-one")).toBeUndefined();
+		const raw = rawDb();
+		expect(raw.prepare("SELECT COUNT(*) AS n FROM memories WHERE workspace_id = ?").get(WS)).toEqual({ n: 0 });
+		// The rejected run is still auditable.
+		const ledger = raw.prepare("SELECT status, files FROM extraction_log WHERE workspace_id = ?").get(WS) as {
+			status: string;
+			files: string;
+		};
+		expect(ledger.status).toBe("rejected");
+		expect(JSON.parse(ledger.files)).toEqual([]);
+		raw.close();
+	});
+
+	it("ledgers applied batches with before/after snapshots", () => {
+		expect(create({ title: "snap me" })).toBe(true);
+		store.applyProposals({ workspaceId: WS, trigger: "explicit", runId: "run-1" }, [
+			{ action: "update", id: "snap-me", body: "after text" },
+			{ action: "delete", id: "snap-me" },
+		]);
+		const raw = rawDb();
+		const row = raw.prepare("SELECT run_id, status, files FROM extraction_log ORDER BY ts DESC LIMIT 1").get() as {
+			run_id: string;
+			status: string;
+			files: string;
+		};
+		expect(row.run_id).toBe("run-1");
+		expect(row.status).toBe("applied");
+		const files = JSON.parse(row.files) as { id: string; action: string; before?: { body: string }; after?: unknown }[];
+		expect(files).toHaveLength(2);
+		expect(files[0]?.before?.body).toBe("Fedora 44");
+		expect(files[1]?.action).toBe("delete");
+		expect(files[1]?.before).toBeDefined();
+		expect(files[1]?.after).toBeUndefined();
+		raw.close();
+	});
+});
+
+describe("reads", () => {
+	it("lists active records feedback > user > reference, newest first within type", () => {
+		store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", id: "ref", type: "reference", title: "r", description: "d", body: "b" },
+			{ action: "create", id: "usr", type: "user", title: "u", description: "d", body: "b" },
+			{ action: "create", id: "fdb", type: "feedback", title: "f", description: "d", body: "b\n**Why:** w\n**How to apply:** h" },
+		]);
+		expect(store.list(WS).map((r) => r.id)).toEqual(["fdb", "usr", "ref"]);
+	});
+
+	it("search handles trigram Chinese, quotes, short LIKE fallback, and limits", () => {
+		store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", id: "cjk", type: "user", title: "中文标题可以检索", description: "d", body: 'body with "quotes" inside' },
+			{ action: "create", id: "other", type: "user", title: "unrelated", description: "d", body: "b" },
+		]);
+		expect(store.search(WS, "中文标题").map((r) => r.id)).toEqual(["cjk"]);
+		expect(store.search(WS, 'with "quotes"').map((r) => r.id)).toEqual(["cjk"]);
+		expect(store.search(WS, "中文").map((r) => r.id)).toEqual(["cjk"]); // <3 chars → LIKE
+		expect(store.search(WS, "unrelated", 0)).toEqual([]);
+	});
+
+	it("search excludes quarantined rows", () => {
+		expect(create({ title: "quarantine target" })).toBe(true);
+		const raw = rawDb();
+		raw.prepare("UPDATE memories SET status = 'quarantined' WHERE id = 'quarantine-target'").run();
+		raw.close();
+		expect(store.search(WS, "Fedora")).toEqual([]);
+		expect(store.list(WS)).toEqual([]);
+	});
+});
+
+describe("state, cursors, workspaces", () => {
+	it("roundtrips cursors and arbitrary state per workspace", () => {
+		expect(store.cursor(WS, "s1")).toBeUndefined();
+		store.setCursor(WS, "s1", 42);
+		expect(store.cursor(WS, "s1")).toBe(42);
+		store.setCursor(WS, "s1", 50);
+		expect(store.cursor(WS, "s1")).toBe(50);
+		expect(store.cursor(`${WS}-other`, "s1")).toBeUndefined();
+		store.setState(WS, "k", "v");
+		expect(store.state(WS, "k")).toBe("v");
+		expect(store.state(WS, "missing")).toBeUndefined();
+	});
+
+	it("lists workspaces with active counts", () => {
+		expect(store.listWorkspaces()).toEqual([]);
+		expect(create()).toBe(true);
+		store.applyProposals({ workspaceId: "/tmp/other", trigger: "explicit" }, [
+			{ action: "create", type: "user", title: "t", description: "d", body: "b" },
+		]);
+		const workspaces = store.listWorkspaces();
+		expect(workspaces.map((w) => w.workspaceId)).toEqual(["/tmp/other", WS]);
+		expect(workspaces[1]?.activeCount).toBe(1);
+	});
+});
+
+describe("ledger maintenance", () => {
+	it("logSkipped records no-mutation runs", () => {
+		store.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "no-new-events", status: "skipped" });
+		const raw = rawDb();
+		const row = raw.prepare("SELECT trigger, skip_reason, files FROM extraction_log").get() as {
+			trigger: string;
+			skip_reason: string;
+			files: string | null;
+		};
+		expect(row.trigger).toBe("turn-debounce");
+		expect(row.skip_reason).toBe("no-new-events");
+		expect(row.files).toBeNull();
+		raw.close();
+	});
+
+	it("pruneLedger removes rows older than the cutoff", () => {
+		store.logSkipped({ trigger: "compaction", skipReason: "x" });
+		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBe(1);
+		expect(store.pruneLedger(new Date().toISOString())).toBe(0);
+	});
+});
+
+describe("patrol", () => {
+	it("drops orphan FTS rows and quarantines secret-bearing records", () => {
+		expect(create({ title: "clean" })).toBe(true);
+		const raw = rawDb();
+		// Orphan: FTS row without a memory row.
+		raw.prepare("INSERT INTO memories_fts (workspace_id, id, title, description, body) VALUES (?, ?, 't', 'd', 'b')").run(WS, "ghost");
+		// Secret below the write gates (defence in depth): smuggled via raw SQL.
+		raw
+			.prepare(
+				"INSERT INTO memories (workspace_id, id, type, title, description, body, status, created_at, updated_at) VALUES (?, 'leak', 'user', 't', 'd', ?, 'active', 't', 't')",
+			)
+			.run(WS, "token ghp_0123456789abcdefghijklmnopqrstuv");
+		raw.close();
+
+		const result = store.patrol();
+		expect(result.orphanFtsRows).toBe(1);
+		expect(result.quarantined.map((q) => q.id)).toEqual(["leak"]);
+		expect(store.get(WS, "leak")?.status).toBe("quarantined");
+		// The last patrol result is persisted for the card to display.
+		const stored = JSON.parse(store.state("", "patrol:last")!) as { quarantined: { id: string }[] };
+		expect(stored.quarantined[0]?.id).toBe("leak");
+		// A clean pass finds nothing new.
+		expect(store.patrol().orphanFtsRows).toBe(0);
+		expect(store.patrol().quarantined).toEqual([]);
+	});
+});
+
+describe("defaultStorePath", () => {
+	it("prefers DSH_HOME and falls back to ~/.dsh", async () => {
+		const { defaultStorePath } = await import("../src/store.js");
+		const previous = process.env.DSH_HOME;
+		process.env.DSH_HOME = "/tmp/dsh-home";
+		expect(defaultStorePath()).toBe("/tmp/dsh-home/evolve/memory.db");
+		delete process.env.DSH_HOME;
+		expect(defaultStorePath()).toMatch(/\.dsh\/evolve\/memory\.db$/);
+		if (previous === undefined) {
+			delete process.env.DSH_HOME;
+		} else {
+			process.env.DSH_HOME = previous;
+		}
+	});
+});
