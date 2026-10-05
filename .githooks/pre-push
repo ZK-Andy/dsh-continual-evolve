@@ -6,17 +6,68 @@ cd "$ROOT"
 
 echo "== pre-push: 增量检查 =="
 
-# 变更范围（供人确认）
+# 本次 push 实际传输的范围。git 对每个被推 ref 传一行：
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# 判"src/test/client 是否有变更"只能看这个范围——正常流程是先 commit 再 push，此刻
+# 工作区与暂存区皆干净，`git diff HEAD` 口径恒空、TS 链被整段误跳过（2026-10-05 推
+# 806f63e 实测）。新建 ref（remote_sha 全 0）以"远端一个都没有"的最近提交为基线；
+# 删除 ref（local_sha 全 0）无新提交可查，跳过。
+ZERO=0000000000000000000000000000000000000000
+CHANGED=""
+FORCE=0
+SAW_REF=0
+SCOPE_SET=0
+SCOPE_ARGS=()
+if [[ -t 0 ]]; then
+  echo "（stdin 是终端：手工直跑，按工作区/暂存区口径）"
+else
+  while read -r _local_ref local_sha _remote_ref remote_sha; do
+    SAW_REF=1
+    if [[ -z "$local_sha" || "$local_sha" == "$ZERO" ]]; then
+      continue
+    fi
+    if [[ -z "$remote_sha" || "$remote_sha" == "$ZERO" ]]; then
+      BASE="$(git rev-list --max-count=1 --not --remotes "$local_sha" 2>/dev/null || true)"
+    else
+      BASE="$remote_sha"
+    fi
+    RANGE="$local_sha"
+    if [[ -n "$BASE" && "$BASE" != "$local_sha" ]]; then
+      RANGE="$BASE..$local_sha"
+    fi
+    if OUT="$(git diff --name-only "$RANGE" 2>/dev/null)"; then
+      CHANGED+="$OUT"$'\n'
+    else
+      FORCE=1   # 范围算不出来（对象缺失/异形 ref）：保守全跑，不静默跳过
+    fi
+    if [[ "$SCOPE_SET" == 0 && -n "$BASE" ]]; then
+      SCOPE_ARGS=("$BASE" "$local_sha")
+      SCOPE_SET=1
+    fi
+  done
+fi
+
+if [[ "$SAW_REF" == 0 ]]; then
+  # 无 refs 可读（手工直跑或 stdin 为空）：退化为工作区+暂存区口径，不静默全跳
+  CHANGED="$(git diff --name-only HEAD 2>/dev/null || true)
+$(git diff --cached --name-only 2>/dev/null || true)"
+fi
+
+if [[ "$FORCE" == 1 ]]; then
+  echo "!! 变更范围无法解析，保守执行全链"
+fi
+
+# 变更范围（供人确认）；已知本次 push 范围时按 change-scope 的"显式 ref"原则传下去，
+# 免得它用 fork-point 自动推导（本地 main 已推到 origin 时推不出东西）
 if [[ -x scripts/change-scope.sh ]]; then
-  scripts/change-scope.sh || true
+  scripts/change-scope.sh ${SCOPE_ARGS[@]+"${SCOPE_ARGS[@]}"} || true
   echo
 fi
 
 # 仅当 src/**、test/** 或 client/** 有变更时才跑 TS 工程链；否则跳过以省时（CI 仍会全量矩阵）
 # 直调 node_modules/.bin 而非 pnpm run：pnpm 的 deps-status 检查要开其 store 的
 # sqlite（只读 /home 下必炸，2026-08-24 实证），二进制直调语义等价且无此依赖。
-CHANGED="$(git diff --name-only HEAD 2>/dev/null || true; git diff --cached --name-only 2>/dev/null || true)"
-if echo "$CHANGED" | grep -qE "^(src|test|client)/"; then
+if [[ "$FORCE" == 1 ]] || echo "$CHANGED" | grep -qE "^(src|test|client)/"; then
   echo "-> typecheck (tsc)"
   ./node_modules/.bin/tsc -p tsconfig.json --noEmit
   ./node_modules/.bin/tsc -p tsconfig.scripts.json --noEmit

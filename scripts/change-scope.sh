@@ -24,8 +24,8 @@ else
   [[ -z "$BASE" ]] && { echo "error: 无法确定 base（仓库还没有历史？）" >&2; exit 1; }
 fi
 
-echo "== base:  $BASE  ($(git rev-parse --short "$BASE" 2>/dev/null || echo '?')${2:-})"
-echo "== head:  $HEAD  ($(git rev-parse --short "$HEAD" 2>/dev/null || echo '?')${1:+ from arg})"
+echo "== base:  $BASE  ($(git rev-parse --short "$BASE" 2>/dev/null || echo '?')${1:+ from arg})"
+echo "== head:  $HEAD  ($(git rev-parse --short "$HEAD" 2>/dev/null || echo '?')${2:+ from arg})"
 echo
 echo "== commits ($BASE..$HEAD):"
 git log --oneline "$BASE..$HEAD" || true
