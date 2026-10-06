@@ -199,6 +199,15 @@ describe("runExtraction — model round-trip", () => {
 		expect(bad.status).toBe("failed");
 		expect(store.cursor(WS, "sess-1")).toBeUndefined();
 
+		const long = await runExtraction(deps({ llmAnswer: "x".repeat(3000) }), target, { trigger: "compaction" });
+		expect(long.status).toBe("failed");
+
+		const raw = rawDb();
+		const rows = raw.prepare("SELECT files FROM extraction_log WHERE skip_reason LIKE 'unparseable%' ORDER BY ts").all() as { files: string }[];
+		raw.close();
+		expect(JSON.parse(rows[0]?.files ?? "null")).toBe("这不是 JSON");
+		expect(JSON.parse(rows[1]?.files ?? "null")).toHaveLength(2048);
+
 		const errorLlm: LlmStream = {
 			async *stream() {
 				throw new Error("provider down");

@@ -103,7 +103,7 @@ export interface LedgerEntry {
 	durationMs?: number | undefined;
 	model?: string | undefined;
 	usage?: unknown;
-	/** Applied/attempted mutations: `{id, action, before?, after?, sourceSeqs}`. */
+	/** Applied/attempted mutations: `{id, action, before?, after?, sourceSeqs}`; a parse-failed run instead carries the raw answer's head. */
 	files?: unknown;
 }
 

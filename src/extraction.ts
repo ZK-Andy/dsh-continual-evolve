@@ -54,6 +54,9 @@ export interface ExtractionResult {
 	cursor?: number | undefined;
 }
 
+/** Head length of a failed run's raw answer kept in the ledger `files` column. */
+const FAILURE_RAW_MAX = 2048;
+
 /** Options for one run. */
 export interface RunOptions {
 	trigger: LedgerEntry["trigger"];
@@ -139,7 +142,9 @@ export async function runExtraction(deps: ExtractionDeps, target: ExtractionTarg
 	const parsed = parseExtractionAnswer(text);
 	if (parsed.decision === "error") {
 		// A malformed answer is a failed run: the increment stays unconsumed
-		// and the next trigger retries it.
+		// and the next trigger retries it. The answer's head rides in the
+		// ledger row — the stream is gone after this, so without it the
+		// failure is undiagnosable after the fact.
 		store.logSkipped({
 			...ledgerBase,
 			skipReason: parsed.reason,
@@ -147,6 +152,7 @@ export async function runExtraction(deps: ExtractionDeps, target: ExtractionTarg
 			model: target.model,
 			usage,
 			durationMs: Date.now() - started,
+			files: text.slice(0, FAILURE_RAW_MAX),
 		});
 		return { status: "failed", skipReason: parsed.reason };
 	}
