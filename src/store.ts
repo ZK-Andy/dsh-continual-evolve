@@ -146,6 +146,15 @@ export interface MemoryStore {
 	state(workspaceId: string, key: string): string | undefined;
 	setState(workspaceId: string, key: string, value: string): void;
 	listWorkspaces(): WorkspaceSummary[];
+	/**
+	 * The partition with the most recent session activity: the newest ledger
+	 * instant against the newest memory write, whichever is later. The ledger
+	 * carries a row for every run — including skips and explicit writes — so it
+	 * tracks "a session worked here", while the memory write is the durable
+	 * fallback for a partition whose ledger rows were pruned. Undefined only
+	 * when the store holds neither.
+	 */
+	mostRecentlyActiveWorkspace(): string | undefined;
 	/** Hygiene pass: orphan FTS cleanup + secret quarantine. */
 	patrol(): PatrolResult;
 	/** Ledger rows older than the cutoff, removed (the one unbounded table). */
@@ -251,6 +260,14 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		workspaces: database.prepare(
 			"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM memories WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
 		),
+		recentLedger: database.prepare(
+			"SELECT workspace_id, MAX(ts) AS ts FROM extraction_log " +
+				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+		),
+		recentMemory: database.prepare(
+			"SELECT workspace_id, MAX(updated_at) AS ts FROM memories " +
+				"WHERE status = 'active' AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+		),
 		ledger: database.prepare(
 			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, files) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -338,6 +355,26 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				activeCount: row.n,
 				updatedAt: row.u,
 			}));
+		},
+		mostRecentlyActiveWorkspace() {
+			// Both instants are ISO-8601 UTC, so the newer one is the greater
+			// string; comparing them keeps the two sources one ordering.
+			const rows = [stmts.recentLedger.get(), stmts.recentMemory.get()] as (
+				| { workspace_id?: unknown; ts?: unknown }
+				| undefined
+			)[];
+			let best: { workspaceId: string; ts: string } | undefined;
+			for (const row of rows) {
+				const workspaceId = row?.workspace_id;
+				const ts = row?.ts;
+				if (typeof workspaceId !== "string" || workspaceId.length === 0 || typeof ts !== "string") {
+					continue;
+				}
+				if (best === undefined || ts > best.ts) {
+					best = { workspaceId, ts };
+				}
+			}
+			return best?.workspaceId;
 		},
 		patrol() {
 			const result: PatrolResult = { ts: new Date().toISOString(), orphanFtsRows: 0, quarantined: [] };

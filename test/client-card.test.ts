@@ -395,6 +395,7 @@ describe("workspace scope selector", () => {
 		harness: ReturnType<typeof makeHookReact>,
 		entries: Array<Record<string, unknown>>,
 		modules: Record<string, unknown> = {},
+		defaultRoot: string | null = null,
 	): ElementLike {
 		const { exports } = loadBundle(harness.react, modules);
 		const { ctx, registrations } = makeCtx();
@@ -406,7 +407,7 @@ describe("workspace scope selector", () => {
 		};
 		render();
 		harness.setters[0](true);
-		harness.setters[1]({ status: "ready", model: { workspaces: entries }, message: "" });
+		harness.setters[1]({ status: "ready", model: { workspaces: entries, defaultRoot: defaultRoot }, message: "" });
 		const tree = render();
 		// The scope menu lives inside the block component, one level below the
 		// element tree; render that level explicitly.
@@ -460,6 +461,43 @@ describe("workspace scope selector", () => {
 		(click as () => void)();
 		harness.begin();
 		expect(harness.states[3]).toMatchObject({ root: "/ws/b", query: "", expandedFile: null });
+	});
+
+	it("opens on the server's default workspace instead of the first row", () => {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(
+			harness,
+			[
+				{ root: "/ws/a", label: "A", snapshot: null, error: null },
+				{ root: "/ws/b", label: "B", snapshot: null, error: null },
+			],
+			{},
+			"/ws/b",
+		);
+		expect(findAllByName(tree, "WorkspaceScopeMenu")[0].props?.selected).toBe("/ws/b");
+		// A hand-picked workspace still outranks the default afterwards.
+		const openTree = renderMenu(harness, tree, true);
+		const options = findAllByRole(openTree, "menuitemradio");
+		expect(options.map((option) => option.props?.["aria-checked"])).toEqual(["false", "true"]);
+		const back = options[0].props?.onClick as (() => void) | undefined;
+		expect(typeof back).toBe("function");
+		(back as () => void)();
+		harness.begin();
+		expect(harness.states[3]).toMatchObject({ root: "/ws/a" });
+	});
+
+	it("ignores a default workspace the list does not contain", () => {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(
+			harness,
+			[
+				{ root: "/ws/a", label: "A", snapshot: null, error: null },
+				{ root: "/ws/b", label: "B", snapshot: null, error: null },
+			],
+			{},
+			"/ws/gone",
+		);
+		expect(findAllByName(tree, "WorkspaceScopeMenu")[0].props?.selected).toBe("/ws/a");
 	});
 
 	it("draws the list with the host Menu primitive when the host provides it", () => {
@@ -557,8 +595,26 @@ describe("loadCardModel", () => {
 		expect(calls.some((url) => url.includes("/memory?root=" + encodeURIComponent("/ws/a")))).toBe(true);
 	});
 
-	it("degrades a failing workspace snapshot to an error entry", async () => {
+	it("carries the server's default workspace through, and null when absent", async () => {
 		const { exports } = loadBundle(makeReact());
+		const loadCardModel = exports.loadCardModel as (fetchImpl: typeof fetch) => Promise<{ defaultRoot: unknown }>;
+		const withHint = (async (url: string | URL) => {
+			if (String(url).endsWith("/workspaces")) {
+				return jsonResponse({ workspaces: [{ root: "/ws/a", label: "A" }], defaultRoot: "/ws/b" });
+			}
+			return jsonResponse({ root: "/ws/a", exists: true, fileCount: 0 });
+		}) as unknown as typeof fetch;
+		expect((await loadCardModel(withHint)).defaultRoot).toBe("/ws/b");
+		const withoutHint = (async (url: string | URL) => {
+			if (String(url).endsWith("/workspaces")) {
+				return jsonResponse({ workspaces: [{ root: "/ws/a", label: "A" }] });
+			}
+			return jsonResponse({ root: "/ws/a", exists: true, fileCount: 0 });
+		}) as unknown as typeof fetch;
+		expect((await loadCardModel(withoutHint)).defaultRoot).toBeNull();
+	});
+
+	it("degrades a failing workspace snapshot to an error entry", async () => {		const { exports } = loadBundle(makeReact());
 		const loadCardModel = exports.loadCardModel as (fetchImpl: typeof fetch) => Promise<{
 			workspaces: Array<{ root: string; snapshot: unknown; error: string | null }>;
 		}>;

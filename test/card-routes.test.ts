@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -101,6 +101,8 @@ describe("mountCardRoutes", () => {
 		expect(recorded.status).toBe(200);
 		expect(jsonBody(recorded)).toEqual({
 			workspaces: [{ root: workspace, label: workspace.split("/").pop() }],
+			// The only partition there is, so it is also the one to open on.
+			defaultRoot: workspace,
 		});
 	});
 
@@ -113,7 +115,7 @@ describe("mountCardRoutes", () => {
 		const { routes, webServer } = makeWebServer();
 		mountCardRoutes(webServer, store);
 		const recorded = call(routes.get(CARD_API_WORKSPACES_PATH), { method: "GET", url: CARD_API_WORKSPACES_PATH });
-		expect(jsonBody(recorded)).toEqual({ workspaces: [] });
+		expect(jsonBody(recorded)).toEqual({ workspaces: [], defaultRoot: null });
 		// The rows are still in the store — hidden, not deleted.
 		expect(store.list(vanished)).toHaveLength(1);
 	});
@@ -160,6 +162,71 @@ describe("mountCardRoutes", () => {
 		expect(body.exists).toBe(true);
 		expect(body.fileCount).toBe(1);
 		expect(body.files[0]?.id).toBe("fedora-env");
+	});
+});
+
+describe("the default workspace the card opens on", () => {
+	const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+	/** One active memory in another partition (its own temp directory). */
+	function seedInto(root: string, id: string): void {
+		store.applyProposals({ workspaceId: root, trigger: "explicit" }, [
+			{ action: "create", id, type: "user", title: id, description: "d", body: "b" },
+		]);
+	}
+
+	/** The workspaces route's answer for the mounted card. */
+	function listWith(options: Parameters<typeof mountCardRoutes>[2] = {}): {
+		workspaces: { root: string }[];
+		defaultRoot: string | null;
+	} {
+		const { routes, webServer } = makeWebServer();
+		mountCardRoutes(webServer, store, options);
+		return jsonBody(call(routes.get(CARD_API_WORKSPACES_PATH), { method: "GET", url: CARD_API_WORKSPACES_PATH })) as {
+			workspaces: { root: string }[];
+			defaultRoot: string | null;
+		};
+	}
+
+	it("prefers the host's current workspace over the store's own activity", async () => {
+		const other = mkdtempSync(join(tmpdir(), "evolve-card-hint-"));
+		expect(seed()).toBe(true);
+		await sleep(10);
+		seedInto(other, "later");
+		// The store alone would answer `other`: its ledger row is the newest.
+		expect(store.mostRecentlyActiveWorkspace()).toBe(other);
+		expect(listWith({ currentWorkspace: () => workspace }).defaultRoot).toBe(workspace);
+		rmSync(other, { recursive: true, force: true });
+	});
+
+	it("falls back to the store's most recently active partition", async () => {
+		const other = mkdtempSync(join(tmpdir(), "evolve-card-fallback-"));
+		expect(seed()).toBe(true);
+		await sleep(10);
+		seedInto(other, "later");
+		expect(listWith().defaultRoot).toBe(other);
+		rmSync(other, { recursive: true, force: true });
+	});
+
+	it("ignores a hint outside the listed set and a hint that throws", () => {
+		expect(seed()).toBe(true);
+		// The listed set is a store projection: a root the store cannot serve is
+		// never opened on, however confidently the host names it.
+		expect(listWith({ currentWorkspace: () => "/etc" }).defaultRoot).toBe(workspace);
+		expect(
+			listWith({
+				currentWorkspace: () => {
+					throw new Error("registry unavailable");
+				},
+			}).defaultRoot,
+		).toBe(workspace);
+	});
+
+	it("matches a hint whose spelling is a symlink to a listed root", () => {
+		expect(seed()).toBe(true);
+		const link = join(mkdtempSync(join(tmpdir(), "evolve-card-link-")), "link");
+		symlinkSync(workspace, link);
+		expect(listWith({ currentWorkspace: () => link }).defaultRoot).toBe(workspace);
 	});
 });
 

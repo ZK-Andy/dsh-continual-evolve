@@ -41,6 +41,7 @@ import {
 import { registerMemoryTools } from "./memory-tools.js";
 import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
+import { newestRegistryPath } from "./workspace-hint.js";
 
 export const name = "continual-evolve";
 
@@ -177,6 +178,10 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
  * Mount the card routes on the host web server through a nested inject, so
  * the plugin stays mountable on hosts without that service. Called once the
  * store is ready — the routes are projections of the store, not of files.
+ *
+ * The card's opening workspace comes from the host registry, read through
+ * `ctx.get` on every request (the FAQ #2 sibling-service rule — the service is
+ * optional, so it must not join the inject list, which would gate the mount).
  */
 function mountCardWhenAvailable(host: HostContext, store: MemoryStore): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
@@ -187,14 +192,17 @@ function mountCardWhenAvailable(host: HostContext, store: MemoryStore): void {
 		return;
 	}
 	nested.inject(["webServer"], (scoped: unknown) => {
-		const webServer = (scoped as { webServer?: CardWebServer }).webServer;
+		const context = scoped as { webServer?: CardWebServer; get?: (name: string) => unknown };
+		const webServer = context.webServer;
 		if (webServer === undefined) {
 			host.logger("continual-evolve").warn(
 				"webServer service present but empty — memory card routes not mounted (memory section unaffected)",
 			);
 			return;
 		}
-		mountCardRoutes(webServer, store);
+		mountCardRoutes(webServer, store, {
+			currentWorkspace: () => newestRegistryPath(context.get?.("workspaceRegistry")),
+		});
 	});
 }
 

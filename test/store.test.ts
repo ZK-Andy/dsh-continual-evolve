@@ -247,6 +247,40 @@ describe("state, cursors, workspaces", () => {
 	});
 });
 
+describe("mostRecentlyActiveWorkspace", () => {
+	const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+	it("answers undefined for a store with no dated rows", () => {
+		expect(store.mostRecentlyActiveWorkspace()).toBeUndefined();
+	});
+
+	it("follows the ledger: a newer session activity outranks an older memory write", async () => {
+		expect(create()).toBe(true);
+		await sleep(10);
+		// A run that wrote nothing still ledgers — that is the activity signal.
+		store.logSkipped({ workspaceId: "/tmp/other", trigger: "turn-debounce", skipReason: "no-user-prose", status: "skipped" });
+		expect(store.mostRecentlyActiveWorkspace()).toBe("/tmp/other");
+	});
+
+	it("falls back to the newest memory write once the ledger is pruned", async () => {
+		expect(create()).toBe(true);
+		await sleep(10);
+		store.applyProposals({ workspaceId: "/tmp/other", trigger: "explicit" }, [
+			{ action: "create", type: "user", title: "t", description: "d", body: "b" },
+		]);
+		expect(store.mostRecentlyActiveWorkspace()).toBe("/tmp/other");
+		// The ledger is the one prunable table; the memories are the durable
+		// record and must carry the answer on their own.
+		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBe(2);
+		expect(store.mostRecentlyActiveWorkspace()).toBe("/tmp/other");
+	});
+
+	it("ignores ledger rows that carry no workspace", () => {
+		store.logSkipped({ trigger: "close-drain", skipReason: "internal-agent", status: "skipped" });
+		expect(store.mostRecentlyActiveWorkspace()).toBeUndefined();
+	});
+});
+
 describe("ledger maintenance", () => {
 	it("logSkipped records no-mutation runs", () => {
 		store.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "no-new-events", status: "skipped" });

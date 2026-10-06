@@ -236,7 +236,26 @@ describe("apply card wiring", () => {
 		// The card's workspace list is a store query: no rows, no workspaces.
 		const list = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
 		expect(list.status).toBe(200);
-		expect(JSON.parse(list.body)).toEqual({ workspaces: [] });
+		expect(JSON.parse(list.body)).toEqual({ workspaces: [], defaultRoot: null });
+	});
+
+	it("survives a workspace registry that throws when the card asks for a hint", async () => {
+		const { routes, host } = makeCtxWithWebServer({
+			workspaceRegistry: {
+				list: () => {
+					throw new Error("registry unavailable");
+				},
+			},
+		});
+		apply(host, fullConfig);
+		await vi.waitFor(() => {
+			if (routes.size !== 3) {
+				throw new Error("routes not mounted yet");
+			}
+		});
+		const list = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
+		expect(list.status).toBe(200);
+		expect(JSON.parse(list.body)).toEqual({ workspaces: [], defaultRoot: null });
 	});
 
 	it("skips card wiring when memoryCard is disabled", async () => {
@@ -267,7 +286,7 @@ describe("apply card wiring", () => {
 			) => void;
 		};
 		const before = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
-		expect(JSON.parse(before.body)).toEqual({ workspaces: [] });
+		expect(JSON.parse(before.body)).toEqual({ workspaces: [], defaultRoot: null });
 		let status = 0;
 		memoryRoute.handler(
 			{ method: "GET", url: `/dsh-continual-evolve/api/v1/memory?root=${encodeURIComponent(workspace)}` },

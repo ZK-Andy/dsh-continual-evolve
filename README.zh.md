@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-173%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-190%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-97%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-91%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -24,7 +24,7 @@ Agent 每个会话积累的可复用经验（用户偏好、踩坑教训、项�
 2. **两个工具，一个写者** —— `memory_write`（create/update/delete）承接显式的"记住……"/"忘掉……"：每条提案过代码门禁（id 规范、type 枚举、feedback 的 Why/How 契约、v1 移植的 secret 筛查、64KB 正文上限）后在一个事务内落盘。`memory_read` 按 id 取正文、按关键词检索——空格分隔的关键词取 AND，短词与 trigram 未命中时回退字面子串匹配；注入索引只有钩子。宿主没有工具服务时降级为"告诉用户"措辞，注入不受影响。
 3. **提案制提取** —— 插件唯一的后台自动化，全程 `extraction_log` 可对账：每个 `agent/turn-stopping` 调度**该会话自己**的边界，状态按会话隔离（运行中只保留最新边界——合并而非排队；`compaction/start` 与会话收尾触发 drain），**没有空闲计时器**。一次运行读取该会话游标之后的轨迹增量，用 FTS 取相似既有记忆喂给一次 LLM 调用，模型的结构化提案过同一套门禁落盘；失败与被拒不推游标，下次触发重试。内部 agent、空增量、无真实用户文本的轮次、当轮已有显式 `memory_write` 的轮次机械跳过——每次跳过都记账。
 4. **回滚靠账本，不靠机制** —— 每次变更落一条带 before/after 全文快照的 `extraction_log` 行；undo 就是取 before 重写。每次应用后随跑一次巡检：孤儿 FTS 行清除、含密钥条目隔离（隐藏，不物理删除）。只读卡片显形巡检异常。
-5. **只读卡片** —— 挂在官方插件管理的本 bundle 页面（`plugins.bundle.config` slot，老宿主自动降级为无卡片）：形态对齐市场自家设置卡，内容对齐 ZCode 设置的记忆选项卡——下拉作用域选择器列出库里的工作区分区、搜索框、每条记忆的相对更新时间、点击行内展开正文预览（5 MiB 上限）、巡检异常警告。显示名与描述走宿主 `locale/*.json` 通道双语；宿主主题 token、`Button` 原语、中英文案跟随 DSH 语言。卡片是数据库的请求时投影，没有编辑路径。
+5. **只读卡片** —— 挂在官方插件管理的本 bundle 页面（`plugins.bundle.config` slot，老宿主自动降级为无卡片）：形态对齐市场自家设置卡，内容对齐 ZCode 设置的记忆选项卡——下拉作用域选择器列出库里的工作区分区（默认选中宿主当前工作区）、搜索框、每条记忆的相对更新时间、点击行内展开正文预览（5 MiB 上限）、巡检异常警告。显示名与描述走宿主 `locale/*.json` 通道双语；宿主主题 token、`Button` 原语、中英文案跟随 DSH 语言。卡片是数据库的请求时投影，没有编辑路径。
 
 记忆类型沿 ZCode 分类法：`user`（画像与环境事实）、`feedback`（被纠正/确认的做法——正文必带 **Why:** 与 **How to apply:**）、`reference`（资源指针）。提取边界只收"跟人与环境走的知识"：决策与取舍天然属于仓库，走仓库的 ADR 路线，不进记忆库。
 
@@ -71,7 +71,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（173 例）
+pnpm test                    # vitest（190 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test client
 pnpm check:pack              # 发布产物一致性（prepack 也会跑）
@@ -93,11 +93,12 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 │   ├── extraction-prompt.ts  # 提取 prompt + 应答解析
 │   ├── import-md.ts        # 旧版 markdown 无损迁移
 │   ├── memory-snapshot.ts  # 卡片：记忆库只读投影（条目 / 巡检 / 错误降级）
-│   └── card-routes.ts      # 卡片：webServer 上的 GET-only 只读 API
+│   ├── card-routes.ts      # 卡片：webServer 上的 GET-only 只读 API
+│   └── workspace-hint.ts   # 卡片：宿主当前工作区作为打开时的默认选中
 ├── client/
 │   └── client.js          # 手写 client bundle：官方插件管理内只读卡片
 ├── locale/                # 宿主包元数据：显示名 + 描述双语（zh/en）
-├── test/                  # vitest 测试（15 个文件）
+├── test/                  # vitest 测试（16 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/                  # design.md（设计）· FAQ.md（踩坑）
 └── .agents/               # AI 协作层（AGENTS.md、技能、ADR 笔记）

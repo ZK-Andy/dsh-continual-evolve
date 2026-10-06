@@ -27,11 +27,13 @@
  *
  * Content (v0.14, scope selector v0.15): aligned with ZCode's Settings → Memory
  * viewer, which the .evolve store shape was itself aligned with — one workspace
- * selected at a time behind a dropdown scope selector (workspaces come from the
- * host registry, so the selector lists the same workspaces the workspace picker
- * does), a file search box, per-file relative updated times, and a
+ * selected at a time behind a dropdown scope selector (workspaces are the
+ * store's partitions, so the selector lists exactly what the read fence
+ * serves), a file search box, per-file relative updated times, and a
  * click-to-preview body served by the host's content endpoint (5 MiB cap,
- * deleted/changed guards). The drift warnings (dangling index rows / unindexed
+ * deleted/changed guards). The card opens on the server's `defaultRoot` (the
+ * host's current workspace), falling back to the first listed partition. The
+ * drift warnings (dangling index rows / unindexed
  * files) stay: they are this plugin's OBSERVATION surface and a deliberate
  * superset of ZCode's viewer.
  * Locale/theme/primitives wiring unchanged from v0.13: `ctx.locale.register`
@@ -219,7 +221,12 @@ window.__ModuleLoader__.load({
 					}
 				}),
 			);
-			return { workspaces: entries };
+			return {
+				workspaces: entries,
+				// The server's answer to "which partition is this user in", or null
+				// when it has no opinion (the card then opens on the first row).
+				defaultRoot: typeof listBody.defaultRoot === "string" ? listBody.defaultRoot : null,
+			};
 		}
 
 		/**
@@ -821,13 +828,18 @@ window.__ModuleLoader__.load({
 				inner = createElement("div", { key: "inner", className: "dce-empty" }, t("empty"));
 			} else {
 				var selected = selection.root;
-				if (
-					selected === null ||
-					!model.model.workspaces.some(function (workspace) {
-						return workspace.root === selected;
-					})
-				) {
-					selected = model.model.workspaces[0].root;
+				var listed = function (root) {
+					return model.model.workspaces.some(function (workspace) {
+						return workspace.root === root;
+					});
+				};
+				if (selected === null || !listed(selected)) {
+					// The server names the workspace to open on (the host's current
+					// one); an unknown or absent name leaves the first row, which is
+					// the pre-hint behaviour.
+					selected = typeof model.model.defaultRoot === "string" && listed(model.model.defaultRoot)
+						? model.model.defaultRoot
+						: model.model.workspaces[0].root;
 				}
 				inner = createElement(WorkspaceBlock, {
 					key: "inner",
