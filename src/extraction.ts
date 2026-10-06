@@ -3,15 +3,16 @@
  * bounded increment of one session, one LLM call, one gated transactional
  * application, one ledger row, one cursor.
  *
- * Trigger economics (plan `2026-10-06-v0.15-sqlite-memory-store.md` §3):
- * turn-level, not step-level — every `agent/turn-stopping` (re)arms an idle
- * debounce timer (default 10 min, `memoryIndex.debounceMin`); a run in
- * flight means new turns only refresh the pending boundary (single-flight
- * coalescing); `compaction/start` and session close flush immediately.
- * Everything the pipeline decides mechanically (internal agent, empty
- * increment, no real user prose, an explicit `memory_write` this turn) is
- * skipped AND ledgered — the extraction_log is the account the economics
- * are audited against.
+ * Trigger economics follow ZCode's memory-extraction scheduler: turn-level
+ * (every `agent/turn-stopping` schedules that session's boundary), no idle
+ * timer, and state per session — a session with a run in flight keeps only
+ * its newest boundary, which the run drains when it finishes (coalescing,
+ * not queueing); `compaction/start` and session close drain immediately.
+ * Per-session slots mean one workspace's turns can never delay or displace
+ * another's extraction. Everything the pipeline decides mechanically
+ * (internal agent, empty increment, no real user prose, an explicit
+ * `memory_write` this turn) is skipped AND ledgered — the extraction_log is
+ * the account the economics are audited against.
  *
  * The model proposes; the store disposes. A failed or rejected run never
  * advances the cursor, so the increment is retried on the next trigger.
@@ -235,12 +236,18 @@ async function streamOnce(
 	return { text, usage };
 }
 
-/** One pending extraction target (the coalescing slot). */
+/** One pending extraction target (its session's coalescing slot). */
 interface PendingTarget {
 	agent: unknown;
 	sessionId: string;
 	provider: string | undefined;
 	model: string | undefined;
+}
+
+/** One session's scheduling slot: a run in flight plus its newest boundary. */
+interface SessionSlot {
+	pending: PendingTarget | null;
+	running: boolean;
 }
 
 /** The event wiring surface (duck-typed cordis context). */
@@ -249,27 +256,24 @@ export interface SchedulerHost {
 	logger(name: string): { info(message: string): void; warn(message: string): void };
 }
 
-export interface SchedulerOptions {
-	/** Idle debounce in minutes (default 10); 0 fires on every turn. */
-	debounceMin?: number;
-}
-
 /**
  * Wire the extraction triggers onto the host context. Returns a disposer
- * that removes the listeners and clears the timer. The scheduler is the
- * only background automation the plugin runs, and it is bounded by design:
- * one timer, one in-flight run, one pending slot.
+ * that removes the listeners. The scheduler is the only background
+ * automation the plugin runs, and it is bounded by design: one boundary and
+ * one in-flight run per session.
  */
-export function createExtractionScheduler(
-	host: SchedulerHost,
-	deps: ExtractionDeps,
-	options: SchedulerOptions = {},
-): () => void {
-	const debounceMs = Math.max(0, (options.debounceMin ?? 10) * 60_000);
+export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionDeps): () => void {
 	const listeners: unknown[] = [];
-	let timer: ReturnType<typeof setTimeout> | null = null;
-	let running = false;
-	let pending: PendingTarget | null = null;
+	const slots = new Map<string, SessionSlot>();
+
+	const slotOf = (sessionId: string): SessionSlot => {
+		let slot = slots.get(sessionId);
+		if (slot === undefined) {
+			slot = { pending: null, running: false };
+			slots.set(sessionId, slot);
+		}
+		return slot;
+	};
 
 	const targetOf = (agent: unknown): PendingTarget | null => {
 		const id = (agent as { id?: unknown } | undefined)?.id;
@@ -285,17 +289,14 @@ export function createExtractionScheduler(
 		};
 	};
 
-	const flush = (trigger: LedgerEntry["trigger"]): void => {
-		if (timer !== null) {
-			clearTimeout(timer);
-			timer = null;
-		}
-		if (running || pending === null) {
+	const drain = (sessionId: string, trigger: LedgerEntry["trigger"]): void => {
+		const slot = slotOf(sessionId);
+		if (slot.running || slot.pending === null) {
 			return;
 		}
-		const target = pending;
-		pending = null;
-		running = true;
+		const target = slot.pending;
+		slot.pending = null;
+		slot.running = true;
 		void runExtraction(
 			deps,
 			{
@@ -311,31 +312,30 @@ export function createExtractionScheduler(
 				`extraction run failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}).finally(() => {
-			running = false;
-			if (pending !== null) {
-				// A turn arrived mid-run and refreshed the pending slot: drain it.
-				flush("turn-debounce");
+			slot.running = false;
+			if (slot.pending !== null) {
+				// A turn landed mid-run: the newest boundary is the one to run.
+				drain(sessionId, "turn-debounce");
 			}
 		});
 	};
 
-	const arm = (agent: unknown): void => {
+	/**
+	 * Schedule one session's boundary. Internal agents (subagents and DSH
+	 * internal agents) are filtered at this entry rather than inside the run:
+	 * they are not memory sources, so they never occupy a slot, never drain
+	 * another session's boundary, and leave no ledger rows behind.
+	 */
+	const schedule = (agent: unknown): void => {
+		if (isInternalAgent(agent)) {
+			return;
+		}
 		const target = targetOf(agent);
 		if (target === null) {
 			return;
 		}
-		pending = target; // Coalescing: the latest boundary wins, nothing queues.
-		if (debounceMs === 0) {
-			flush("turn-debounce");
-			return;
-		}
-		if (timer !== null) {
-			clearTimeout(timer);
-		}
-		timer = setTimeout(() => {
-			timer = null;
-			flush("turn-debounce");
-		}, debounceMs);
+		slotOf(target.sessionId).pending = target;
+		drain(target.sessionId, "turn-debounce");
 	};
 
 	listeners.push(
@@ -343,35 +343,45 @@ export function createExtractionScheduler(
 			if (payload.agent === undefined) {
 				return;
 			}
-			arm(payload.agent);
+			schedule(payload.agent);
 		}),
 	);
 	listeners.push(
 		host.on("session/event", (session: { id?: unknown }, event: { type?: unknown }) => {
-			if (event?.type !== "compaction/start" || pending === null || pending.sessionId !== session?.id) {
+			const id = session?.id;
+			if (event?.type !== "compaction/start" || typeof id !== "string") {
 				return;
 			}
-			flush("compaction");
+			const slot = slots.get(id);
+			if (slot === undefined || slot.pending === null) {
+				return;
+			}
+			drain(id, "compaction");
 		}),
 	);
 	listeners.push(
 		host.on("agent/disposed", (payload: { agent?: unknown }) => {
 			const id = (payload.agent as { id?: unknown } | undefined)?.id;
-			if (pending === null || pending.sessionId !== id) {
+			if (typeof id !== "string") {
 				return;
 			}
-			flush("close-drain");
+			const slot = slots.get(id);
+			if (slot === undefined) {
+				return;
+			}
+			if (slot.pending !== null) {
+				drain(id, "close-drain");
+			}
+			// The session is gone: drop its slot. A run already in flight holds
+			// its own reference and simply finds nothing left to drain.
+			slots.delete(id);
 		}),
 	);
 	host.logger("continual-evolve").info(
-		`extraction scheduler armed (debounce ${options.debounceMin ?? 10}min, single-flight with coalescing)`,
+		"extraction scheduler armed (per-session slots, turn-level, single-flight per session)",
 	);
 	return () => {
-		if (timer !== null) {
-			clearTimeout(timer);
-			timer = null;
-		}
-		pending = null;
+		slots.clear();
 		for (const listener of listeners) {
 			if (typeof listener === "function") {
 				listener();

@@ -11,8 +11,9 @@
  *   as the injected index, frozen per session for the prompt cache;
  * - the model tools (`memory-tools.ts`): `memory_write` for explicit
  *   "记住/忘掉" instructions, `memory_read` for bodies and search;
- * - the extraction scheduler (`extraction.ts`): turn-level, debounced,
- *   single-flight; proposals land only through the store's gates;
+ * - the extraction scheduler (`extraction.ts`): turn-level, per-session
+ *   slots, single-flight per session; proposals land only through the
+ *   store's gates;
  * - the read-only card routes (`card-routes.ts`) in the official plugin
  *   manager.
  *
@@ -85,13 +86,11 @@ export const Config = z.object({
 		order: z.natural(),
 		maxChars: z.natural(),
 		/**
-		 * The proposal-based extraction run (trigger: turn-level with idle
-		 * debounce; writes land only through the store's gates). Off keeps
-		 * the plugin injection + explicit tools only.
+		 * The proposal-based extraction run (trigger: turn-level, per-session
+		 * slots, no idle timer; writes land only through the store's gates).
+		 * Off keeps the plugin injection + explicit tools only.
 		 */
 		extraction: z.boolean(),
-		/** Idle debounce minutes between turn end and an extraction run (0 = per turn). */
-		debounceMin: z.natural(),
 	}),
 	/**
 	 * The read-only memory card in the official plugin manager
@@ -170,11 +169,7 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
 			log.warn("sessionQuery service present but empty — extraction not armed (injection and tools unaffected)");
 			return;
 		}
-		createExtractionScheduler(
-			events as SchedulerHost,
-			{ store, surface, llm },
-			{ debounceMin: config.memoryIndex?.debounceMin ?? 10 },
-		);
+		createExtractionScheduler(events as SchedulerHost, { store, surface, llm });
 	});
 }
 

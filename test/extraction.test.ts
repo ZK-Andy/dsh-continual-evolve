@@ -247,102 +247,192 @@ describe("createExtractionScheduler", () => {
 		return { listeners, warns, d, host };
 	}
 
+	/** An LLM whose every stream waits on its own gate, so runs can overlap. */
+	function gatedLlm(text: string) {
+		const calls: Record<string, unknown>[] = [];
+		const gates: Array<() => void> = [];
+		return {
+			calls,
+			release(index: number) {
+				gates[index]?.();
+			},
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const index = calls.length - 1;
+				await new Promise<void>((resolve) => {
+					gates[index] = resolve;
+				});
+				yield { type: "text-delta", text };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+	}
+
+	const answer = JSON.stringify({
+		decision: "apply",
+		reason: "用户环境事实",
+		proposals: [{ action: "create", type: "user", title: "Fedora 环境", description: "用户的操作系统", body: "Fedora 44", sourceSeqs: "10-10" }],
+	});
+
 	const agent = { id: "sess-1", options: { provider: "deepseek", model: "deepseek-chat" }, session: { header: { cwd: WS } } };
+	const otherAgent = { id: "sess-2", options: { provider: "deepseek", model: "deepseek-chat" }, session: { header: { cwd: WS } } };
+	const events = surfaceOf(USER_EVENT, ASSISTANT_EVENT);
 
-	it("arms a debounce timer and flushes when it elapses", async () => {
-		vi.useFakeTimers();
-		try {
-			const { listeners, d, host } = makeHost();
-			const { createExtractionScheduler } = await import("../src/extraction.js");
-			createExtractionScheduler(host, d, { debounceMin: 10 });
-			listeners.get("agent/turn-stopping")![0]({ agent });
-			// Not yet: the idle debounce is armed.
-			expect(store.list(WS)).toEqual([]);
-			await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
-			await vi.waitFor(() => {
-				if (store.list(WS).length === 0) {
-					throw new Error("not applied yet");
-				}
-			});
-			expect(store.cursor(WS, "sess-1")).toBe(11);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("flushes immediately on compaction for the pending session", async () => {
-		vi.useFakeTimers();
-		try {
-			const { listeners, d, host } = makeHost();
-			const { createExtractionScheduler } = await import("../src/extraction.js");
-			createExtractionScheduler(host, d, { debounceMin: 10 });
-			listeners.get("agent/turn-stopping")![0]({ agent });
-			listeners.get("session/event")![0]({ id: "sess-1" }, { type: "compaction/start" });
-			await vi.waitFor(() => {
-				if (store.list(WS).length === 0) {
-					throw new Error("not flushed");
-				}
-			});
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("flushes on session close (agent/disposed)", async () => {
+	it("runs on the turn that scheduled it — no idle timer", async () => {
 		const { listeners, d, host } = makeHost();
 		const { createExtractionScheduler } = await import("../src/extraction.js");
-		createExtractionScheduler(host, d, { debounceMin: 10 });
+		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (store.list(WS).length === 0) {
+				throw new Error("not applied yet");
+			}
+		});
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+	});
+
+	it("coalesces a mid-run turn into one follow-up run", async () => {
+		const llm = gatedLlm(answer);
+		const surface = {
+			rows: [USER_EVENT, ASSISTANT_EVENT] as unknown[],
+			async readSurface(_id: string) {
+				return { events: [...surface.rows] };
+			},
+		};
+		const { listeners, host } = makeHost();
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, { store, surface, llm });
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (llm.calls.length < 1) {
+				throw new Error("first run not started");
+			}
+		});
+		// A new turn with fresh content lands while the first run is in flight:
+		// it refreshes the boundary instead of starting a second concurrent run.
+		surface.rows.push({ seq: 12, type: "user/message", data: { content: "再说一句：我用 Fedora" } });
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(llm.calls).toHaveLength(1);
+		llm.release(0);
+		await vi.waitFor(() => {
+			if (llm.calls.length < 2) {
+				throw new Error("coalesced boundary was never drained");
+			}
+		});
+		llm.release(1);
+	});
+
+	it("keeps sessions isolated: a busy session never delays another", async () => {
+		const llm = gatedLlm(answer);
+		const { listeners, host } = makeHost();
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, { store, surface: events, llm });
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (llm.calls.length < 1) {
+				throw new Error("session 1 not started");
+			}
+		});
+		// Session 2 schedules while session 1 is still running: it starts its
+		// own run instead of waiting behind session 1's slot.
+		listeners.get("agent/turn-stopping")![0]({ agent: otherAgent });
+		await vi.waitFor(() => {
+			if (llm.calls.length < 2) {
+				throw new Error("session 2 was blocked by session 1");
+			}
+		});
+		llm.release(0);
+		llm.release(1);
+	});
+
+	it("filters internal agents at the entry: no run and no ledger row", async () => {
+		const { listeners, d, host } = makeHost();
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, d);
+		const subagent = { ...agent, session: { header: { cwd: WS, origin: "subagent" } } };
+		listeners.get("agent/turn-stopping")![0]({ agent: subagent });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(d.llm.calls).toHaveLength(0);
+		const rows = rawDb().prepare("select count(*) as c from extraction_log").get() as { c: number };
+		expect(rows.c).toBe(0);
+	});
+
+	it("never doubles a run that is already in flight (compaction)", async () => {
+		const llm = gatedLlm(answer);
+		const { listeners, host } = makeHost();
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, { store, surface: events, llm });
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (llm.calls.length < 1) {
+				throw new Error("not started");
+			}
+		});
+		listeners.get("session/event")![0]({ id: "sess-1" }, { type: "compaction/start" });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(llm.calls).toHaveLength(1);
+		llm.release(0);
+	});
+
+	it("ignores lifecycle events when no boundary is pending", async () => {
+		const { listeners, d, host } = makeHost();
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, d);
+		listeners.get("session/event")![0]({ id: "sess-1" }, { type: "compaction/start" });
 		listeners.get("agent/disposed")![0]({ agent });
-		await vi.waitFor(() => {
-			if (store.list(WS).length === 0) {
-				throw new Error("not drained");
-			}
-		});
+		listeners.get("agent/turn-stopping")![0]({}); // payload without an agent
+		listeners.get("agent/turn-stopping")![0]({ agent: { id: "" } }); // no session id
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(d.llm.calls).toHaveLength(0);
 	});
 
-	it("runs immediately with debounceMin 0 and coalesces turns into one run", async () => {
+	it("tolerates lifecycle events for a drained session and for unknown ones", async () => {
 		const { listeners, d, host } = makeHost();
 		const { createExtractionScheduler } = await import("../src/extraction.js");
-		createExtractionScheduler(host, d, { debounceMin: 0 });
-		listeners.get("agent/turn-stopping")![0]({ agent });
+		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
 			if (store.list(WS).length === 0) {
-				throw new Error("not applied");
+				throw new Error("not run");
 			}
 		});
-		// Both turns coalesced into one LLM call.
+		// The slot exists but holds no boundary; the other ids have no slot.
+		listeners.get("session/event")![0]({ id: "sess-1" }, { type: "compaction/start" });
+		listeners.get("session/event")![0]({ id: "unknown" }, { type: "compaction/start" });
+		listeners.get("session/event")![0]({}, { type: "compaction/start" });
+		listeners.get("session/event")![0]({ id: "sess-1" }, { type: "other" });
+		listeners.get("agent/disposed")![0]({ agent: { id: "unknown" } });
+		listeners.get("agent/disposed")![0]({ agent: {} });
+		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(d.llm.calls).toHaveLength(1);
 	});
 
-	it("dispose removes listeners and abandons the pending boundary", async () => {
-		vi.useFakeTimers();
-		try {
-			const { listeners, d, host } = makeHost();
-			const { createExtractionScheduler } = await import("../src/extraction.js");
-			const dispose = createExtractionScheduler(host, d, { debounceMin: 10 });
-			listeners.get("agent/turn-stopping")![0]({ agent });
-			// Disposing with an armed timer cancels the run entirely.
-			listeners.get("agent/turn-stopping")![0]({ agent: { id: "other" } }); // different agent: still one pending slot
-			listeners.get("agent/disposed")![0]({ agent: { id: "somebody-else" } });
-			listeners.get("session/event")![0]({ id: "unrelated" }, { type: "compaction/start" });
-			listeners.get("agent/turn-stopping")![0]({}); // payload without agent: ignored
-			dispose();
-			await vi.advanceTimersByTimeAsync(20 * 60_000);
-			expect(d.llm.calls).toHaveLength(0);
-		} finally {
-			vi.useRealTimers();
-		}
+	it("drops a closing session's slot without doubling its run", async () => {
+		const llm = gatedLlm(answer);
+		const { listeners, host } = makeHost();
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, { store, surface: events, llm });
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (llm.calls.length < 1) {
+				throw new Error("not started");
+			}
+		});
+		listeners.get("agent/turn-stopping")![0]({ agent }); // a boundary lands mid-run
+		listeners.get("agent/disposed")![0]({ agent }); // the session closes while running
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(llm.calls).toHaveLength(1);
+		llm.release(0);
 	});
 
-	it("ignores lifecycle events for sessions with no pending boundary", async () => {
+	it("dispose removes the listeners", async () => {
 		const { listeners, d, host } = makeHost();
 		const { createExtractionScheduler } = await import("../src/extraction.js");
-		createExtractionScheduler(host, d, { debounceMin: 0 });
-		listeners.get("session/event")![0]({ id: "sess-1" }, { type: "compaction/start" });
-		listeners.get("agent/disposed")![0]({ agent });
-		await new Promise((r) => setTimeout(r, 20));
-		expect(d.llm.calls).toHaveLength(0);
+		const dispose = createExtractionScheduler(host, d);
+		dispose();
+		expect(listeners.get("agent/turn-stopping")).toHaveLength(0);
+		expect(listeners.get("session/event")).toHaveLength(0);
+		expect(listeners.get("agent/disposed")).toHaveLength(0);
 	});
 });
