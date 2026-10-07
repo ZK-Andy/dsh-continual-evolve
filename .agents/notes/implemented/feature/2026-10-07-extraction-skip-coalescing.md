@@ -34,4 +34,4 @@ Status: implemented
 - 故障型跳过保持一行一次，因此"配置坏了每回合刷一条"仍能第一时间显形。
 - 迁移在 `openMemoryStore` 内幂等执行：旧库（含 dotnet-desktop 正在使用的 0.15.2 库）首次被新版本打开时补列，历史行回填 `occurrences = 1`。
 - 测试 190 → 194（store 三例：连续合并与断链另起行、跨会话与故障型不合并、旧库补列迁移；extraction 一例：真路径连续三次空转合成一行）。`docs/design.md`、双语 README 的记账口径同步改写。
-- **未发版**：修复只进 main；dotnet-desktop 上跑的仍是 0.15.2 的逐次成行口径。
+- 随 **v0.15.3** 发版（与 `6454281` 的失败留痕同一版）：dotnet-desktop 更新后首次打开既有库即补列，合并口径随之生效。
