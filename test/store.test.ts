@@ -301,6 +301,69 @@ describe("ledger maintenance", () => {
 		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBe(1);
 		expect(store.pruneLedger(new Date().toISOString())).toBe(0);
 	});
+
+	it("coalesces consecutive quiet-turn skips into one counted row", () => {
+		const quiet = (): void => {
+			store.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "no-user-prose", status: "skipped" });
+		};
+		quiet();
+		quiet();
+		quiet();
+		const raw = rawDb();
+		expect(raw.prepare("SELECT skip_reason, occurrences FROM extraction_log").all()).toEqual([
+			{ skip_reason: "no-user-prose", occurrences: 3 },
+		]);
+		// Anything in between ends the chain: a model decision means the cursor
+		// moved, so the next quiet turn is a new cursor position.
+		store.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "model-skip: 无新事实", status: "skipped" });
+		quiet();
+		expect(raw.prepare("SELECT occurrences FROM extraction_log ORDER BY rowid").all()).toEqual([
+			{ occurrences: 3 },
+			{ occurrences: 1 },
+			{ occurrences: 1 },
+		]);
+		raw.close();
+	});
+
+	it("keeps other sessions and fault-shaped skips one row apiece", () => {
+		const skip = (sessionId: string, skipReason: string): void => {
+			store.logSkipped({ workspaceId: WS, sessionId, trigger: "turn-debounce", skipReason, status: "skipped" });
+		};
+		skip("s1", "no-user-prose");
+		skip("s2", "no-user-prose");
+		skip("s1", "no-route");
+		skip("s1", "no-route");
+		const raw = rawDb();
+		expect(raw.prepare("SELECT session_id, skip_reason, occurrences FROM extraction_log ORDER BY rowid").all()).toEqual([
+			{ session_id: "s1", skip_reason: "no-user-prose", occurrences: 1 },
+			{ session_id: "s2", skip_reason: "no-user-prose", occurrences: 1 },
+			{ session_id: "s1", skip_reason: "no-route", occurrences: 1 },
+			{ session_id: "s1", skip_reason: "no-route", occurrences: 1 },
+		]);
+		raw.close();
+	});
+
+	it("migrates a store created before the occurrences column existed", async () => {
+		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-legacy-")), "memory.db");
+		const legacy = new DatabaseSync(legacyPath);
+		legacy.exec(
+			"CREATE TABLE extraction_log (run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT, " +
+				"trigger TEXT, decision TEXT, skip_reason TEXT, status TEXT, duration_ms INTEGER, model TEXT, usage TEXT, files TEXT)",
+		);
+		legacy
+			.prepare("INSERT INTO extraction_log (ts, session_id, workspace_id, trigger, skip_reason, status) VALUES (?, ?, ?, ?, ?, ?)")
+			.run("2026-10-01T00:00:00.000Z", "s", WS, "turn-debounce", "no-user-prose", "skipped");
+		legacy.close();
+
+		const migrated = await openMemoryStore(legacyPath);
+		migrated.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "no-user-prose", status: "skipped" });
+		migrated.close();
+
+		// The pre-existing row is backfilled with 1 and then bumped by the repeat.
+		const raw = new DatabaseSync(legacyPath);
+		expect(raw.prepare("SELECT occurrences FROM extraction_log").all()).toEqual([{ occurrences: 2 }]);
+		raw.close();
+	});
 });
 
 describe("patrol", () => {

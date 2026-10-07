@@ -109,6 +109,19 @@ describe("runExtraction — mechanical skips (each ledgered, cursor untouched)",
 		expect(result.skipReason).toBe("direct-memory-write");
 	});
 
+	it("folds a quiet turn's repeated skip into one counted ledger row", async () => {
+		const quiet = { store, surface: surfaceOf({ seq: 10, type: "user/message", data: { content: "好的" } }), llm: fakeLlm("{}") };
+		for (let turn = 0; turn < 3; turn += 1) {
+			const result = await runExtraction(quiet, target, { trigger: "turn-debounce" });
+			expect(result.skipReason).toBe("no-user-prose");
+		}
+		const raw = rawDb();
+		expect(raw.prepare("SELECT skip_reason, occurrences FROM extraction_log").all()).toEqual([
+			{ skip_reason: "no-user-prose", occurrences: 3 },
+		]);
+		raw.close();
+	});
+
 	it("every skip above left a ledger row and no cursor", async () => {
 		await runExtraction(deps(), { ...target, internalAgent: true }, { trigger: "turn-debounce" });
 		const raw = rawDb();

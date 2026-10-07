@@ -12,14 +12,14 @@
 ~/.dsh/evolve/memory.db          # SQLite 单库（node:sqlite，WAL，FTS5 trigram 中文检索 + 关键词 AND/LIKE 兜底）
 ├── memories                     # 记忆条目（STRICT；type/status 枚举 CHECK；body ≤64KB）
 ├── memories_fts                 # 全文索引（与 memories 同事务内由代码同步）
-├── extraction_log               # 快照账本：每次变更内嵌 before/after 全文，skip 也记账
+├── extraction_log               # 快照账本：每次变更内嵌 before/after 全文；skip 也记账，同会话连续空转合成一行（occurrences 计次）
 └── state                        # 提取游标（seq:<n>，按工作区+会话分隔）与巡检状态
 ```
 
 - **开局注入**（`src/memory-section.ts`）：`evolve:memory-index` section（order 400）注入本工作区的记忆索引——查库结果而非文件，只含钩子（id/标题/描述/类型），feedback > user > reference 排序；超预算按整行截断并提示 `memory_read` 检索。会话内逐字节冻结守 prompt cache；空 store 零 token。
 - **唯一写门**（`src/store-apply.ts` + `src/memory-rules.ts`）：两条写路径共用同一入口 `applyProposals`——全量校验（type 枚举、尺寸上限、id 规范含 CJK hash 兜底、feedback 的 Why/How 契约、v1 移植的 secret 正则筛查）→ 事务内原子应用 → 账本行（before/after 全文）。任何一条提案被拒，整批回滚且不推游标。
 - **写路径 A：`memory_write`**（`src/memory-tools.ts`）：主会话显式"记住/忘掉"走工具；`memory_read` 按 id 取正文、按关键词检索（空格分隔的关键词取 AND：全部 ≥3 字符走 trigram，任一短词或 FTS 未命中则回退字面子串匹配；注入索引只有钩子）。宿主工具定义手写为裸注册形状（标准 JSON Schema、根级 required，FAQ #2），零运行时 DSH import。
-- **写路径 B：提案制提取**（`src/extraction*.ts`）：轮级调度 + **按会话分槽**（每会话一个 pending 槽与在飞运行；运行中只保留最新边界即合并，compaction/会话关闭触发 drain，**无空闲计时器**）→ 读轨迹增量（`seq:<n>` 游标）→ 机械跳过（内部 agent/空增量/无真实用户文本 ≥3 词/当轮已有显式写入）并记账 → FTS 取相似候选 → 单次 LLM 调用产出闭集提案（create/update/delete）→ 过写门落盘 → 推游标 → 巡检随跑。失败不推游标，下次重试。
+- **写路径 B：提案制提取**（`src/extraction*.ts`）：轮级调度 + **按会话分槽**（每会话一个 pending 槽与在飞运行；运行中只保留最新边界即合并，compaction/会话关闭触发 drain，**无空闲计时器**）→ 读轨迹增量（`seq:<n>` 游标）→ 机械跳过（内部 agent/空增量/无真实用户文本 ≥3 词/当轮已有显式写入）并记账（同因连续跳过合成一行、累计唤醒次数；故障型跳过与失败仍逐次成行）→ FTS 取相似候选 → 单次 LLM 调用产出闭集提案（create/update/delete）→ 过写门落盘 → 推游标 → 巡检随跑。失败不推游标，下次重试。
 - **回滚靠账本**：undo = 取账本 before 快照重写；终极兜底是会话轨迹本身（记忆是轨迹的投影，`source_seqs` 可回放溯源）。
 - **巡检**：每次提取应用后随跑——孤儿 FTS 行清除、active 行 secret 扫描 → 命中行 `status='quarantined'`（隐藏不删，卡片显形）。
 - **只读卡片**（`src/memory-snapshot.ts` + `src/card-routes.ts` + `client/client.js`）：官方插件管理内一张只读卡片，形态对齐市场设置卡、内容对齐 ZCode 记忆选项卡——工作区下拉（= 库内 `SELECT DISTINCT workspace_id`，目录已删的分区失联不显示不阻塞）、搜索、相对更新时间、按 id 的内容预览（5 MiB 上限）、巡检异常警告。宿主缺 `webServer`/slot 自动降级。显示名/描述走 `locale/*.json` 双语通道。

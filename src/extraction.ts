@@ -12,7 +12,9 @@
  * another's extraction. Everything the pipeline decides mechanically
  * (internal agent, empty increment, no real user prose, an explicit
  * `memory_write` this turn) is skipped AND ledgered — the extraction_log is
- * the account the economics are audited against.
+ * the account the economics are audited against. Consecutive repeats of one
+ * session's quiet-turn skip share a single row there, counted in
+ * `occurrences` (see `store.ts`), so the account stays readable at volume.
  *
  * The model proposes; the store disposes. A failed or rejected run never
  * advances the cursor, so the increment is retried on the next trigger.

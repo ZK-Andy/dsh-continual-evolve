@@ -31,6 +31,15 @@ export const MD_IMPORT_STATE_KEY = "md-imported";
 export const GLOBAL_WORKSPACE = "";
 /** Preview size cap for the card's content endpoint (ZCode's viewer uses 5 MiB). */
 export const MEMORY_FILE_PREVIEW_LIMIT = 5 * 1024 * 1024;
+/** Ledger column counting the wake-ups one coalesced row stands for. */
+const LEDGER_OCCURRENCES = "occurrences";
+/**
+ * Skips a busy-but-quiet session repeats verbatim, turn after turn: the
+ * ledger keeps one counted row instead of one row per wake-up. Fault-shaped
+ * skips (`no-route`, `no-surface`, `no-workspace`) and every failure stay one
+ * row per occurrence — a persistent fault deserves a timeline, not a counter.
+ */
+const COALESCED_SKIP_REASONS = new Set(["no-user-prose", "no-new-events"]);
 
 const DDL = `
 PRAGMA journal_mode=WAL;
@@ -64,7 +73,7 @@ CREATE TABLE IF NOT EXISTS extraction_log (
   trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import')),
   decision TEXT, skip_reason TEXT,
   status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
-  files TEXT
+  files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS state (
   workspace_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -91,7 +100,12 @@ export interface MemoryRecord {
 	updatedAt: string;
 }
 
-/** One ledger row (audit + rollback via embedded before/after snapshots). */
+/**
+ * One ledger row (audit + rollback via embedded before/after snapshots).
+ * Consecutive mechanical skips of the same kind share one row, whose
+ * `occurrences` column counts the wake-ups it stands for (`1` for everything
+ * else); the interface never sets it — the store owns that column.
+ */
 export interface LedgerEntry {
 	runId?: string | undefined;
 	sessionId?: string | undefined;
@@ -239,6 +253,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		);
 	}
 	database.exec(DDL);
+	ensureLedgerOccurrences(database);
 
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
@@ -272,6 +287,13 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, files) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
+		latestSkip: database.prepare(
+			"SELECT rowid AS rid, skip_reason AS reason, status FROM extraction_log " +
+				"WHERE workspace_id IS ? AND session_id IS ? ORDER BY ts DESC, rowid DESC LIMIT 1",
+		),
+		bumpSkip: database.prepare(
+			`UPDATE extraction_log SET ts = ?, ${LEDGER_OCCURRENCES} = ${LEDGER_OCCURRENCES} + 1 WHERE rowid = ?`,
+		),
 		prune: database.prepare("DELETE FROM extraction_log WHERE ts < ?"),
 		ftsOrphans: database.prepare(
 			"SELECT f.rowid AS rid FROM memories_fts f LEFT JOIN memories m ON m.workspace_id = f.workspace_id AND m.id = f.id WHERE m.id IS NULL",
@@ -300,6 +322,30 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return [pattern, pattern, pattern];
 		});
 		return (stmt.all(workspaceId, ...patterns, limit) as unknown as MemoryRow[]).map(recordOf);
+	};
+
+	/**
+	 * Fold a repeat of the previous row's mechanical skip into that row: the
+	 * quiet turns of one session are one cursor position, so they are one
+	 * ledger row carrying how many wake-ups it stands for. Only a
+	 * *consecutive* repeat coalesces — anything in between (a model decision,
+	 * an applied batch, a different reason, another session) starts a new row,
+	 * which is exactly what "the same cursor position" means here. The bumped
+	 * row takes the newest `ts`, so recency queries still see the session as
+	 * active.
+	 */
+	const coalesceSkip = (entry: LedgerEntry): boolean => {
+		if (entry.status !== "skipped" || entry.skipReason === undefined || !COALESCED_SKIP_REASONS.has(entry.skipReason)) {
+			return false;
+		}
+		const latest = stmts.latestSkip.get(entry.workspaceId ?? null, entry.sessionId ?? null) as
+			| { rid: number; reason: string | null; status: string | null }
+			| undefined;
+		if (latest === undefined || latest.status !== "skipped" || latest.reason !== entry.skipReason) {
+			return false;
+		}
+		stmts.bumpSkip.run(new Date().toISOString(), latest.rid);
+		return true;
 	};
 
 	const store: MemoryStore = {
@@ -331,6 +377,9 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return applyProposals({ database, now: () => new Date().toISOString() }, ctx, proposals).outcomes;
 		},
 		logSkipped(entry) {
+			if (coalesceSkip(entry)) {
+				return;
+			}
 			writeLedger(stmts.ledger, entry);
 		},
 		cursor(workspaceId, sessionId) {
@@ -400,6 +449,19 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		},
 	};
 	return store;
+}
+
+/**
+ * Add the ledger's `occurrences` column to a store created before coalescing
+ * existed. The DDL only covers fresh files, and the plugin is the sole writer
+ * of an existing user database — the one migration the ledger needs.
+ */
+function ensureLedgerOccurrences(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === LEDGER_OCCURRENCES)) {
+		return;
+	}
+	database.exec(`ALTER TABLE extraction_log ADD COLUMN ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1`);
 }
 
 /** JSON-encode the optional ledger fields and insert the row (never throws past a warn). */
