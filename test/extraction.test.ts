@@ -252,6 +252,152 @@ describe("runExtraction — model round-trip", () => {
 	});
 });
 
+describe("runExtraction — unexpected failures leave a ledger row, never throw", () => {
+	function ledgerRows(): { skip_reason: string | null; status: string | null; files: string | null }[] {
+		const raw = rawDb();
+		try {
+			return raw.prepare("SELECT skip_reason, status, files FROM extraction_log ORDER BY rowid").all() as {
+				skip_reason: string | null;
+				status: string | null;
+				files: string | null;
+			}[];
+		} finally {
+			raw.close();
+		}
+	}
+
+	it("a throwing store.list is a ledgered failure without cursor movement", async () => {
+		const broken: MemoryStore = {
+			...store,
+			list: () => {
+				throw new Error("db locked");
+			},
+		};
+		const d = deps();
+		const result = await runExtraction({ store: broken, surface: d.surface, llm: d.llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("failed");
+		expect(result.skipReason).toContain("db locked");
+		const rows = ledgerRows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.status).toBe("failed");
+		expect(rows[0]?.skip_reason).toContain("unexpected-error");
+		expect(rows[0]?.skip_reason).toContain("db locked");
+		expect(JSON.parse(rows[0]?.files ?? "null")).toContain("db locked");
+		expect(store.cursor(WS, "sess-1")).toBeUndefined();
+	});
+
+	it("a throwing applyProposals is a ledgered failure and keeps the cursor for a retry", async () => {
+		const broken: MemoryStore = {
+			...store,
+			applyProposals: () => {
+				throw new Error("disk gone");
+			},
+		};
+		const d = deps();
+		const result = await runExtraction({ store: broken, surface: d.surface, llm: d.llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("failed");
+		expect(result.skipReason).toContain("disk gone");
+		expect(store.cursor(WS, "sess-1")).toBeUndefined();
+		expect(store.list(WS)).toEqual([]);
+		const rows = ledgerRows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.skip_reason).toContain("unexpected-error");
+	});
+
+	it("a throwing patrol is ledgered without hiding the landed batch", async () => {
+		const broken: MemoryStore = {
+			...store,
+			patrol: () => {
+				throw new Error("fts sick");
+			},
+		};
+		const d = deps();
+		const result = await runExtraction({ store: broken, surface: d.surface, llm: d.llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("failed");
+		expect(result.skipReason).toContain("fts sick");
+		// The batch landed and the cursor advanced before hygiene ran — the
+		// failure row joins the applied row, it never hides it.
+		expect(store.list(WS)).toHaveLength(1);
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+		const rows = ledgerRows();
+		expect(rows.some((row) => row.status === "applied")).toBe(true);
+		expect(rows.some((row) => (row.skip_reason ?? "").includes("unexpected-error"))).toBe(true);
+	});
+
+	it("surface-read and llm failures carry the error text in the ledger", async () => {
+		await runExtraction(
+			{ store, surface: { async readSurface() { throw new Error("disk gone"); } }, llm: fakeLlm("{}") },
+			target,
+			{ trigger: "compaction" },
+		);
+		const errorLlm: LlmStream = {
+			async *stream() {
+				throw new Error("provider down");
+				yield {}; // unreachable — satisfies the generator contract
+			},
+		};
+		await runExtraction({ store, surface: surfaceOf(USER_EVENT), llm: errorLlm }, target, { trigger: "compaction" });
+		const rows = ledgerRows();
+		expect(rows).toHaveLength(2);
+		expect(rows[0]?.skip_reason).toBe("surface-read-failed");
+		expect(JSON.parse(rows[0]?.files ?? "null")).toContain("disk gone");
+		expect(rows[1]?.skip_reason).toBe("llm-failed");
+		expect(JSON.parse(rows[1]?.files ?? "null")).toContain("provider down");
+	});
+
+	it("the scheduler ledgers an escaped run failure before warning", async () => {
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		let writes = 0;
+		const flaky: MemoryStore = {
+			...store,
+			logSkipped: (entry) => {
+				writes += 1;
+				if (writes <= 2) {
+					throw new Error("ledger busy");
+				}
+				store.logSkipped(entry);
+			},
+		};
+		const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+		const warns: string[] = [];
+		const host = {
+			on(event: string, handler: (...args: unknown[]) => void) {
+				const list = listeners.get(event) ?? [];
+				list.push(handler);
+				listeners.set(event, list);
+				return () => undefined;
+			},
+			logger: () => ({ info: () => undefined, warn: (message: string) => warns.push(message) }),
+		};
+		const throwingSurface = {
+			async readSurface(): Promise<{ events: unknown[] }> {
+				throw new Error("disk gone");
+			},
+		};
+		createExtractionScheduler(host, { store: flaky, surface: throwingSurface, llm: fakeLlm("{}") });
+		const schedAgent = {
+			id: "sess-1",
+			options: { provider: "deepseek", model: "deepseek-chat" },
+			session: { header: { cwd: WS } },
+		};
+		listeners.get("agent/turn-stopping")![0]({ agent: schedAgent });
+		await vi.waitFor(() => {
+			if (warns.length === 0) {
+				throw new Error("warn not yet");
+			}
+		});
+		// The run-level ledger write and its retry both hit "ledger busy";
+		// the scheduler's last-resort write landed the row.
+		expect(writes).toBe(3);
+		const rows = ledgerRows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.status).toBe("failed");
+		expect(rows[0]?.skip_reason).toContain("unexpected-error");
+		expect(JSON.parse(rows[0]?.files ?? "null")).toContain("disk gone");
+		expect(warns[0]).toContain("disk gone");
+	});
+});
+
 describe("createExtractionScheduler", () => {
 	function makeHost(depsOverrides: Partial<ExtractionDeps> = {}) {
 		const listeners = new Map<string, Array<(...args: unknown[]) => void>>();

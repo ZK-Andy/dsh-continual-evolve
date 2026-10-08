@@ -59,6 +59,19 @@ export interface ExtractionResult {
 /** Head length of a failed run's raw answer kept in the ledger `files` column. */
 const FAILURE_RAW_MAX = 2048;
 
+/** Head length of an unexpected error's message/stack trace kept in the ledger `files` column. */
+const UNEXPECTED_ERROR_RAW_MAX = 2048;
+
+/** Head length of an error message embedded in a ledger `skip_reason`. */
+const ERROR_REASON_MAX = 300;
+
+/** Split an unexpected throw into a ledger-sized reason head and file body. */
+function errorText(error: unknown): { message: string; detail: string } {
+	const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
+	const stack = error instanceof Error && typeof error.stack === "string" ? error.stack : message;
+	return { message, detail: `${message}\n${stack}`.slice(0, UNEXPECTED_ERROR_RAW_MAX) };
+}
+
 /** Options for one run. */
 export interface RunOptions {
 	trigger: LedgerEntry["trigger"];
@@ -67,10 +80,45 @@ export interface RunOptions {
 }
 
 /**
- * Run one extraction pass for a target. Never throws: every terminal path
- * is either a landed application, a ledgered skip, or a ledgered failure.
+ * Run one extraction pass for a target. Never throws unless the ledger
+ * itself is unwritable: every terminal path is either a landed application,
+ * a ledgered skip, or a ledgered failure — anything that escapes the
+ * per-stage handling inside lands a failed `unexpected-error` ledger row
+ * here, so no failure ends as a scheduler warn without an account trace.
  */
 export async function runExtraction(deps: ExtractionDeps, target: ExtractionTarget, opts: RunOptions): Promise<ExtractionResult> {
+	const started = Date.now();
+	try {
+		return await runExtractionInner(deps, target, opts);
+	} catch (error) {
+		const { message, detail } = errorText(error);
+		const reason = `unexpected-error: ${message.slice(0, ERROR_REASON_MAX)}`;
+		try {
+			deps.store.logSkipped({
+				sessionId: target.sessionId,
+				workspaceId: target.workspaceId,
+				trigger: opts.trigger,
+				skipReason: reason,
+				status: "failed",
+				model: target.model,
+				durationMs: Date.now() - started,
+				files: detail,
+			});
+		} catch (ledgerError) {
+			// The ledger itself is down — nothing left to write to. Chain
+			// both errors so the scheduler's last-resort row keeps the
+			// triggering failure, not just the ledger fault.
+			throw new Error(`extraction failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
+		}
+		return { status: "failed", skipReason: reason };
+	}
+}
+
+/**
+ * The pipeline body: one bounded increment of one session, one LLM call, one
+ * gated transactional application, one ledger row, one cursor.
+ */
+async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget, opts: RunOptions): Promise<ExtractionResult> {
 	const { store } = deps;
 	const ledgerBase = {
 		sessionId: target.sessionId,
@@ -100,8 +148,13 @@ export async function runExtraction(deps: ExtractionDeps, target: ExtractionTarg
 		const snapshot = await deps.surface.readSurface(target.sessionId);
 		all = Array.isArray(snapshot.events) ? snapshot.events : [];
 	} catch (error) {
-		store.logSkipped({ ...ledgerBase, skipReason: "surface-read-failed", status: "failed" });
-		return { status: "failed", skipReason: `surface read failed: ${error instanceof Error ? error.message : String(error)}` };
+		const { message, detail } = errorText(error);
+		try {
+			store.logSkipped({ ...ledgerBase, skipReason: "surface-read-failed", status: "failed", files: detail });
+		} catch (ledgerError) {
+			throw new Error(`surface read failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
+		}
+		return { status: "failed", skipReason: `surface read failed: ${message}` };
 	}
 	const events = eventsAfterCursor(all, cursor === undefined ? undefined : `seq:${cursor}`);
 	const slice = evaluateSlice({ events, internalAgent: false });
@@ -137,8 +190,13 @@ export async function runExtraction(deps: ExtractionDeps, target: ExtractionTarg
 		text = answer.text;
 		usage = answer.usage;
 	} catch (error) {
-		store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started });
-		return { status: "failed", skipReason: `llm call failed: ${error instanceof Error ? error.message : String(error)}` };
+		const { message, detail } = errorText(error);
+		try {
+			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started, files: detail });
+		} catch (ledgerError) {
+			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
+		}
+		return { status: "failed", skipReason: `llm call failed: ${message}` };
 	}
 
 	const parsed = parseExtractionAnswer(text);
@@ -316,9 +374,25 @@ export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionD
 			},
 			{ trigger },
 		).catch((error: unknown) => {
-			host.logger("continual-evolve").warn(
-				`extraction run failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			// Last resort: runExtraction ledgers its own unexpected failures,
+			// so this fires only when even that failed (the ledger write
+			// threw) — retry one ledger row here before the warn, so the
+			// failure still has an account trace.
+			const { message, detail } = errorText(error);
+			try {
+				deps.store.logSkipped({
+					sessionId: target.sessionId,
+					workspaceId: cwdOf(target.agent),
+					trigger,
+					skipReason: `unexpected-error: ${message.slice(0, ERROR_REASON_MAX)}`,
+					status: "failed",
+					model: target.model,
+					files: detail,
+				});
+			} catch {
+				// The ledger is down — the warn below is the last resort.
+			}
+			host.logger("continual-evolve").warn(`extraction run failed unexpectedly: ${message}`);
 		}).finally(() => {
 			slot.running = false;
 			if (slot.pending !== null) {
