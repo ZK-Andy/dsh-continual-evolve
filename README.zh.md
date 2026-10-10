@@ -111,3 +111,5 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 ## License
 
 MIT。独立项目——与 DeepSeek 无关联。
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
