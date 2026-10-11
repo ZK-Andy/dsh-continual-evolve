@@ -144,11 +144,11 @@ describe("apply tool wiring", () => {
 		const { sections, host, tools } = makeCtxWithServices();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (tools.size !== 2) {
+			if (tools.size !== 4) {
 				throw new Error("tools not registered yet");
 			}
 		});
-		expect([...tools.keys()].sort()).toEqual(["memory_read", "memory_write"]);
+		expect([...tools.keys()].sort()).toEqual(["memory_read", "memory_write", "skill_read", "skill_write"]);
 		// The rendered guide names the tools now that they exist.
 		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-tools-"));
 		const text = await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
@@ -224,13 +224,15 @@ describe("apply card wiring", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 3) {
+			if (routes.size !== 5) {
 				throw new Error("routes not mounted yet");
 			}
 		});
 		expect([...routes.keys()].sort()).toEqual([
 			"/dsh-continual-evolve/api/v1/memory",
 			"/dsh-continual-evolve/api/v1/memory/file",
+			"/dsh-continual-evolve/api/v1/skills",
+			"/dsh-continual-evolve/api/v1/skills/file",
 			"/dsh-continual-evolve/api/v1/workspaces",
 		]);
 		// The card's workspace list is a store query: no rows, no workspaces.
@@ -249,7 +251,7 @@ describe("apply card wiring", () => {
 		});
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 3) {
+			if (routes.size !== 5) {
 				throw new Error("routes not mounted yet");
 			}
 		});
@@ -270,7 +272,7 @@ describe("apply card wiring", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 3) {
+			if (routes.size !== 5) {
 				throw new Error("routes not mounted yet");
 			}
 		});

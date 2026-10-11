@@ -97,6 +97,11 @@ window.__ModuleLoader__.load({
 			readFailed: "记忆库读取失败：",
 			stats: "{files} 条记忆",
 			filesHeading: "文件",
+			skillsHeading: "技能",
+			skillStats: "{files} 个技能",
+			skillsEmpty: "该工作区还没有技能——明确告诉模型沉淀为技能即可，重启后生效。",
+			skillScopeGlobal: "全局",
+			skillPreviewDeleted: "该技能已被删除或搬家，请刷新列表。",
 			scopeLabel: "选择工作区",
 			searchPlaceholder: "搜索记忆…",
 			searchEmpty: "没有匹配的记忆文件。",
@@ -124,6 +129,11 @@ window.__ModuleLoader__.load({
 			readFailed: "Failed to read the memory store: ",
 			stats: "{files} memories",
 			filesHeading: "Files",
+			skillsHeading: "Skills",
+			skillStats: "{files} skills",
+			skillsEmpty: "No skills in this workspace yet — ask the model to save one as a skill, then restart.",
+			skillScopeGlobal: "global",
+			skillPreviewDeleted: "This skill was deleted or moved — refresh the list.",
 			scopeLabel: "Choose workspace",
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
@@ -205,20 +215,34 @@ window.__ModuleLoader__.load({
 						typeof workspace.label === "string" && workspace.label.trim().length > 0
 							? workspace.label
 							: workspaceLabel(root);
+					var snapshot = null;
+					var snapshotError = null;
+					var skillSnapshot = null;
+					var skillError = null;
 					try {
 						var snapshotResponse = await fetchImpl(API_ROOT + "/memory?root=" + encodeURIComponent(root));
 						if (!snapshotResponse.ok) {
-							return { root: root, label: label, snapshot: null, error: "HTTP " + snapshotResponse.status };
+							snapshotError = "HTTP " + snapshotResponse.status;
+						} else {
+							snapshot = await snapshotResponse.json();
 						}
-						return { root: root, label: label, snapshot: await snapshotResponse.json(), error: null };
 					} catch (error) {
-						return {
-							root: root,
-							label: label,
-							snapshot: null,
-							error: error instanceof Error ? error.message : String(error),
-						};
+						snapshotError = error instanceof Error ? error.message : String(error);
 					}
+					try {
+						var skillResponse = await fetchImpl(API_ROOT + "/skills?root=" + encodeURIComponent(root));
+						if (!skillResponse.ok) {
+							skillError = "HTTP " + skillResponse.status;
+						} else {
+							skillSnapshot = await skillResponse.json();
+						}
+					} catch (error) {
+						skillError = error instanceof Error ? error.message : String(error);
+					}
+					if (snapshotError !== null && skillError !== null) {
+						return { root: root, label: label, snapshot: null, error: snapshotError, skillSnapshot: null, skillError: skillError };
+					}
+					return { root: root, label: label, snapshot: snapshot, error: snapshotError, skillSnapshot: skillSnapshot, skillError: skillError };
 				}),
 			);
 			return {
@@ -267,6 +291,42 @@ window.__ModuleLoader__.load({
 			}
 		}
 
+		/**
+		 * Fetch one skill's body for the preview. Outcomes mirror the
+		 * endpoint's status mapping, same as memory files.
+		 *
+		 * @param {typeof fetch} fetchImpl - injectable for tests.
+		 * @param {string} root - known workspace root.
+		 * @param {string} id - the skill id visible in that workspace (project shadowing global).
+		 * @returns {Promise<{status: "ready"|"deleted"|"tooLarge"|"failed", content: string, message: string}>}
+		 */
+		async function loadSkillContent(fetchImpl, root, id) {
+			var url = API_ROOT + "/skills/file?root=" + encodeURIComponent(root) + "&id=" + encodeURIComponent(id);
+			try {
+				var response = await fetchImpl(url);
+				if (response.ok) {
+					var body = await response.json();
+					return {
+						status: "ready",
+						content: typeof body.content === "string" ? body.content : "",
+						message: "",
+					};
+				}
+				if (response.status === 404) {
+					return { status: "deleted", content: "", message: "" };
+				}
+				if (response.status === 413) {
+					return { status: "tooLarge", content: "", message: "" };
+				}
+				return { status: "failed", content: "", message: "HTTP " + response.status };
+			} catch (error) {
+				return {
+					status: "failed",
+					content: "",
+					message: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}
 		/** Display label for a workspace: its directory name (ZCode shows a project name, not a path). */
 		function workspaceLabel(root) {
 			var normalized = String(root).replace(/[\\/]+$/, "");
@@ -376,6 +436,7 @@ window.__ModuleLoader__.load({
 			var preview = props.preview;
 			var onToggle = props.onToggle;
 			var UI = props.UI;
+			var deletedKey = typeof props.deletedKey === "string" ? props.deletedKey : "previewDeleted";
 			var rowChildren = [];
 			if (UI !== null && UI !== undefined && UI.FileIcon !== undefined && UI.FileIcon !== null) {
 				// ZCode's memory rows open with a category tile; the host classifies
@@ -389,6 +450,9 @@ window.__ModuleLoader__.load({
 				);
 			}
 			rowChildren.push(createElement("span", { key: "name", className: "dce-file-name" }, file.title));
+			if (typeof props.badge === "string" && props.badge !== "") {
+				rowChildren.push(createElement("span", { key: "badge", className: "dce-file-time" }, props.badge));
+			}
 			var time = formatRelative(file.updatedAt, now, t);
 			if (time !== "") {
 				rowChildren.push(createElement("span", { key: "time", className: "dce-file-time" }, time));
@@ -415,7 +479,7 @@ window.__ModuleLoader__.load({
 				} else if (preview.status === "ready") {
 					body = createElement("pre", { className: "dce-pre" }, preview.content);
 				} else if (preview.status === "deleted") {
-					body = createElement("div", { className: "dce-hint" }, t("previewDeleted"));
+					body = createElement("div", { className: "dce-hint" }, t(deletedKey));
 				} else if (preview.status === "tooLarge") {
 					body = createElement("div", { className: "dce-hint" }, t("previewTooLarge"));
 				} else {
@@ -620,6 +684,9 @@ window.__ModuleLoader__.load({
 			var onRefresh = props.onRefresh;
 			var query = props.query;
 			var onQueryChange = props.onQueryChange;
+			var expandedSkill = props.expandedSkill;
+			var skillPreview = props.skillPreview;
+			var onToggleSkill = props.onToggleSkill;
 			var scope = createElement(WorkspaceScopeMenu, {
 				key: "scope",
 				workspaces: entry.workspaces.map(function (workspace) {
@@ -729,7 +796,77 @@ window.__ModuleLoader__.load({
 				}
 				body = parts;
 			}
-			return createElement("div", { key: "block", className: "dce-workspace" }, scope, body);
+			var skillsBody = (function () {
+				var skillData = active.skillSnapshot;
+				if ((skillData === null || skillData === undefined) && active.skillError !== null && active.skillError !== undefined) {
+					return createElement("div", { key: "skills", className: "dce-error" }, t("readError") + active.skillError);
+				}
+				if (skillData === null || skillData === undefined || !skillData.exists) {
+					return createElement("div", { key: "skills", className: "dce-hint" }, t("skillsEmpty"));
+				}
+				var rows = Array.isArray(skillData.files) ? skillData.files : [];
+				var skillQuery = String(query).trim().toLocaleLowerCase();
+				var skillFiles = rows.filter(function (file) {
+					if (skillQuery.length === 0) {
+						return true;
+					}
+					return [file.id, file.title, file.description, file.scope]
+						.filter(function (value) {
+							return typeof value === "string";
+						})
+						.some(function (value) {
+							return value.toLocaleLowerCase().includes(skillQuery);
+						});
+				});
+				var skillParts = [
+					createElement(
+						"div",
+						{ key: "stats", className: "dce-stats" },
+						t("skillStats", { files: skillData.fileCount }),
+					),
+				];
+				if (Array.isArray(skillData.quarantined) && skillData.quarantined.length > 0) {
+					skillParts.push(
+						createElement("div", { key: "quarantined", className: "dce-warn" }, t("quarantined") + skillData.quarantined.map(function (entry) { return entry.id; }).join("、")),
+					);
+				}
+				skillParts.push(
+					createElement(
+						"div",
+						{ key: "head", className: "dce-files-head" },
+						createElement("span", { className: "dce-files-title" }, t("skillsHeading")),
+						createElement("span", { className: "dce-files-count" }, String(skillFiles.length)),
+					),
+				);
+				if (skillFiles.length === 0) {
+					skillParts.push(createElement("div", { key: "none", className: "dce-empty" }, t("skillsEmpty")));
+				} else {
+					skillParts.push(
+						createElement(
+							"ul",
+							{ key: "files", className: "dce-list" },
+							skillFiles.map(function (file) {
+								return createElement(FileRow, {
+									key: file.id,
+									file: file,
+									now: now,
+									t: t,
+									UI: UI,
+									badge: file.scope === "global" ? t("skillScopeGlobal") : "",
+									deletedKey: "skillPreviewDeleted",
+									expanded: expandedSkill === file.id,
+									preview: skillPreview,
+									onToggle: function () {
+										onToggleSkill(file.id);
+									},
+								});
+							}),
+						),
+					);
+				}
+				return createElement("div", { key: "skills", className: "dce-workspace" }, skillParts);
+			})();
+			return createElement("div", { key: "block", className: "dce-workspace" }, scope, body, skillsBody);
 		}
 
 		/**
@@ -749,12 +886,15 @@ window.__ModuleLoader__.load({
 			var setModel = state[1];
 			var reloadState = useState(0);
 			var reload = reloadState[1];
-			var selectionState = useState({ root: null, query: "", expandedFile: null });
+			var selectionState = useState({ root: null, query: "", expandedFile: null, expandedSkill: null });
 			var selection = selectionState[0];
 			var setSelection = selectionState[1];
 			var previewState = useState({ file: null, status: "loading", content: "", message: "" });
 			var preview = previewState[0];
 			var setPreview = previewState[1];
+			var skillPreviewState = useState({ file: null, status: "loading", content: "", message: "" });
+			var skillPreview = skillPreviewState[0];
+			var setSkillPreview = skillPreviewState[1];
 			var nowState = useState(Date.now());
 			var now = nowState[0];
 			var setNow = nowState[1];
@@ -786,9 +926,10 @@ window.__ModuleLoader__.load({
 			var refresh = function () {
 				setModel({ status: "loading", model: null, message: "" });
 				setSelection(function (current) {
-					return { root: current.root, query: "", expandedFile: null };
+					return { root: current.root, query: "", expandedFile: null, expandedSkill: null };
 				});
 				setPreview({ file: null, status: "loading", content: "", message: "" });
+				setSkillPreview({ file: null, status: "loading", content: "", message: "" });
 				reload(function (n) {
 					return n + 1;
 				});
@@ -846,8 +987,9 @@ window.__ModuleLoader__.load({
 					entry: model.model,
 					selected: selected,
 					onSelect: function (root) {
-						setSelection({ root: root, query: "", expandedFile: null });
+						setSelection({ root: root, query: "", expandedFile: null, expandedSkill: null });
 						setPreview({ file: null, status: "loading", content: "", message: "" });
+						setSkillPreview({ file: null, status: "loading", content: "", message: "" });
 					},
 					onRefresh: refresh,
 					t: t,
@@ -855,15 +997,37 @@ window.__ModuleLoader__.load({
 					now: now,
 					expandedFile: selection.expandedFile,
 					preview: preview,
-					onToggleFile: function (file) {
-						if (selection.expandedFile === file) {
+					expandedSkill: selection.expandedSkill,
+					skillPreview: skillPreview,
+					onToggleSkill: function (file) {
+						if (selection.expandedSkill === file) {
 							setSelection(function (current) {
-								return { root: current.root, query: current.query, expandedFile: null };
+								return { root: current.root, query: current.query, expandedFile: current.expandedFile, expandedSkill: null };
 							});
 							return;
 						}
 						setSelection(function (current) {
-							return { root: current.root, query: current.query, expandedFile: file };
+							return { root: current.root, query: current.query, expandedFile: current.expandedFile, expandedSkill: file };
+						});
+						setSkillPreview({ file: file, status: "loading", content: "", message: "" });
+						loadSkillContent(fetch, selected, file).then(function (result) {
+							setSkillPreview(function (current) {
+								if (current.file !== file) {
+									return current;
+								}
+								return { file: file, status: result.status, content: result.content, message: result.message };
+							});
+						});
+					},
+					onToggleFile: function (file) {
+						if (selection.expandedFile === file) {
+							setSelection(function (current) {
+								return { root: current.root, query: current.query, expandedFile: null, expandedSkill: current.expandedSkill };
+							});
+							return;
+						}
+						setSelection(function (current) {
+							return { root: current.root, query: current.query, expandedFile: file, expandedSkill: current.expandedSkill };
 						});
 						setPreview({ file: file, status: "loading", content: "", message: "" });
 						loadFileContent(fetch, selected, file).then(function (result) {
@@ -878,7 +1042,7 @@ window.__ModuleLoader__.load({
 					query: selection.query,
 					onQueryChange: function (value) {
 						setSelection(function (current) {
-							return { root: current.root, query: value, expandedFile: current.expandedFile };
+							return { root: current.root, query: value, expandedFile: current.expandedFile, expandedSkill: current.expandedSkill };
 						});
 					},
 				});
@@ -901,6 +1065,7 @@ window.__ModuleLoader__.load({
 		exports.inject = ["slots", "locale", "theme"];
 		exports.loadCardModel = loadCardModel;
 		exports.loadFileContent = loadFileContent;
+		exports.loadSkillContent = loadSkillContent;
 		exports.apply = function apply(ctx) {
 			var tRaw = null;
 			try {

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Workspace Memory",
-    "description": "Central SQLite memory store partitioned by workspace: session-start index injection, gated explicit writes and proposal-based extraction."
+    "description": "Central SQLite memory and skill store partitioned by workspace: session-start index injection, gated explicit writes and proposal-based extraction, skills materialized as SKILL.md."
   }
 }

@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	CARD_API_MEMORY_FILE_PATH,
 	CARD_API_MEMORY_PATH,
+	CARD_API_SKILL_FILE_PATH,
+	CARD_API_SKILLS_PATH,
 	CARD_API_WORKSPACES_PATH,
 	mountCardRoutes,
 	type CardRequest,
@@ -77,11 +79,11 @@ function seed(id = "fedora-env", body = "Fedora 44"): boolean {
 }
 
 describe("mountCardRoutes", () => {
-	it("registers all three routes and the disposer unregisters them", () => {
+	it("registers all five routes and the disposer unregisters them", () => {
 		const { routes, webServer } = makeWebServer();
 		const disposer = mountCardRoutes(webServer, store);
 		expect([...routes.keys()].sort()).toEqual(
-			[CARD_API_WORKSPACES_PATH, CARD_API_MEMORY_PATH, CARD_API_MEMORY_FILE_PATH].sort(),
+			[CARD_API_WORKSPACES_PATH, CARD_API_MEMORY_PATH, CARD_API_MEMORY_FILE_PATH, CARD_API_SKILLS_PATH, CARD_API_SKILL_FILE_PATH].sort(),
 		);
 		disposer();
 		expect(routes.size).toBe(0);
@@ -290,5 +292,79 @@ describe("the memory content route", () => {
 			});
 			expect(recorded.status).toBe(404);
 		}
+	});
+});
+
+describe("the skill routes", () => {
+	function setup(): { routes: Map<string, CardRoute> } {
+		const { routes, webServer } = makeWebServer();
+		mountCardRoutes(webServer, store);
+		return { routes };
+	}
+
+	function seedSkill(id: string, body = "技能正文"): boolean {
+		return (
+			store.applySkillProposals({ workspaceId: workspace, trigger: "explicit" }, [
+				{ action: "create", id, title: id, description: `${id} 的钩子`, body },
+			]).outcomes[0]?.ok === true
+		);
+	}
+
+	it("answers 405 for non-GET and 400 for a missing root", async () => {
+		const { routes } = setup();
+		expect(call(routes.get(CARD_API_SKILLS_PATH), { method: "POST", url: CARD_API_SKILLS_PATH }).status).toBe(405);
+		expect(call(routes.get(CARD_API_SKILL_FILE_PATH), { method: "PUT", url: CARD_API_SKILL_FILE_PATH }).status).toBe(405);
+		expect(call(routes.get(CARD_API_SKILLS_PATH), { method: "GET", url: CARD_API_SKILLS_PATH }).status).toBe(400);
+	});
+
+	it("serves the skill snapshot and one skill body for a known root", async () => {
+		const { routes } = setup();
+		expect(seedSkill("deploy")).toBe(true);
+		const snapshot = call(routes.get(CARD_API_SKILLS_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILLS_PATH}?root=${encodeURIComponent(workspace)}`,
+		});
+		expect(snapshot.status).toBe(200);
+		const snapBody = jsonBody(snapshot) as { exists: boolean; fileCount: number; files: { id: string; scope: string }[] };
+		expect(snapBody.exists).toBe(true);
+		expect(snapBody.fileCount).toBe(1);
+		expect(snapBody.files[0]).toMatchObject({ id: "deploy", scope: "project" });
+		const file = call(routes.get(CARD_API_SKILL_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=deploy`,
+		});
+		expect(file.status).toBe(200);
+		expect(jsonBody(file)).toMatchObject({ id: "deploy", scope: "project", content: "技能正文" });
+	});
+
+	it("answers 404 for unknown roots, ghost ids, and missing id parameters", async () => {
+		const { routes } = setup();
+		expect(seedSkill("deploy")).toBe(true);
+		const stranger = call(routes.get(CARD_API_SKILLS_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILLS_PATH}?root=${encodeURIComponent("/etc")}`,
+		});
+		expect(stranger.status).toBe(404);
+		const ghost = call(routes.get(CARD_API_SKILL_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=ghost`,
+		});
+		expect(ghost.status).toBe(404);
+		const noId = call(routes.get(CARD_API_SKILL_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}`,
+		});
+		expect(noId.status).toBe(400);
+	});
+
+	it("lists a skills-only workspace in the workspaces route", async () => {
+		const { routes, webServer } = makeWebServer();
+		expect(seedSkill("deploy")).toBe(true);
+		mountCardRoutes(webServer, store);
+		const recorded = call(routes.get(CARD_API_WORKSPACES_PATH), { method: "GET", url: CARD_API_WORKSPACES_PATH });
+		expect(jsonBody(recorded)).toEqual({
+			workspaces: [{ root: workspace, label: workspace.split("/").pop() }],
+			defaultRoot: workspace,
+		});
 	});
 });

@@ -13,6 +13,9 @@
 ├── memories                     # 记忆条目（STRICT；type/status 枚举 CHECK；body ≤64KB）
 ├── memories_fts                 # 全文索引（与 memories 同事务内由代码同步）
 ├── extraction_log               # 快照账本：每次变更内嵌 before/after 全文；skip 也记账，同会话连续空转合成一行（occurrences 计次）
+├── skills                       # 技能条目（STRICT；无 type；body ≤64KB；`""` 分区 = 全局）
+├── skills_fts                   # 技能全文索引（与 skills 同事务内由代码同步）
+├── skill_log                    # 技能账本：每次变更内嵌 before/after 全文 + 文件投影告警
 └── state                        # 提取游标（seq:<n>，按工作区+会话分隔）与巡检状态
 ```
 
@@ -20,9 +23,11 @@
 - **唯一写门**（`src/store-apply.ts` + `src/memory-rules.ts`）：两条写路径共用同一入口 `applyProposals`——全量校验（type 枚举、尺寸上限、id 规范含 CJK hash 兜底、feedback 的 Why/How 契约、v1 移植的 secret 正则筛查）→ 事务内原子应用 → 账本行（before/after 全文）。任何一条提案被拒，整批回滚且不推游标。
 - **写路径 A：`memory_write`**（`src/memory-tools.ts`）：主会话显式"记住/忘掉"走工具；`memory_read` 按 id 取正文、按关键词检索（空格分隔的关键词取 AND：全部 ≥3 字符走 trigram，任一短词或 FTS 未命中则回退字面子串匹配；注入索引只有钩子）。宿主工具定义手写为裸注册形状（标准 JSON Schema、根级 required，FAQ #2），零运行时 DSH import。
 - **写路径 B：提案制提取**（`src/extraction*.ts`）：轮级调度 + **按会话分槽**（每会话一个 pending 槽与在飞运行；运行中只保留最新边界即合并，compaction/会话关闭触发 drain，**无空闲计时器**）→ 读轨迹增量（`seq:<n>` 游标）→ 机械跳过（内部 agent/空增量/无真实用户文本 ≥3 词/当轮已有显式写入）并记账（同因连续跳过合成一行、累计唤醒次数；故障型跳过与失败仍逐次成行）→ FTS 取相似候选 → 单次 LLM 调用产出闭集提案（create/update/delete）→ 过写门落盘 → 推游标 → 巡检随跑。失败（含管线内任何未预期的抛错：`unexpected-error` 失败行，message 头进 skip_reason、堆栈头进 files）不推游标，下次重试；只剩账本本身不可写时才走调度器 warn。
+- **写路径 C：技能**（`src/skill-rules.ts` + `src/skill-tools.ts` + `src/store.ts` 技能面）：`skill_write`（create/update/delete + 手动搬到全局）与 `skill_read`（按 id 取正文、按关键词检索），镜像记忆工具的裸注册形状与门禁（短横线 id 含 CJK hash 兜底、secret 正则、64KB 上限），另加跨范围纪律——创建只能是项目（全局只接受手动搬家，无晋升机制）、同名全局已存在即拒绝（内容相同提示直接调用）、正文完全相同即拒绝（指向已有的那条）。落库成功后同批物化：项目技能写回本工作区 `.agents/skills/<id>/SKILL.md`，全局技能写 `~/.dsh/skills/<id>/SKILL.md`（原子 tmp+rename，frontmatter `name/description` 携带路由 hint）。**库是唯一真相，文件是只读投影**：模型禁直写文件，文件头打生成标记，巡检发现缺失/漂移按库重写、无主托管文件删除、手改文件保留并告警。
+- **读技能**：项目优先——同 id 时项目行遮蔽全局行（读、检索、列表、卡片一致）；全局行只能显式指定范围更新或删除。手动搬家是搬家不是复制：全局建行 + 物化，同时项目行归档 + 项目文件删除，永远只有一份 active。
 - **回滚靠账本**：undo = 取账本 before 快照重写；终极兜底是会话轨迹本身（记忆是轨迹的投影，`source_seqs` 可回放溯源）。
-- **巡检**：每次提取应用后随跑——孤儿 FTS 行清除、active 行 secret 扫描 → 命中行 `status='quarantined'`（隐藏不删，卡片显形）。
-- **只读卡片**（`src/memory-snapshot.ts` + `src/card-routes.ts` + `client/client.js`）：官方插件管理内一张只读卡片，形态对齐市场设置卡、内容对齐 ZCode 记忆选项卡——工作区下拉（= 库内 `SELECT DISTINCT workspace_id`，目录已删的分区失联不显示不阻塞）、搜索、相对更新时间、按 id 的内容预览（5 MiB 上限）、巡检异常警告。宿主缺 `webServer`/slot 自动降级。显示名/描述走 `locale/*.json` 双语通道。
+- **巡检**：每次提取应用后随跑——孤儿 FTS 行清除、active 行 secret 扫描 → 命中行 `status='quarantined'`（隐藏不删，卡片显形；被隔离技能的物化文件一并撤下）+ 技能文件对账（缺失/漂移重写、无主托管文件删除）。
+- **只读卡片**（`src/memory-snapshot.ts` + `src/card-routes.ts` + `client/client.js`）：官方插件管理内一张只读卡片，形态对齐市场设置卡、内容对齐 ZCode 记忆选项卡——工作区下拉（= 库内记忆与技能分区的并集，目录已删的分区失联不显示不阻塞；全局技能随打开的工作区附带显示）、搜索、相对更新时间、按 id 的内容预览（5 MiB 上限）、技能区（项目技能 + 可见全局技能，全局行打标记）与巡检异常警告。宿主缺 `webServer`/slot 自动降级。显示名/描述走 `locale/*.json` 双语通道。
 - **迁移**（`src/import-md.ts`）：首次接触某工作区时检测旧版 `.evolve/memory/*.md` → 无损导入该工作区分区（缺 frontmatter 字段就地合成，secret 命中的跳过并留在归档目录）→ 原目录改名 `memory-imported-<date>/`。
 - **降级**：`node:sqlite` 不可用（Node < 22.5）→ 注入与工具停用、log 告警、宿主不受影响；桌面宿主的 EnsureNode 运行时保证正常环境不触发。
 

@@ -11,7 +11,7 @@
  * so the API cannot probe the filesystem; the content endpoint takes an id,
  * never a path. Handlers are synchronous and never throw past the response.
  */
-import { memoryEntryContent, listCardWorkspaces, memorySnapshot } from "./memory-snapshot.js";
+import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
 import type { MemoryStore } from "./store.js";
 import { canonicalPath } from "./workspace-hint.js";
 
@@ -19,6 +19,8 @@ import { canonicalPath } from "./workspace-hint.js";
 export const CARD_API_WORKSPACES_PATH = "/dsh-continual-evolve/api/v1/workspaces";
 export const CARD_API_MEMORY_PATH = "/dsh-continual-evolve/api/v1/memory";
 export const CARD_API_MEMORY_FILE_PATH = "/dsh-continual-evolve/api/v1/memory/file";
+export const CARD_API_SKILLS_PATH = "/dsh-continual-evolve/api/v1/skills";
+export const CARD_API_SKILL_FILE_PATH = "/dsh-continual-evolve/api/v1/skills/file";
 
 /** Minimal request shape the handlers touch (Node IncomingMessage subset). */
 export interface CardRequest {
@@ -162,6 +164,72 @@ export function mountCardRoutes(
 				}
 				sendJson(response, 200, {
 					id: content.id,
+					content: content.content,
+					updatedAtMs: content.updatedAtMs,
+				});
+			},
+		}),
+	);
+	disposers.push(
+		webServer.register({
+			kind: "exact",
+			path: CARD_API_SKILLS_PATH,
+			handler(request, response) {
+				if (!isGet(request)) {
+					response.writeHead(405, { allow: "GET" });
+					response.end();
+					return;
+				}
+				const root = rootParamOf(request);
+				if (root === null) {
+					sendJson(response, 400, { error: "root query parameter is required and must be an absolute path" });
+					return;
+				}
+				if (!isKnownRoot(store, root)) {
+					sendJson(response, 404, { error: "unknown workspace root" });
+					return;
+				}
+				sendJson(response, 200, skillSnapshot(store, root));
+			},
+		}),
+	);
+	disposers.push(
+		webServer.register({
+			kind: "exact",
+			path: CARD_API_SKILL_FILE_PATH,
+			handler(request, response) {
+				if (!isGet(request)) {
+					response.writeHead(405, { allow: "GET" });
+					response.end();
+					return;
+				}
+				const root = rootParamOf(request);
+				if (root === null) {
+					sendJson(response, 400, { error: "root query parameter is required and must be an absolute path" });
+					return;
+				}
+				const id = idParamOf(request);
+				if (id === null) {
+					sendJson(response, 400, { error: "id query parameter is required" });
+					return;
+				}
+				if (!isKnownRoot(store, root)) {
+					// Same fence as the snapshot route.
+					sendJson(response, 404, { error: "unknown workspace root" });
+					return;
+				}
+				const content = skillEntryContent(store, root, id);
+				if (!content.ok) {
+					if (content.reason === "too-large") {
+						sendJson(response, 413, { error: "skill body exceeds the 5 MiB preview limit" });
+					} else {
+						sendJson(response, 404, { error: "skill not found" });
+					}
+					return;
+				}
+				sendJson(response, 200, {
+					id: content.id,
+					scope: content.scope,
 					content: content.content,
 					updatedAtMs: content.updatedAtMs,
 				});

@@ -9,8 +9,10 @@
  *
  * - the session-start section (`memory-section.ts`): a store query rendered
  *   as the injected index, frozen per session for the prompt cache;
- * - the model tools (`memory-tools.ts`): `memory_write` for explicit
- *   "记住/忘掉" instructions, `memory_read` for bodies and search;
+ * - the model tools (`memory-tools.ts`, `skill-tools.ts`): `memory_write`
+ *   for explicit "记住/忘掉" instructions, `memory_read` for bodies and
+ *   search, plus `skill_write` (project-only creation, manual move to
+ *   global) and `skill_read` (project shadowing global);
  * - the extraction scheduler (`extraction.ts`): turn-level, per-session
  *   slots, single-flight per session; proposals land only through the
  *   store's gates;
@@ -39,6 +41,7 @@ import {
 	memorySectionText,
 } from "./memory-section.js";
 import { registerMemoryTools } from "./memory-tools.js";
+import { registerSkillTools } from "./skill-tools.js";
 import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
 import { newestRegistryPath } from "./workspace-hint.js";
@@ -134,8 +137,10 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
 			return;
 		}
 		registerMemoryTools(tools as Parameters<typeof registerMemoryTools>[0], store);
+		registerSkillTools(tools as Parameters<typeof registerSkillTools>[0], store);
 		state.toolsAvailable = true;
 		host.logger("continual-evolve").info("memory_write and memory_read registered");
+		host.logger("continual-evolve").info("skill_write and skill_read registered");
 	});
 }
 

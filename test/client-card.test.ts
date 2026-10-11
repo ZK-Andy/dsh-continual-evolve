@@ -687,3 +687,80 @@ describe("loadFileContent", () => {
 		expect(await load(throwing, ROOT, FILE)).toEqual({ status: "failed", content: "", message: "socket down" });
 	});
 });
+
+describe("loadCardModel skills", () => {
+	it("fetches one skill snapshot per workspace alongside the memory snapshot", async () => {
+		const { exports } = loadBundle(makeReact());
+		const loadCardModel = exports.loadCardModel as (fetchImpl: typeof fetch) => Promise<{
+			workspaces: Array<{ root: string; skillSnapshot: { exists: boolean } | null; skillError: string | null }>;
+		}>;
+		const calls: string[] = [];
+		const fetchImpl = (async (url: string | URL) => {
+			calls.push(String(url));
+			if (String(url).endsWith("/workspaces")) {
+				return jsonResponse({ workspaces: [{ root: "/ws/a", label: "A" }] });
+			}
+			if (String(url).includes("/skills?root=")) {
+				return jsonResponse({ root: "/ws/a", exists: true, fileCount: 1 });
+			}
+			return jsonResponse({ root: "/ws/a", exists: true, fileCount: 2 });
+		}) as unknown as typeof fetch;
+		const model = await loadCardModel(fetchImpl);
+		expect(model.workspaces[0].skillSnapshot).toMatchObject({ exists: true });
+		expect(model.workspaces[0].skillError).toBeNull();
+		expect(calls.some((url) => url.includes("/skills?root=" + encodeURIComponent("/ws/a")))).toBe(true);
+	});
+
+	it("degrades a failing skill snapshot without failing the workspace entry", async () => {
+		const { exports } = loadBundle(makeReact());
+		const loadCardModel = exports.loadCardModel as (fetchImpl: typeof fetch) => Promise<{
+			workspaces: Array<{ root: string; snapshot: unknown; error: string | null; skillSnapshot: unknown; skillError: string | null }>;
+		}>;
+		const fetchImpl = (async (url: string | URL) => {
+			if (String(url).endsWith("/workspaces")) {
+				return jsonResponse({ workspaces: [{ root: "/ws/a", label: "A" }] });
+			}
+			if (String(url).includes("/skills?root=")) {
+				return jsonResponse({ error: "unknown workspace root" }, 404);
+			}
+			return jsonResponse({ root: "/ws/a", exists: true, fileCount: 0 });
+		}) as unknown as typeof fetch;
+		const model = await loadCardModel(fetchImpl);
+		expect(model.workspaces[0].error).toBeNull();
+		expect(model.workspaces[0].snapshot).toMatchObject({ exists: true });
+		expect(model.workspaces[0].skillSnapshot).toBeNull();
+		expect(model.workspaces[0].skillError).toBe("HTTP 404");
+	});
+});
+
+describe("loadSkillContent", () => {
+	const ROOT = "/ws/a";
+	const ID = "deploy";
+
+	function makeLoad(): (fetchImpl: typeof fetch, root: string, id: string) => Promise<unknown> {
+		const { exports } = loadBundle(makeReact());
+		return exports.loadSkillContent as (fetchImpl: typeof fetch, root: string, id: string) => Promise<unknown>;
+	}
+
+	it("requests the skill content endpoint and returns the body", async () => {
+		const calls: string[] = [];
+		const load = makeLoad();
+		const fetchImpl = (async (url: string | URL) => {
+			calls.push(String(url));
+			return jsonResponse({ id: ID, scope: "project", content: "技能正文" });
+		}) as unknown as typeof fetch;
+		expect(await load(fetchImpl, ROOT, ID)).toEqual({ status: "ready", content: "技能正文", message: "" });
+		expect(calls[0]).toContain("/skills/file?root=" + encodeURIComponent(ROOT) + "&id=" + encodeURIComponent(ID));
+	});
+
+	it("maps 404 to deleted, 413 to tooLarge, and the rest to failed", async () => {
+		const load = makeLoad();
+		let status = 404;
+		const fetchImpl = (async () => jsonResponse({ error: "x" }, status)) as unknown as typeof fetch;
+		expect(await load(fetchImpl, ROOT, ID)).toEqual({ status: "deleted", content: "", message: "" });
+		status = 413;
+		expect(await load(fetchImpl, ROOT, ID)).toEqual({ status: "tooLarge", content: "", message: "" });
+		status = 500;
+		expect(await load(fetchImpl, ROOT, ID)).toEqual({ status: "failed", content: "", message: "HTTP 500" });
+	});
+});
