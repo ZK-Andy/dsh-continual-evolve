@@ -211,6 +211,15 @@ describe("runReviewBatch", () => {
 		const summary = await runReviewBatch({ store, llm }, [candidateOf(id, "Fedora 44")], { ...OPTS, dryRun: true });
 		expect(summary).toMatchObject({ approved: 1, applied: 0 });
 		expect(store.get(WS, id)?.body).toBe("Fedora 44");
+		// Trial mode keeps what it declined to land: the rewrite is the part a
+		// human has to judge before turning dry-run off.
+		const db = new DatabaseSync(dbPath);
+		try {
+			const row = db.prepare("SELECT proposed FROM review_log ORDER BY rowid DESC LIMIT 1").get() as { proposed: string | null };
+			expect(JSON.parse(row.proposed ?? "null")).toMatchObject({ body: "Fedora 44.1" });
+		} finally {
+			db.close();
+		}
 	});
 
 	it("oversized rewrites degrade to quarantine instead of landing", async () => {
@@ -296,6 +305,14 @@ describe("runReviewBatch", () => {
 		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], { ...OPTS, dryRun: true });
 		expect(summary).toMatchObject({ applied: 0 });
 		expect(store.listAll(WS).find((r) => r.id === id)?.status).toBe("active");
+		const db = new DatabaseSync(dbPath);
+		try {
+			// A quarantine verdict proposed no text, so the column stays empty.
+			const row = db.prepare("SELECT proposed FROM review_log ORDER BY rowid DESC LIMIT 1").get() as { proposed: string | null };
+			expect(row.proposed).toBeNull();
+		} finally {
+			db.close();
+		}
 	});
 
 	it("gate-rejected rewrites ledger the refusal without landing", async () => {

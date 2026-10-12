@@ -305,7 +305,7 @@ async function reviewOne(
 		const system = candidate.kind === "memory" ? REVIEW_MEMORY_SYSTEM_PROMPT : REVIEW_SKILL_SYSTEM_PROMPT;
 		const answer = await streamOnce(
 			deps.llm, opts, system,
-			evolvePrompt({ id: candidate.id, title: candidate.title, description: candidate.description, body: candidate.body, extra }, neighbors),
+			evolvePrompt({ id: candidate.id, title: candidate.title, description: candidate.description, body: candidate.body, extra, scope: candidate.scope }, neighbors),
 			4096,
 		);
 		evolveRaw = answer.usage;
@@ -321,17 +321,17 @@ async function reviewOne(
 			return;
 		}
 		if (evolved.verdict === "quarantine") {
-			landQuarantine(deps, base, candidate, opts, evolved.reason, gateUsage, evolveRaw, summary);
+			landQuarantine(deps, base, candidate, opts, evolved.reason, gateUsage, evolveRaw, proposedOf(evolved), summary);
 			return;
 		}
 		// ── Rewrite: magnitude cap first, dry-run second, gates last ──
 		const nextBody = evolved.body ?? candidate.body;
 		if (rewriteMagnitude(candidate.body, nextBody) > REWRITE_MAGNITUDE_CAP) {
-			landQuarantine(deps, base, candidate, opts, `幅度超限转隔离：${evolved.reason}`, gateUsage, evolveRaw, summary);
+			landQuarantine(deps, base, candidate, opts, `幅度超限转隔离：${evolved.reason}`, gateUsage, evolveRaw, proposedOf(evolved), summary);
 			return;
 		}
 		if (opts.dryRun) {
-			deps.store.logReview({ ...base, verdict: "rewrite", reason: `试运行未落盘：${evolved.reason}`, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
+			deps.store.logReview({ ...base, verdict: "rewrite", reason: `试运行未落盘：${evolved.reason}`, proposed: proposedOf(evolved), cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
 			return;
 		}
 		landRewrite(deps, base, candidate, opts, evolved, gateUsage, evolveRaw, summary);
@@ -339,6 +339,27 @@ async function reviewOne(
 		deps.store.logReview({ ...base, verdict: "skip", reason: `evolve-llm-failed: ${failureHead(error)}`, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
 		skipReasons.push("evolve-llm-failed");
 	}
+}
+
+/**
+ * The rewrite payload a non-landing row keeps: exactly the fields the model
+ * supplied, or `undefined` when it proposed no text at all.
+ */
+function proposedOf(evolved: { title?: string | undefined; description?: string | undefined; body?: string | undefined; corrects?: string | undefined }): Record<string, string> | undefined {
+	const payload: Record<string, string> = {};
+	if (evolved.title !== undefined) {
+		payload.title = evolved.title;
+	}
+	if (evolved.description !== undefined) {
+		payload.description = evolved.description;
+	}
+	if (evolved.body !== undefined) {
+		payload.body = evolved.body;
+	}
+	if (evolved.corrects !== undefined) {
+		payload.corrects = evolved.corrects;
+	}
+	return Object.keys(payload).length === 0 ? undefined : payload;
 }
 
 function neighborHooks(store: MemoryStore, candidate: ReviewCandidate): { id: string; title: string; description: string }[] {
@@ -363,11 +384,12 @@ function landQuarantine(
 	reason: string,
 	gateUsage: UsageTotals,
 	evolveRaw: unknown,
+	proposed: Record<string, string> | undefined,
 	summary: ReviewRunSummary,
 ): void {
 	const prior = deps.store.reviewStateOf(candidate.workspaceId, candidate.kind, candidate.id)?.evolveCount ?? 0;
 	if (opts.dryRun) {
-		deps.store.logReview({ ...base, verdict: "quarantine", reason: `试运行未隔离：${reason}`, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0, evolveCount: prior });
+		deps.store.logReview({ ...base, verdict: "quarantine", reason: `试运行未隔离：${reason}`, proposed, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0, evolveCount: prior });
 		return;
 	}
 	const ok = deps.store.quarantine(candidate.workspaceId, candidate.kind, candidate.id);

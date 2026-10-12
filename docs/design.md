@@ -18,7 +18,7 @@
 ├── skill_log                    # 技能账本：每次变更内嵌 before/after 全文 + 文件投影告警
 ├── skill_usage                  # 技能存在心跳：按 id 取回正文 +1（聚合，无无界增长）
 ├── memory_usage                 # 记忆存在心跳：同技能纪律（按 id 取回正文 +1）
-├── review_log                   # 内容评审 verdict 明细：每条一 verdict（keep/rewrite/quarantine/skip）+ 便宜/贵用量 + 落盘标志，随账本轮转
+├── review_log                   # 内容评审 verdict 明细：每条一 verdict（keep/rewrite/quarantine/skip）+ 便宜/贵用量 + 落盘标志 + 未落盘时的拟改稿，随账本轮转
 ├── review_daily                 # 日 rollup（一行一天）：预算 vs 实审 vs 积压 vs 丢弃 + token 按便宜/贵分账
 └── state                        # 提取游标（seq:<n>，按工作区+会话分隔）与巡检状态
 ```
@@ -29,7 +29,7 @@
 - **写路径 B：提案制提取**（`src/extraction*.ts`）：轮级调度 + **按会话分槽**（每会话一个 pending 槽与在飞运行；运行中只保留最新边界即合并，compaction/会话关闭触发 drain，**无空闲计时器**）→ 读轨迹增量（`seq:<n>` 游标）→ 机械跳过（内部 agent/空增量/无真实用户文本 ≥3 词/当轮已有显式写入）并记账（同因连续跳过合成一行、累计唤醒次数；故障型跳过与失败仍逐次成行）→ **便宜预检门**（增量前 4KB + 归属三测，小 verdict，拒了直接按 model-skip 消费游标；门不清不楚就透传给贵调用，永不 stall）→ FTS 取相似候选 → 单次 LLM 调用产出闭集提案（create/update/delete）→ 过写门落盘 → 推游标 → 巡检随跑。失败（含管线内任何未预期的抛错：`unexpected-error` 失败行，message 头进 skip_reason、堆栈头进 files）不推游标，下次重试；只剩账本本身不可写时才走调度器 warn。贵调用与预检调用的用量分 `usage` / `cheap_usage` 两列记账；门自己抛错时按 fail-open 透传，错误原文留在同一行的 `cheap_error` 里（门死了与门不存在可区分）。
 - **写路径 C：技能**（`src/skill-rules.ts` + `src/skill-tools.ts` + `src/store.ts` 技能面）：`skill_write`（create/update/delete + 手动搬到全局）与 `skill_read`（按 id 取正文、按关键词检索），镜像记忆工具的裸注册形状与门禁（短横线 id 含 CJK hash 兜底、secret 正则、64KB 上限），另加跨范围纪律——创建只能是项目（全局只接受手动搬家，无晋升机制）、同名全局已存在即拒绝（内容相同提示直接调用）、正文完全相同即拒绝（指向已有的那条）。落库成功后同批物化：项目技能写回本工作区 `.agents/skills/<id>/SKILL.md`，全局技能写 `~/.dsh/skills/<id>/SKILL.md`（原子 tmp+rename，frontmatter `name/description` 携带路由 hint）。**库是唯一真相，文件是只读投影**：模型禁直写文件，文件头打生成标记，巡检发现缺失/漂移按库重写、无主托管文件删除、手改文件保留并告警。
 - **读技能**：项目优先——同 id 时项目行遮蔽全局行（读、检索、列表、卡片一致）；全局行只能显式指定范围更新或删除。手动搬家是搬家不是复制：全局建行 + 物化，同时项目行归档 + 项目文件删除，永远只有一份 active。
-- **内容质量自进化轨**（`src/review*.ts` + `src/token-usage.ts`，与提取轨并行、不共享游标与提示词，只共享库写门）：便宜门模型先判某条记忆/技能值不值得细看，批了才跑贵改写（归属三测打头：主语是用户/环境还是某仓库的某版机制、去名后还成立吗、仓库事实住 ADR/docs；记忆再按准确/可用/可复用/不重复/不过时五维、技能按触发精度/可执行完备/可复用/不重复四维，只输出 keep/rewrite/quarantine 结构化 verdict，放错家进 quarantine）。同一套归属三测守在提取 prompt 门口。调用失败记错误原文进 verdict 行。新写即审、存量有界积压排空、30 天未动回炉；删除永不自动落盘（只改写与隔离），超 30% 幅度改写自动转隔离；日上限 100 条（新写 > 被纠正牵连 > 陈旧 > 抽查，尾部丢弃）。用量经 `normalizeUsage` 归一并按便宜/贵分账；`review_log` 记每条终态、`review_daily` 一天合一行。默认试运行（`review.dryRun` 开）：只记 verdict 不落盘。
+- **内容质量自进化轨**（`src/review*.ts` + `src/token-usage.ts`，与提取轨并行、不共享游标与提示词，只共享库写门）：便宜门模型先判某条记忆/技能值不值得细看，批了才跑贵改写（归属三测打头：主语是用户/环境还是某仓库的某版机制、去名后还成立吗、仓库事实住 ADR/docs；记忆再按准确/可用/可复用/不重复/不过时五维、技能按触发精度/可执行完备/不重复三维（「可复用」按分区判：项目分区技能按该项目内跨任务可用判，跨项目可用只对全局分区技能判；绑定本仓库路径/门禁/流程的项目技能不算缺陷，只有全局分区却绑某仓库才算放错家），只输出 keep/rewrite/quarantine 结构化 verdict，放错家进 quarantine）。同一套归属三测守在提取 prompt 门口。调用失败记错误原文进 verdict 行。新写即审、存量有界积压排空、30 天未动回炉；删除永不自动落盘（只改写与隔离），超 30% 幅度改写自动转隔离；日上限 100 条（新写 > 被纠正牵连 > 陈旧 > 抽查，尾部丢弃）。用量经 `normalizeUsage` 归一并按便宜/贵分账；`review_log` 记每条终态、`review_daily` 一天合一行。默认试运行（`review.dryRun` 开）：只记 verdict 不落盘，未落盘的拟改稿全文随行进 `proposed` 列（试运行要看的是「改成什么样」，不只是「为什么改」）。
 - **回滚靠账本**：undo = 取账本 before 快照重写；终极兜底是会话轨迹本身（记忆是轨迹的投影，`source_seqs` 可回放溯源）。
 - **巡检**：每次提取应用后随跑——孤儿 FTS 行清除、active 行 secret 扫描 → 命中行 `status='quarantined'`（隐藏不删，卡片显形；被隔离技能的物化文件一并撤下）+ 技能文件对账（缺失/漂移重写、无主托管文件删除）。
 - **只读卡片**（`src/memory-snapshot.ts` + `src/card-routes.ts` + `client/client.js`）：官方插件管理内一张只读卡片，形态对齐市场设置卡、内容对齐 ZCode 记忆选项卡——工作区下拉（= 库内记忆与技能分区的并集，目录已删的分区失联不显示不阻塞；全局技能随打开的工作区附带显示）、搜索、相对更新时间、按 id 的内容预览（5 MiB 上限）、技能区（项目技能 + 可见全局技能，全局行打标记）与巡检异常警告。宿主缺 `webServer`/slot 自动降级。显示名/描述走 `locale/*.json` 双语通道。

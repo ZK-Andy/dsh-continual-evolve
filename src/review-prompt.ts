@@ -19,9 +19,15 @@ export const REVIEW_CHEAP_SYSTEM_PROMPT =
 export const REVIEW_MEMORY_SYSTEM_PROMPT =
 	"你是记忆库的内容评审。先过归属三测（主语是用户/环境还是某仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs）：归属不过直接 quarantine 并注明放错家。再按五维判：①准确（事实可信、无幻觉）；②可用（Why/How 具体、可执行，反馈类必须带 Why 与 How to apply）；③可复用（未来会话用得上）；④不重复（与候选旧条比，有重复就指出来）；⑤不过时（未被纠正链取代）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\", \"corrects\"?: \"被取代的同区条目id\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时/放错家。禁删除，禁编造引用。";
 
-/** Skill rubric: trigger precision, executability, reusability, non-duplicate, right-home. */
+/**
+ * Skill rubric: trigger precision, executability, reuse, non-duplicate — with
+ * the cross-project reuse test reserved for `scope=global`. A skill bound to
+ * one repo's paths, gates and workflow cards is not defective when it lives in
+ * that project's partition (that is what a project skill is for); only a
+ * repo-bound skill sitting in the global partition is mis-homed.
+ */
 export const REVIEW_SKILL_SYSTEM_PROMPT =
-	"你是技能库的内容评审。先过归属三测（技能是否绑定单一仓库的路径与机制；抹掉仓库名后还成立吗）：放错家直接 quarantine。再按四维判：①触发精度（description 是否让人/模型在该用时想起、不该用时不打扰）；②正文可执行完备（步骤完整、输入输出明确）；③可复用（跨任务可用）；④不重复（与候选既有技能比）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时/放错家。禁删除。";
+	"你是技能库的内容评审。先看归属（prompt 里标了 scope）：绑定某仓库的路径/门禁/流程**不是**缺陷——住项目分区（scope=project）的技能本来就只在该项目内生效，禁用「跨项目不可复用」「抹掉仓库名不成立」当理由去改写或隔离它；只有「scope=global 却绑定某仓库」才算放错家，直接 quarantine。再判：①触发精度（description 是否让人/模型在该用时想起、不该用时不打扰）；②正文可执行完备（步骤完整、输入输出明确）；③可复用（scope=project 按该项目内跨任务可用判，scope=global 才按跨项目可用判）；④不重复（与候选既有技能比）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时/放错家。禁删除。";
 
 export interface GateVerdict {
 	worthReview: boolean;
@@ -38,28 +44,25 @@ export interface EvolveVerdict {
 }
 
 /** The cheap-gate prompt for one item (id + hook + body, truncated by caller). */
-export function gatePrompt(entry: { kind: string; id: string; title: string; description: string; body: string }): string {
-	return [
-		`kind=${entry.kind} id=${entry.id}`,
-		`title=${entry.title}`,
-		`钩子=${entry.description}`,
-		"全文：",
-		entry.body,
-	].join("\n");
+export function gatePrompt(entry: { kind: string; id: string; title: string; description: string; body: string; scope?: "project" | "global" | undefined }): string {
+	const lines = [`kind=${entry.kind} id=${entry.id}`];
+	if (entry.scope !== undefined) {
+		lines.push(`scope=${entry.scope}`);
+	}
+	lines.push(`title=${entry.title}`, `钩子=${entry.description}`, "全文：", entry.body);
+	return lines.join("\n");
 }
 
 /** The evolve prompt for one item plus its similar neighbors for dup-checking. */
 export function evolvePrompt(
-	entry: { id: string; title: string; description: string; body: string; extra?: string | undefined },
+	entry: { id: string; title: string; description: string; body: string; extra?: string | undefined; scope?: "project" | "global" | undefined },
 	neighbors: readonly { id: string; title: string; description: string }[],
 ): string {
-	const lines = [
-		`id=${entry.id}`,
-		`title=${entry.title}`,
-		`钩子=${entry.description}`,
-		"全文：",
-		entry.body,
-	];
+	const lines = [`id=${entry.id}`];
+	if (entry.scope !== undefined) {
+		lines.push(`scope=${entry.scope}`);
+	}
+	lines.push(`title=${entry.title}`, `钩子=${entry.description}`, "全文：", entry.body);
 	if (entry.extra !== undefined && entry.extra.length > 0) {
 		lines.push("", entry.extra);
 	}

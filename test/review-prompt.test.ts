@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evolvePrompt, gatePrompt, parseEvolveAnswer, parseGateAnswer } from "../src/review-prompt.js";
+import { evolvePrompt, gatePrompt, parseEvolveAnswer, parseGateAnswer, REVIEW_SKILL_SYSTEM_PROMPT } from "../src/review-prompt.js";
 
 describe("parseGateAnswer", () => {
 	it("parses bare and fenced verdict JSON, rejects noise", () => {
@@ -33,6 +33,16 @@ describe("parseEvolveAnswer", () => {
 		expect(
 			evolvePrompt({ id: "a", title: "t", description: "h", body: "b", extra: "判时注意时效" }, []),
 		).toContain("时效");
+	});
+
+	it("carries the skill scope so a project skill is judged inside its project", () => {
+		expect(gatePrompt({ kind: "skill", id: "ts", title: "t", description: "h", body: "b", scope: "project" })).toContain("scope=project");
+		expect(evolvePrompt({ id: "ts", title: "t", description: "h", body: "b", scope: "global" }, [])).toContain("scope=global");
+		expect(gatePrompt({ kind: "memory", id: "m", title: "t", description: "h", body: "b" })).not.toContain("scope=");
+		// Repo-bound project skills are not defects; only a global-scope row
+		// bound to one repo is mis-homed.
+		expect(REVIEW_SKILL_SYSTEM_PROMPT).toContain("scope=project");
+		expect(REVIEW_SKILL_SYSTEM_PROMPT).toContain("放错家");
 	});
 
 	it("rejects scalar and broken JSON instead of throwing", () => {

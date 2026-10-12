@@ -76,6 +76,47 @@ describe("review verdict log", () => {
 		}
 	});
 
+	it("keeps the proposed rewrite on rows that did not land it", () => {
+		store.logReview({
+			workspaceId: WS, itemKind: "memory", itemId: "user-env", verdict: "rewrite",
+			reason: "试运行未落盘：补版本", proposed: { title: "新标题", body: "Fedora 44.1" }, applied: 0,
+		});
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT proposed FROM review_log ORDER BY rowid DESC LIMIT 1").get() as { proposed: string | null };
+			expect(JSON.parse(row.proposed ?? "null")).toEqual({ title: "新标题", body: "Fedora 44.1" });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("migrates pre-trial review ledgers with the proposed column", async () => {
+		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-review-legacy-")), "memory.db");
+		const legacy = new DatabaseSync(legacyPath);
+		try {
+			legacy.exec(
+				"CREATE TABLE review_log (run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT, item_kind TEXT NOT NULL, " +
+					"item_id TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT, cheap_usage TEXT, evolve_usage TEXT, " +
+					"applied INTEGER NOT NULL DEFAULT 0, evolve_count INTEGER NOT NULL DEFAULT 0)",
+			);
+		} finally {
+			legacy.close();
+		}
+		const migrated = await openMemoryStore(legacyPath);
+		try {
+			const probe = new DatabaseSync(legacyPath);
+			try {
+				const columns = probe.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
+				expect(columns.some((column) => column.name === "proposed")).toBe(true);
+			} finally {
+				probe.close();
+			}
+			migrated.logReview({ workspaceId: WS, itemKind: "memory", itemId: "x", verdict: "rewrite", reason: "r", proposed: { body: "b" } });
+		} finally {
+			migrated.close();
+		}
+	});
+
 	it("prunes with the ledgers instead of growing without bound", () => {
 		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: "a", verdict: "skip", reason: "cheap-gate" });
 		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBeGreaterThanOrEqual(1);

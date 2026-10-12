@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS review_log (
   item_id TEXT NOT NULL,
   verdict TEXT NOT NULL CHECK (verdict IN ('keep','rewrite','quarantine','skip')),
   reason TEXT,
+  proposed TEXT,
   cheap_usage TEXT, evolve_usage TEXT,
   applied INTEGER NOT NULL DEFAULT 0,
   evolve_count INTEGER NOT NULL DEFAULT 0
@@ -226,6 +227,13 @@ export interface ReviewLogEntry {
 	applied?: number | undefined;
 	/** How many times this item has evolved including this run. */
 	evolveCount?: number | undefined;
+	/**
+	 * The rewrite the model proposed when the row did NOT land it (trial mode),
+	 * as `{title, description, body, corrects}`. Without it a dry run ledgers
+	 * only why it would change an item, never into what — and the "into what"
+	 * is the part a human has to judge before turning the trial off.
+	 */
+	proposed?: unknown;
 }
 
 /** One day of the hard-cap account (UTC `YYYY-MM-DD`, budget = 100). */
@@ -624,6 +632,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	ensureMemoriesCorrects(database);
 	ensureExtractionCheapUsage(database);
 	ensureExtractionCheapError(database);
+	ensureReviewProposed(database);
 
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
@@ -720,8 +729,8 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"ON CONFLICT (workspace_id, memory_id) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
 		),
 		reviewLog: database.prepare(
-			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, cheap_usage, evolve_usage, applied, evolve_count) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, cheap_usage, evolve_usage, applied, evolve_count) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		reviewLast: database.prepare(
 			"SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? ORDER BY rowid DESC LIMIT 1",
@@ -1353,6 +1362,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				entry.itemId,
 				entry.verdict,
 				entry.reason ?? null,
+				entry.proposed === undefined ? null : JSON.stringify(entry.proposed),
 				entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
 				entry.evolveUsage === undefined ? null : JSON.stringify(entry.evolveUsage),
 				entry.applied ?? 0,
@@ -1488,6 +1498,19 @@ function ensureExtractionCheapError(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_error TEXT");
+}
+
+/**
+ * Add the review ledger `proposed` column to a store created before trial
+ * mode started keeping the rewrite it declined to land. Same single-migration
+ * discipline as the columns above.
+ */
+function ensureReviewProposed(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "proposed")) {
+		return;
+	}
+	database.exec("ALTER TABLE review_log ADD COLUMN proposed TEXT");
 }
 
 /** Parse the daily skip-counts map; corrupt payloads degrade to empty. */
