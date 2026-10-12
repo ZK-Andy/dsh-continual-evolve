@@ -12,7 +12,6 @@
  * never a path. Handlers are synchronous and never throw past the response.
  */
 import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
-import { skillUsagePartition } from "./skill-rules.js";
 import type { MemoryStore } from "./store.js";
 import { canonicalPath } from "./workspace-hint.js";
 
@@ -228,12 +227,9 @@ export function mountCardRoutes(
 					}
 					return;
 				}
-				// V2 usage loop: a served preview is one real consumption.
-				try {
-					store.recordSkillUse(skillUsagePartition(content.scope, root), content.id, content.scope);
-				} catch {
-					// Accounting never fails the preview it rides on.
-				}
+				// Human previews are display-only: people never audit skills by
+				// reading them, so previews leave no count. Only model-side
+				// consultation (skill_read by id) feeds the heartbeat.
 				sendJson(response, 200, {
 					id: content.id,
 					scope: content.scope,

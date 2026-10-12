@@ -13,7 +13,7 @@ S1 建好了技能的存与看，但插件对“翻”一无所知：技能经�
 
 V2 只补可观测，不碰加载（零重复、零双份 token）：
 
-- **查阅记账**：`skill_read` 按 id 取回正文命中时记一笔（`src/skill-tools.ts`）；卡片技能预览端点命中时记一笔（`src/card-routes.ts`）。只记正文取回（真查阅），检索/列表不记（噪声）。
+- **查阅记账**：`skill_read` 按 id 取回正文命中时记一笔（`src/skill-tools.ts`，模型为任务打开了它）。只记正文取回，检索/列表不记（噪声）；卡片人工预览只做展示，永不记数（人不会靠读几百字审计技能）。
 - **聚合存储，无无界表**：新表 `skill_usage`，主键 `(workspace_id, skill_id, scope)`，字段只有 `use_count` + `last_used_at`（`src/store.ts` DDL，新表随建库语句覆盖旧库，无需 ALTER）。每次查阅 upsert +1，无行增长、无需裁决。
 - **记账永不打断读**：写账本失败吞掉、原样返回正文（与“文件同步永不 fail 整批”同纪律）；`getSkillUse` 失败返回 undefined，快照降级为 0/null。
 - **投影只读**：卡片技能列表加 `useCount`/`lastUsedAt` 两列（`src/memory-snapshot.ts` `SkillFileInfo`，client 行内展示“查看 N 次”，双语）。长期零查阅是删除候选，剪枝拍板仍需人工——计数是存在心跳，不是价值分。
@@ -30,7 +30,7 @@ V2 只补可观测，不碰加载（零重复、零双份 token）：
 
 ## Consequences
 
-- 查阅可观测：`skill_read`/卡片预览命中即 +1（含 scope 区分）；剪枝规则第一次有“存在”证据可用（长期零查阅=死亡候选；有用与否仍需人工判断）。
+- 查阅可观测：`skill_read` 命中即 +1（含 scope 区分）；剪枝规则第一次有“存在”证据可用（长期零查阅=死亡候选；有用与否仍需人工判断）。人工预览不计数。
 - 代价：`skill_usage` 聚合表（有界，无需裁决）；快照多两次查表（失败降级 0/null）。
 - 诚实边界：宿主目录直读 skill 正文（模型走宿主 loader 不经过插件）记不到——本回路只覆盖插件可观测面，数字是下界；README 如实写，不夸大。
 - 验证：264 测试 / typecheck / lint / 文档门禁全绿；双语 README 同步（查阅计数行为 + 264 徽章）。

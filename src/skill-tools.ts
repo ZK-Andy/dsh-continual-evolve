@@ -155,8 +155,9 @@ export function registerSkillTools(tools: ToolsService, store: MemoryStore): () 
 						if (found === undefined) {
 							return `没有找到 id 为 "${args.id}" 的技能。`;
 						}
-						// V2 usage loop: a served body is one real consumption.
-						// Search/list hits are noise and stay uncounted.
+						// Consulted set: a body served by id means the model opened
+						// it for the task at hand. Search/list hits are noise
+						// and stay uncounted; human card previews never count.
 						store.recordSkillUse(skillUsagePartition(found.scope, cwd), found.record.id, found.scope);
 						return formatSkill(found.record, found.scope);
 					}

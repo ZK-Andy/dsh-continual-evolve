@@ -368,7 +368,7 @@ describe("the skill routes", () => {
 		});
 	});
 
-	it("counts a served skill preview and ignores ghost previews", async () => {
+	it("leaves no count on human previews — display only, never audited", async () => {
 		const { routes } = setup();
 		expect(seedSkill("deploy")).toBe(true);
 		const file = call(routes.get(CARD_API_SKILL_FILE_PATH), {
@@ -376,7 +376,7 @@ describe("the skill routes", () => {
 			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=deploy`,
 		});
 		expect(file.status).toBe(200);
-		expect(store.getSkillUse(workspace, "deploy", "project")).toMatchObject({ useCount: 1 });
+		expect(store.getSkillUse(workspace, "deploy", "project")).toBeUndefined();
 		const ghost = call(routes.get(CARD_API_SKILL_FILE_PATH), {
 			method: "GET",
 			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=ghost`,
