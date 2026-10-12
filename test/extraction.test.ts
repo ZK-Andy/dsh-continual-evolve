@@ -178,9 +178,12 @@ describe("runExtraction — model round-trip", () => {
 		const result = await runExtraction(d, target, { trigger: "turn-debounce" });
 		expect(result.status).toBe("applied");
 		expect(store.get(WS, "env")?.body).toBe("Fedora 44 + Zed");
-		const prompt = String(d.llm.calls[0]?.messages && (d.llm.calls[0].messages as { content: { text: string }[] }[])[0].content[0].text);
+		const prompt = String(d.llm.calls[1]?.messages && (d.llm.calls[1].messages as { content: { text: string }[] }[])[0].content[0].text);
 		expect(prompt).toContain("id=env｜type=user");
 		expect(prompt).toContain("旧正文");
+		// Two calls by design: the cheap pre-gate first, the full call second.
+		expect(d.llm.calls).toHaveLength(2);
+		expect(String((d.llm.calls[0]?.messages as { content: { text: string }[] }[])[0].content[0].text)).not.toContain("旧正文");
 	});
 
 	it("a model skip consumes the increment and advances the cursor", async () => {
@@ -249,6 +252,104 @@ describe("runExtraction — model round-trip", () => {
 		);
 		expect(result.status).toBe("failed");
 		expect(result.skipReason).toContain("disk gone");
+	});
+});
+
+describe("runExtraction — cheap pre-gate", () => {
+	function routedLlm(gateText: string, fullText: string): LlmStream & { calls: Record<string, unknown>[] } {
+		const calls: Record<string, unknown>[] = [];
+		return {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				yield { type: "text-delta", text: system.includes("预检门") ? gateText : fullText };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+	}
+
+	const GATE_NO = JSON.stringify({ worthExtracting: false, reason: "闲聊无沉淀价值" });
+	const GATE_YES = JSON.stringify({ worthExtracting: true, reason: "用户环境事实" });
+	const FULL_APPLY = JSON.stringify({
+		decision: "apply",
+		reason: "用户环境事实",
+		proposals: [{ action: "create", type: "user", title: "Fedora 环境", description: "用户的操作系统", body: "Fedora 44", sourceSeqs: "10-10" }],
+	});
+
+	it("a gate refusal skips without the full call and advances the cursor", async () => {
+		const llm = routedLlm(GATE_NO, FULL_APPLY);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("skipped");
+		expect(llm.calls).toHaveLength(1);
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+		expect(store.list(WS)).toEqual([]);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT skip_reason, status, cheap_usage, usage FROM extraction_log").get() as {
+				skip_reason: string; status: string; cheap_usage: string | null; usage: string | null;
+			};
+			expect(row.skip_reason).toBe("model-skip (cheap-gate): 闲聊无沉淀价值");
+			expect(row.status).toBe("skipped");
+			expect(JSON.parse(row.cheap_usage ?? "null")).toMatchObject({ totalTokens: 15 });
+			expect(row.usage).toBeNull();
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("a gate approval runs the full call and ledgers both usages", async () => {
+		const llm = routedLlm(GATE_YES, FULL_APPLY);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		expect(llm.calls).toHaveLength(2);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT status, cheap_usage, usage FROM extraction_log").get() as {
+				status: string; cheap_usage: string | null; usage: string | null;
+			};
+			expect(row.status).toBe("applied");
+			expect(JSON.parse(row.cheap_usage ?? "null")).toMatchObject({ totalTokens: 15 });
+			expect(JSON.parse(row.usage ?? "null")).toMatchObject({ totalTokens: 15 });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("an unclear gate fails open to the full call", async () => {
+		const llm = routedLlm("胡言乱语", FULL_APPLY);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		expect(llm.calls).toHaveLength(2);
+	});
+
+	it("migrates pre-gate databases with the cheap_usage column", async () => {
+		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-extract-legacy-")), "memory.db");
+		const legacy = new DatabaseSync(legacyPath);
+		try {
+			legacy.exec(
+				"CREATE TABLE extraction_log (run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT, " +
+				"trigger TEXT, decision TEXT, skip_reason TEXT, status TEXT, duration_ms INTEGER, model TEXT, usage TEXT, " +
+				"files TEXT, occurrences INTEGER NOT NULL DEFAULT 1)",
+			);
+			legacy.prepare("INSERT INTO extraction_log (ts, trigger, status) VALUES (?, ?, ?)").run("2026-10-01T00:00:00.000Z", "turn-debounce", "skipped");
+		} finally {
+			legacy.close();
+		}
+		const migrated = await openMemoryStore(legacyPath);
+		try {
+			const probe = new DatabaseSync(legacyPath);
+			try {
+				const columns = probe.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+				expect(columns.some((c) => c.name === "cheap_usage")).toBe(true);
+			} finally {
+				probe.close();
+			}
+			migrated.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "x", status: "skipped", cheapUsage: { total: 1 } });
+		} finally {
+			migrated.close();
+		}
 	});
 });
 
@@ -573,7 +674,8 @@ describe("createExtractionScheduler", () => {
 		listeners.get("agent/disposed")![0]({ agent: { id: "unknown" } });
 		listeners.get("agent/disposed")![0]({ agent: {} });
 		await new Promise((resolve) => setTimeout(resolve, 20));
-		expect(d.llm.calls).toHaveLength(1);
+		// One run drained exactly once: cheap pre-gate + full call, no extras.
+		expect(d.llm.calls).toHaveLength(2);
 	});
 
 	it("drops a closing session's slot without doubling its run", async () => {

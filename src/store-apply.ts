@@ -34,6 +34,8 @@ export interface ProposalContext {
 	runId?: string | undefined;
 	model?: string | undefined;
 	usage?: unknown;
+	/** Pre-gate call payload (extraction cheap gate); carried into the ledger row. */
+	cheapUsage?: unknown;
 	/** One-line model decision summary for the ledger. */
 	decision?: string | undefined;
 }
@@ -145,6 +147,7 @@ export function applyProposals(
 		durationMs: Date.now() - started,
 		model: ctx.model,
 		usage: ctx.usage,
+		cheapUsage: ctx.cheapUsage,
 		files: applied ? files : [],
 	};
 	if (!applied) {
@@ -155,8 +158,8 @@ export function applyProposals(
 }
 
 const LEDGER_SQL =
-	"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, files) " +
-	"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+	"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, files) " +
+	"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 function writeLedger(stmt: StatementSync, entry: LedgerEntry): void {
 	stmt.run(
@@ -171,6 +174,7 @@ function writeLedger(stmt: StatementSync, entry: LedgerEntry): void {
 		entry.durationMs ?? null,
 		entry.model ?? null,
 		entry.usage === undefined ? null : JSON.stringify(entry.usage),
+		entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
 		entry.files === undefined ? null : JSON.stringify(entry.files),
 	);
 }

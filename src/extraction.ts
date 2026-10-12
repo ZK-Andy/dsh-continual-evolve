@@ -21,7 +21,7 @@
  */
 import type { MemoryProposal } from "./memory-rules.js";
 import { boundaryCursorOf, evaluateSlice, eventsAfterCursor, isInternalAgent, seqOfCursor, serializeIncrement, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
-import { EXTRACTION_SYSTEM_PROMPT, extractionPrompt, manifestLineOf, parseExtractionAnswer } from "./extraction-prompt.js";
+import { CHEAP_INCREMENT_MAX, EXTRACTION_CHEAP_SYSTEM_PROMPT, EXTRACTION_SYSTEM_PROMPT, cheapPrompt, extractionPrompt, manifestLineOf, parseCheapAnswer, parseExtractionAnswer } from "./extraction-prompt.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
 import { cwdOf } from "./memory-section.js";
 
@@ -173,6 +173,41 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	};
 
 	const increment = serializeIncrement(slice.events, opts.incrementMaxChars);
+
+	// ── Cheap pre-gate: a small verdict before the expensive full call
+	// (manifest + full-body candidates + full increment). A "not worth it"
+	// consumes the increment exactly like a model skip; an unclear gate
+	// (unparseable/failed) fails OPEN to the full call — worst case degrades
+	// to the old single-call behavior, never to a stall.
+	let cheapUsage: unknown;
+	{
+		const gateStarted = Date.now();
+		try {
+			const gate = await streamOnce(
+				deps.llm, target,
+				cheapPrompt({ incrementHead: increment.slice(0, CHEAP_INCREMENT_MAX), userSeqs: slice.userSeqs }),
+				EXTRACTION_CHEAP_SYSTEM_PROMPT,
+				512,
+			);
+			cheapUsage = gate.usage;
+			const verdict = parseCheapAnswer(gate.text);
+			if (verdict !== null && !verdict.worth) {
+				advanceCursor();
+				store.logSkipped({
+					...ledgerBase,
+					skipReason: `model-skip (cheap-gate): ${verdict.reason}`,
+					status: "skipped",
+					model: target.model,
+					cheapUsage,
+					durationMs: Date.now() - gateStarted,
+				});
+				return { status: "skipped", skipReason: verdict.reason, cursor: boundarySeq };
+			}
+		} catch {
+			// Fail open: the full call below is the old behavior.
+		}
+	}
+
 	const manifest = store.list(target.workspaceId).slice(0, 50).map(manifestLineOf);
 	const candidates = candidateRecords(store, target.workspaceId, slice.userText);
 	const prompt = extractionPrompt({
@@ -192,7 +227,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	} catch (error) {
 		const { message, detail } = errorText(error);
 		try {
-			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started, files: detail });
+			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started, cheapUsage, files: detail });
 		} catch (ledgerError) {
 			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
 		}
@@ -211,6 +246,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 			status: "failed",
 			model: target.model,
 			usage,
+			cheapUsage,
 			durationMs: Date.now() - started,
 			files: text.slice(0, FAILURE_RAW_MAX),
 		});
@@ -226,6 +262,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 			status: "skipped",
 			model: target.model,
 			usage,
+			cheapUsage,
 			durationMs: Date.now() - started,
 		});
 		return { status: "skipped", skipReason: parsed.reason, cursor: boundarySeq };
@@ -239,6 +276,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 			runId: `extract:${target.sessionId}:${boundarySeq ?? "tail"}`,
 			model: target.model,
 			usage,
+			cheapUsage,
 			decision: parsed.reason,
 		},
 		parsed.proposals as MemoryProposal[],
@@ -270,6 +308,8 @@ async function streamOnce(
 	llm: LlmStream,
 	target: ExtractionTarget,
 	prompt: string,
+	system: string = EXTRACTION_SYSTEM_PROMPT,
+	maxTokens: number = 4096,
 ): Promise<{ text: string; usage: unknown }> {
 	let text = "";
 	let usage: unknown;
@@ -278,8 +318,8 @@ async function streamOnce(
 		provider: target.provider,
 		model: target.model,
 		messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-		system: EXTRACTION_SYSTEM_PROMPT,
-		maxTokens: 4096,
+		system,
+		maxTokens,
 		// MissingSessionID pitfall: direct calls must carry the host session.
 		sessionId: target.sessionId,
 	};

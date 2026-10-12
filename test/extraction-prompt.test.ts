@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+	CHEAP_INCREMENT_MAX,
+	cheapPrompt,
+	EXTRACTION_CHEAP_SYSTEM_PROMPT,
 	extractionPrompt,
 	EXTRACTION_SYSTEM_PROMPT,
 	manifestLineOf,
 	MAX_PROPOSALS_PER_RUN,
+	parseCheapAnswer,
 	parseExtractionAnswer,
 } from "../src/extraction-prompt.js";
 
@@ -22,6 +26,12 @@ describe("EXTRACTION_SYSTEM_PROMPT", () => {
 		// The answer contract is a JSON object, nothing else.
 		expect(EXTRACTION_SYSTEM_PROMPT).toContain('"decision"');
 		expect(EXTRACTION_SYSTEM_PROMPT).toContain('"proposals"');
+	});
+
+	it("carries the project-agnostic ownership triple-test", () => {
+		expect(EXTRACTION_SYSTEM_PROMPT).toContain("归属三测");
+		expect(EXTRACTION_SYSTEM_PROMPT).toContain("主语测试");
+		expect(EXTRACTION_SYSTEM_PROMPT).toContain("去名测试");
 	});
 });
 
@@ -98,5 +108,26 @@ describe("parseExtractionAnswer", () => {
 		);
 		expect(parsed.decision).toBe("apply");
 		expect(parsed.proposals).toHaveLength(1);
+	});
+});
+
+describe("cheap pre-gate", () => {
+	it("asks for a verdict over the increment head only", () => {
+		expect(EXTRACTION_CHEAP_SYSTEM_PROMPT).toContain("预检门");
+		expect(EXTRACTION_CHEAP_SYSTEM_PROMPT).toContain("归属三测");
+		expect(EXTRACTION_CHEAP_SYSTEM_PROMPT).toContain('"worthExtracting"');
+		expect(CHEAP_INCREMENT_MAX).toBe(4000);
+		const prompt = cheapPrompt({ incrementHead: "user: 在 Fedora 上工作", userSeqs: [10] });
+		expect(prompt).toContain("Fedora");
+		expect(prompt).toContain("10");
+		expect(prompt).not.toContain("manifest");
+	});
+
+	it("parses verdicts and fails open on anything else", () => {
+		expect(parseCheapAnswer(`{"worthExtracting": true, "reason": "环境事实"}`)).toEqual({ worth: true, reason: "环境事实" });
+		expect(parseCheapAnswer("```json\n{\"worthExtracting\": false, \"reason\": \"闲聊\"}\n```")).toEqual({ worth: false, reason: "闲聊" });
+		expect(parseCheapAnswer("胡言乱语")).toBeNull();
+		expect(parseCheapAnswer(JSON.stringify({ decision: "apply", proposals: [] }))).toBeNull();
+		expect(parseCheapAnswer(JSON.stringify({ worthExtracting: "yes", reason: "x" }))).toBeNull();
 	});
 });

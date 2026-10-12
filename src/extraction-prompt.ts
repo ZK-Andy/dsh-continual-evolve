@@ -48,6 +48,58 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是记忆提取专员。你的唯一
 
 {"decision":"apply"|"skip","reason":"<一句话依据>","proposals":[{"action":"create"|"update"|"delete","id":"<kebab-slug，update/delete 必填>","type":"user"|"feedback"|"reference","title":"<短标题>","description":"<一句话相关性钩子>","body":"<正文>","sourceSeqs":"<用户原话所在 seq，如 820-831，可省略>"}]}`;
 
+/** The pre-gate system prompt: a small verdict before the expensive full call. */
+export const EXTRACTION_CHEAP_SYSTEM_PROMPT = `你是记忆提取的预检门。只判这轮轨迹增量里有没有值得沉淀的跨会话记忆（用户画像与环境事实、可复用的做法纠正与确认、未来会用的资源指针），先过归属三测：主语是用户/环境还是本仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs。归属不过直接判 false。只输出 JSON，不要代码围栏、不要解释：
+
+{"worthExtracting":true|false,"reason":"<一句话依据>"}`;
+
+/** Head length of the serialized increment the pre-gate reads (small by design). */
+export const CHEAP_INCREMENT_MAX = 4000;
+
+/** The pre-gate prompt: increment head only — no manifest, no candidates. */
+export function cheapPrompt(input: { incrementHead: string; userSeqs: readonly number[] }): string {
+	return [
+		"（用户直接发言所在 seq：",
+		`${input.userSeqs.length > 0 ? input.userSeqs.join(",") : "无"}）`,
+		input.incrementHead,
+		"按系统指令输出 JSON 判定。",
+	].join("\n");
+}
+
+/** The pre-gate verdict; `null` when the model did not return verdict JSON. */
+export interface CheapVerdict {
+	worth: boolean;
+	reason: string;
+}
+
+/** Parse the pre-gate answer. `null` means fail-open: run the full call. */
+export function parseCheapAnswer(text: string): CheapVerdict | null {
+	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+	const start = stripped.indexOf("{");
+	const end = stripped.lastIndexOf("}");
+	if (start < 0 || end <= start) {
+		return null;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripped.slice(start, end + 1));
+	} catch {
+		return null;
+	}
+	// Defensive: the sliced text always starts with "{", so a successful
+	// JSON.parse here is always an object — same guard as parseExtractionAnswer.
+	/* v8 ignore next 3 */
+	if (typeof parsed !== "object" || parsed === null) {
+		return null;
+	}
+	const answer = parsed as { worthExtracting?: unknown; reason?: unknown };
+	if (typeof answer.worthExtracting !== "boolean") {
+		return null;
+	}
+	const reason = typeof answer.reason === "string" && answer.reason.length > 0 ? answer.reason : "无理由";
+	return { worth: answer.worthExtracting, reason: reason.slice(0, 300) };
+}
+
 /** The existing-memory manifest line shown to the model. */
 export function manifestLineOf(record: {
 	id: string;

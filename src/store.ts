@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS extraction_log (
   trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')),
   decision TEXT, skip_reason TEXT,
   status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
+  cheap_usage TEXT,
   files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS state (
@@ -296,6 +297,8 @@ export interface LedgerEntry {
 	durationMs?: number | undefined;
 	model?: string | undefined;
 	usage?: unknown;
+	/** Pre-gate call payload (extraction cheap gate); `undefined` when the run never reached it. */
+	cheapUsage?: unknown;
 	/** Applied/attempted mutations: `{id, action, before?, after?, sourceSeqs}`; a parse-failed run instead carries the raw answer's head. */
 	files?: unknown;
 }
@@ -612,6 +615,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	database.exec(DDL);
 	ensureLedgerOccurrences(database);
 	ensureMemoriesCorrects(database);
+	ensureExtractionCheapUsage(database);
 
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
@@ -646,8 +650,8 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
 		),
 		ledger: database.prepare(
-			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, files) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, files) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		latestSkip: database.prepare(
 			"SELECT rowid AS rid, skip_reason AS reason, status FROM extraction_log " +
@@ -1451,6 +1455,19 @@ function ensureMemoriesCorrects(database: DatabaseSync): void {
 	database.exec("ALTER TABLE memories ADD COLUMN corrects TEXT");
 }
 
+/**
+ * Add the extraction ledger `cheap_usage` column to a store created before
+ * the cheap pre-gate existed. Same single-migration discipline as the
+ * columns above.
+ */
+function ensureExtractionCheapUsage(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "cheap_usage")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_usage TEXT");
+}
+
 /** Parse the daily skip-counts map; corrupt payloads degrade to empty. */
 function parseCounts(raw: string | null): Record<string, number> {
 	if (raw === null) {
@@ -1487,6 +1504,7 @@ function writeLedger(stmt: { run(...args: unknown[]): unknown }, entry: LedgerEn
 		entry.durationMs ?? null,
 		entry.model ?? null,
 		entry.usage === undefined ? null : JSON.stringify(entry.usage),
+		entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
 		entry.files === undefined ? null : JSON.stringify(entry.files),
 	);
 }
