@@ -273,3 +273,26 @@ describe("skill ledger pruning", () => {
 		expect(rawSkillLog()).toEqual([]);
 	});
 });
+
+describe("skill usage accounting", () => {
+	it("counts servings per partition and scope, unknown skills read undefined", () => {
+		expect(store.getSkillUse(wsA, "deploy", "project")).toBeUndefined();
+		apply(wsA, [{ action: "create", id: "deploy", ...FIELDS }]);
+		store.recordSkillUse(wsA, "deploy", "project");
+		store.recordSkillUse(wsA, "deploy", "project");
+		const use = store.getSkillUse(wsA, "deploy", "project");
+		expect(use?.useCount).toBe(2);
+		expect(typeof use?.lastUsedAt).toBe("string");
+		expect(store.getSkillUse(wsA, "deploy", "global")).toBeUndefined();
+		expect(store.getSkillUse("", "deploy", "global")).toBeUndefined();
+	});
+
+	it("keeps project and global counters apart and never throws on faults", () => {
+		store.recordSkillUse(wsA, "shared", "project");
+		store.recordSkillUse("", "shared", "global");
+		expect(store.getSkillUse(wsA, "shared", "project")?.useCount).toBe(1);
+		expect(store.getSkillUse("", "shared", "global")?.useCount).toBe(1);
+		expect(() => store.recordSkillUse(undefined as never, "shared", "project")).not.toThrow();
+		expect(store.getSkillUse(undefined as never, "shared", "project")).toBeUndefined();
+	});
+});

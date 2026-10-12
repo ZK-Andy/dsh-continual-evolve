@@ -178,6 +178,15 @@ export function globalSkillsDir(): string {
 }
 
 /**
+ * The store partition a skill scope reads and writes usage in: the global
+ * partition for global rows, the workspace itself otherwise. One function
+ * so the tool, card, and snapshot paths cannot drift apart.
+ */
+export function skillUsagePartition(scope: string, cwd: string): string {
+	return scope === "global" ? SKILL_GLOBAL_WORKSPACE : cwd;
+}
+
+/**
  * Resolve and defend the materialized directory for a skill id. Ids are
  * kebab slugs by gate, but the containment check stays: a caller bug must
  * never turn a skill write into a write elsewhere.

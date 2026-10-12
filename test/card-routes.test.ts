@@ -367,4 +367,21 @@ describe("the skill routes", () => {
 			defaultRoot: workspace,
 		});
 	});
+
+	it("counts a served skill preview and ignores ghost previews", async () => {
+		const { routes } = setup();
+		expect(seedSkill("deploy")).toBe(true);
+		const file = call(routes.get(CARD_API_SKILL_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=deploy`,
+		});
+		expect(file.status).toBe(200);
+		expect(store.getSkillUse(workspace, "deploy", "project")).toMatchObject({ useCount: 1 });
+		const ghost = call(routes.get(CARD_API_SKILL_FILE_PATH), {
+			method: "GET",
+			url: `${CARD_API_SKILL_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=ghost`,
+		});
+		expect(ghost.status).toBe(404);
+		expect(store.getSkillUse(workspace, "ghost", "project")).toBeUndefined();
+	});
 });

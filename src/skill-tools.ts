@@ -12,6 +12,7 @@
  * the plugin imports nothing from DSH at runtime.
  */
 import { cwdOf } from "./memory-section.js";
+import { skillUsagePartition } from "./skill-rules.js";
 import type { MemoryStore, SkillRecord } from "./store.js";
 import type { ToolsService, ToolDefinition } from "./memory-tools.js";
 
@@ -151,7 +152,13 @@ export function registerSkillTools(tools: ToolsService, store: MemoryStore): () 
 					const limit = clampLimit(args.limit);
 					if (typeof args.id === "string" && args.id.length > 0) {
 						const found = readWithScope(store, cwd, args.id);
-						return found === undefined ? `没有找到 id 为 "${args.id}" 的技能。` : formatSkill(found.record, found.scope);
+						if (found === undefined) {
+							return `没有找到 id 为 "${args.id}" 的技能。`;
+						}
+						// V2 usage loop: a served body is one real consumption.
+						// Search/list hits are noise and stay uncounted.
+						store.recordSkillUse(skillUsagePartition(found.scope, cwd), found.record.id, found.scope);
+						return formatSkill(found.record, found.scope);
 					}
 					const query = typeof args.query === "string" ? args.query : "";
 					const merged = query.length > 0 ? searchWithScope(store, cwd, query, limit) : listWithScope(store, cwd, limit);

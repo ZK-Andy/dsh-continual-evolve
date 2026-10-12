@@ -12,6 +12,7 @@
  * never a path. Handlers are synchronous and never throw past the response.
  */
 import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
+import { skillUsagePartition } from "./skill-rules.js";
 import type { MemoryStore } from "./store.js";
 import { canonicalPath } from "./workspace-hint.js";
 
@@ -226,6 +227,12 @@ export function mountCardRoutes(
 						sendJson(response, 404, { error: "skill not found" });
 					}
 					return;
+				}
+				// V2 usage loop: a served preview is one real consumption.
+				try {
+					store.recordSkillUse(skillUsagePartition(content.scope, root), content.id, content.scope);
+				} catch {
+					// Accounting never fails the preview it rides on.
 				}
 				sendJson(response, 200, {
 					id: content.id,

@@ -117,6 +117,16 @@ CREATE TABLE IF NOT EXISTS skill_log (
   run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
   trigger TEXT, decision TEXT, status TEXT, files TEXT, warnings TEXT
 );
+-- Skill usage counters (V2 usage loop): one aggregate row per skill, never a
+-- per-hit ledger, so the table cannot grow without bound and needs no prune.
+CREATE TABLE IF NOT EXISTS skill_usage (
+  workspace_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('project','global')),
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TEXT,
+  PRIMARY KEY (workspace_id, skill_id, scope)
+) STRICT;
 `;
 
 /** One stored skill record (snake_case columns camelCased). Skills carry no type. */
@@ -150,6 +160,13 @@ export interface SkillProposalOutcome {
 export interface SkillFileWarning {
 	id: string;
 	warning: string;
+}
+
+/** Aggregate consumption of one skill (the V2 usage loop's only counter). */
+export interface SkillUse {
+	useCount: number;
+	/** ISO instant of the last counted use, `null` when never consumed. */
+	lastUsedAt: string | null;
 }
 
 /** One stored memory record (snake_case columns camelCased). */
@@ -278,6 +295,14 @@ export interface MemoryStore {
 	): { outcomes: SkillProposalOutcome[]; warnings: SkillFileWarning[] };
 	/** Partitions holding active skills (the card's skill fence). */
 	listSkillWorkspaces(): WorkspaceSummary[];
+	/**
+	 * Record one real skill consumption (a body served by id, never a list
+	 * or search hit). Accounting never fails the read — failures degrade
+	 * silently, exactly like file sync never fails a write batch.
+	 */
+	recordSkillUse(workspaceId: string, skillId: string, scope: string): void;
+	/** Aggregate usage for one skill, undefined when never consumed. */
+	getSkillUse(workspaceId: string, skillId: string, scope: string): SkillUse | undefined;
 }
 
 /** Default database location: `$DSH_HOME/evolve/memory.db`, else `~/.dsh/…`. */
@@ -542,6 +567,13 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		skillQuarantine: database.prepare("UPDATE skills SET status = 'quarantined' WHERE workspace_id = ? AND id = ?"),
 		skillWorkspaces: database.prepare(
 			"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM skills WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
+		),
+		skillUseGet: database.prepare(
+			"SELECT use_count, last_used_at FROM skill_usage WHERE workspace_id = ? AND skill_id = ? AND scope = ?",
+		),
+		skillUseUpsert: database.prepare(
+			"INSERT INTO skill_usage (workspace_id, skill_id, scope, use_count, last_used_at) VALUES (?, ?, ?, 1, ?) " +
+				"ON CONFLICT (workspace_id, skill_id, scope) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
 		),
 	};
 
@@ -1101,6 +1133,26 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				activeCount: row.n,
 				updatedAt: row.u,
 			}));
+		},
+		recordSkillUse(workspaceId: string, skillId: string, scope: string) {
+			try {
+				stmts.skillUseUpsert.run(workspaceId, skillId, scope, new Date().toISOString());
+			} catch {
+				// Accounting never fails the read it rides on.
+			}
+		},
+		getSkillUse(workspaceId: string, skillId: string, scope: string) {
+			try {
+				const row = stmts.skillUseGet.get(workspaceId, skillId, scope) as
+					| { use_count: number; last_used_at: string | null }
+					| undefined;
+				if (row === undefined) {
+					return undefined;
+				}
+				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
+			} catch {
+				return undefined;
+			}
 		},
 	};
 	return store;

@@ -124,3 +124,15 @@ describe("listCardWorkspaces with skills", () => {
 		expect(roots.filter((r) => r === ws)).toHaveLength(1);
 	});
 });
+
+describe("skill usage columns", () => {
+	it("exposes zeros for unconsumed skills and counters after use", () => {
+		create(ws, "deploy");
+		expect(skillSnapshot(store, ws).files[0]).toMatchObject({ id: "deploy", useCount: 0, lastUsedAt: null });
+		store.recordSkillUse(ws, "deploy", "project");
+		store.recordSkillUse(ws, "deploy", "project");
+		const after = skillSnapshot(store, ws);
+		expect(after.files[0]).toMatchObject({ id: "deploy", useCount: 2 });
+		expect(typeof after.files[0]?.lastUsedAt).toBe("number");
+	});
+});

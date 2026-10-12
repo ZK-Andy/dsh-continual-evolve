@@ -8,6 +8,7 @@ import {
 	skillDir,
 	skillFieldGateReasons,
 	SKILL_SCOPES,
+	skillUsagePartition,
 	validateRenderedSkill,
 } from "../src/skill-rules.js";
 import { isValidMemoryId, slugifyId } from "../src/memory-rules.js";
@@ -97,5 +98,11 @@ describe("skill directories", () => {
 
 	it("exports the scope vocabulary", () => {
 		expect([...SKILL_SCOPES].sort()).toEqual(["global", "project"]);
+	});
+
+	it("maps scopes to usage partitions without drift", () => {
+		expect(skillUsagePartition("global", "/ws/a")).toBe("");
+		expect(skillUsagePartition("project", "/ws/a")).toBe("/ws/a");
+		expect(skillUsagePartition("anything-else", "/ws/a")).toBe("/ws/a");
 	});
 });

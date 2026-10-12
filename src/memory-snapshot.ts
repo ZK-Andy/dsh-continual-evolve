@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "./store.js";
+import { skillUsagePartition } from "./skill-rules.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
 
@@ -194,6 +195,10 @@ export interface SkillFileInfo {
 	status: string;
 	/** Update time in epoch milliseconds (the card's "updated" line). */
 	updatedAt: number;
+	/** Bodies served by id (V2 usage loop); 0 when never consumed. */
+	useCount: number;
+	/** Last consumption in epoch milliseconds, `null` when never consumed. */
+	lastUsedAt: number | null;
 }
 
 /** The full read-only skill snapshot the card renders for one workspace root. */
@@ -231,7 +236,22 @@ function scopedSkills(store: MemoryStore, root: string): { record: SkillRecord; 
 	return merged;
 }
 
-function skillInfoOf(entry: { record: SkillRecord; scope: string }): SkillFileInfo {
+function skillInfoOf(store: MemoryStore, entry: { record: SkillRecord; scope: string }): SkillFileInfo {
+	let useCount = 0;
+	let lastUsedAt: number | null = null;
+	try {
+		const use = store.getSkillUse(
+			skillUsagePartition(entry.scope, entry.record.workspaceId),
+			entry.record.id,
+			entry.scope,
+		);
+		if (use !== undefined) {
+			useCount = use.useCount;
+			lastUsedAt = use.lastUsedAt === null ? null : Date.parse(use.lastUsedAt) || 0;
+		}
+	} catch {
+		// Usage is decoration: the snapshot degrades to zeros, never throws.
+	}
 	return {
 		id: entry.record.id,
 		title: entry.record.title,
@@ -239,6 +259,8 @@ function skillInfoOf(entry: { record: SkillRecord; scope: string }): SkillFileIn
 		scope: entry.scope,
 		status: entry.record.status,
 		updatedAt: Date.parse(entry.record.updatedAt) || 0,
+		useCount,
+		lastUsedAt,
 	};
 }
 
@@ -263,7 +285,7 @@ export function skillSnapshot(store: MemoryStore, root: string): SkillSnapshot {
 		exists: true,
 		readError: null,
 		fileCount: entries.filter((entry) => entry.record.status === "active").length,
-		files: entries.filter((entry) => entry.record.status === "active").map(skillInfoOf),
+		files: entries.filter((entry) => entry.record.status === "active").map((entry) => skillInfoOf(store, entry)),
 		quarantined: entries
 			.filter((entry) => entry.record.status === "quarantined")
 			.map((entry) => ({ id: entry.record.id, scope: entry.scope, reason: quarantineReasonOf(store, entry.record) })),

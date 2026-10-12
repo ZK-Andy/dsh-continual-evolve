@@ -187,3 +187,34 @@ describe("skill_read", () => {
 		expect(text).not.toContain("# C");
 	});
 });
+
+describe("skill_read usage accounting", () => {
+	function seedSkill(id: string): void {
+		const { outcomes } = store.applySkillProposals({ workspaceId: workspace, trigger: "explicit", sessionId: "sess-1" }, [
+			{ action: "create", id, ...FIELDS },
+		] as never);
+		expect(outcomes[0]?.ok).toBe(true);
+	}
+
+	it("counts one served body and ignores misses, lists, and searches", async () => {
+		seedSkill("deploy");
+		expect(await run("skill_read", { id: "deploy" })).toContain("1. build");
+		expect(store.getSkillUse(workspace, "deploy", "project")).toMatchObject({ useCount: 1 });
+		expect(await run("skill_read", { id: "ghost" })).toContain("没有找到");
+		expect(store.getSkillUse(workspace, "ghost", "project")).toBeUndefined();
+		await run("skill_read", {});
+		await run("skill_read", { query: "pre-release" });
+		expect(store.getSkillUse(workspace, "deploy", "project")).toMatchObject({ useCount: 1 });
+	});
+
+	it("attributes a shadowed global row to the global scope", async () => {
+		seedSkill("shared");
+		const moved = store.applySkillProposals({ workspaceId: workspace, trigger: "explicit", sessionId: "sess-1" }, [
+			{ action: "move-to-global", id: "shared" },
+		] as never);
+		expect(moved.outcomes[0]?.ok).toBe(true);
+		expect(await run("skill_read", { id: "shared" })).toContain("1. build");
+		expect(store.getSkillUse(workspace, "shared", "project")).toBeUndefined();
+		expect(store.getSkillUse("", "shared", "global")).toMatchObject({ useCount: 1 });
+	});
+});

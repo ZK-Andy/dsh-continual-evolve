@@ -102,6 +102,7 @@ window.__ModuleLoader__.load({
 			skillsEmpty: "该工作区还没有技能——明确告诉模型沉淀为技能即可，重启后生效。",
 			skillScopeGlobal: "全局",
 			skillPreviewDeleted: "该技能已被删除或搬家，请刷新列表。",
+			skillUsed: "用过 {count} 次",
 			scopeLabel: "选择工作区",
 			searchPlaceholder: "搜索记忆…",
 			searchEmpty: "没有匹配的记忆文件。",
@@ -134,6 +135,7 @@ window.__ModuleLoader__.load({
 			skillsEmpty: "No skills in this workspace yet — ask the model to save one as a skill, then restart.",
 			skillScopeGlobal: "global",
 			skillPreviewDeleted: "This skill was deleted or moved — refresh the list.",
+			skillUsed: "used {count} times",
 			scopeLabel: "Choose workspace",
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
@@ -456,6 +458,11 @@ window.__ModuleLoader__.load({
 			var time = formatRelative(file.updatedAt, now, t);
 			if (time !== "") {
 				rowChildren.push(createElement("span", { key: "time", className: "dce-file-time" }, time));
+			}
+			// Skill rows carry V2 usage counters; memory rows have no such
+			// field and skip this span. Zero means never consumed.
+			if (typeof file.useCount === "number" && file.useCount > 0) {
+				rowChildren.push(createElement("span", { key: "usage", className: "dce-file-time" }, t("skillUsed", { count: file.useCount })));
 			}
 			var children = [
 				createElement(
