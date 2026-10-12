@@ -112,4 +112,36 @@ describe("daily hard-cap account", () => {
 			skipTop: JSON.stringify(["cheap-gate", "stale-fresh"]),
 		});
 	});
+
+	it("keeps the backlog depth on merges that do not report it", () => {
+		store.consumeReviewBudget("2026-10-12", 100);
+		store.mergeDaily("2026-10-12", 100, { backlog: 7 });
+		store.mergeDaily("2026-10-12", 100, { newItems: 1 });
+		expect(store.getDaily("2026-10-12")).toMatchObject({ backlog: 7, newItems: 1 });
+	});
+
+	it("degrades corrupt skip-count payloads to empty instead of throwing", () => {
+		store.consumeReviewBudget("2026-10-12", 100);
+		const raw = new DatabaseSync(dbPath);
+		try {
+			raw.prepare("UPDATE review_daily SET skip_counts = ? WHERE day = ?").run("not-json", "2026-10-12");
+		} finally {
+			raw.close();
+		}
+		expect(() => store.mergeDaily("2026-10-12", 100, { skipReasons: ["x"] })).not.toThrow();
+		expect(store.getDaily("2026-10-12")?.skipTop).toBe(JSON.stringify(["x"]));
+		const raw2 = new DatabaseSync(dbPath);
+		try {
+			raw2.prepare("UPDATE review_daily SET skip_counts = ? WHERE day = ?").run("{\"a\":\"nope\",\"b\":2.7}", "2026-10-12");
+		} finally {
+			raw2.close();
+		}
+		store.mergeDaily("2026-10-12", 100, { skipReasons: ["c"] });
+		expect(store.getDaily("2026-10-12")?.skipTop).toBe(JSON.stringify(["b", "c"]));
+	});
+
+	it("quarantine and review-state degrade to false/undefined on faults", () => {
+		expect(store.quarantine(undefined as never, "memory", "x")).toBe(false);
+		expect(store.reviewStateOf(undefined as never, "memory", "x")).toBeUndefined();
+	});
 });

@@ -52,6 +52,23 @@ function fakeLlm(scenes: { gate: string; evolve: string }, usage = { inputTokens
 	return llm;
 }
 
+/** Gate approves, evolve throws: the evolve leg degrades to a skip row. */
+function gateThenThrowLlm(gate: string): ReviewLlm {
+	return {
+		async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+			const system = options.system as string;
+			if (system.includes("评审门")) {
+				yield { type: "text-delta", text: gate };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+				return;
+			}
+			throw new Error("evolve route down");
+			yield { type: "text-delta", text: "unreachable" };
+		},
+	};
+}
+
 const OPTS = { day: "2026-10-12", budget: 100, dryRun: false, provider: "p", model: "m", sessionId: "sess-1" };
 
 function candidateOf(id: string, body = "Fedora 44"): ReviewCandidate {
@@ -97,6 +114,33 @@ describe("collectCandidates", () => {
 		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: oldId, verdict: "keep", reason: "ok", applied: 0 });
 		const found = collectCandidates(store, { limit: 10 });
 		expect(found.find((c) => c.id === oldId)?.priority).toBe(1);
+	});
+
+	it("skips quarantined rows and shadowed globals on later collections", async () => {
+		const id = createMemory("user env", "Fedora 44");
+		const llm = fakeLlm({
+			gate: `{"worthReview": true, "reason": "看看"}`,
+			evolve: `{"verdict": "quarantine", "reason": "涉密"}`,
+		});
+		await runReviewBatch({ store, llm }, [candidateOf(id, "Fedora 44")], OPTS);
+		const found = collectCandidates(store);
+		expect(found.map((c) => c.id)).not.toContain(id);
+	});
+
+	it("runs requeued items through the batch and counts them apart", async () => {
+		const oldId = createMemory("旧系统", "旧事实");
+		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: oldId, verdict: "keep", reason: "ok", applied: 0 });
+		const [outcome] = store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "纠正", description: "纠正旧条", body: "新事实", corrects: oldId }],
+		);
+		expect(outcome?.ok).toBe(true);
+		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const candidates = collectCandidates(store, { limit: 10 }).filter((c) => c.id === oldId);
+		expect(candidates[0]?.priority).toBe(1);
+		const summary = await runReviewBatch({ store, llm }, candidates, OPTS);
+		expect(summary).toMatchObject({ reviewed: 1 });
+		expect(store.getDaily(OPTS.day)).toMatchObject({ requeued: 1, newItems: 0 });
 	});
 });
 
@@ -177,6 +221,69 @@ describe("runReviewBatch", () => {
 		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
 		expect(summary).toMatchObject({ reviewed: 1, approved: 0 });
 		expect(store.getDaily(OPTS.day)?.skipTop).toContain("gate-parse-failed");
+	});
+
+	it("carries the feedback contract into the evolve prompt", async () => {
+		const [outcome] = store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{
+				action: "create", type: "feedback", title: "部署经验", description: "部署前检查",
+				body: "先构建。\n\n**Why:** 避免带病上线。\n\n**How to apply:** 发版前跑构建。",
+			}],
+		);
+		expect(outcome?.ok).toBe(true);
+		const llm = fakeLlm({ gate: `{"worthReview": true, "reason": "看看"}`, evolve: `{"verdict": "keep", "reason": "规范完整"}` });
+		const candidates = collectCandidates(store, { limit: 10 });
+		expect(candidates[0]?.memoryType).toBe("feedback");
+		const summary = await runReviewBatch({ store, llm }, candidates, OPTS);
+		expect(summary).toMatchObject({ approved: 1 });
+	});
+
+	it("unparseable evolve answers ledger a skip without landing", async () => {
+		const id = createMemory();
+		const llm = fakeLlm({ gate: `{"worthReview": true, "reason": "看看"}`, evolve: "胡言乱语" });
+		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
+		expect(summary).toMatchObject({ approved: 1, applied: 0 });
+		expect(store.getDaily(OPTS.day)?.skipTop).toContain("evolve-parse-failed");
+	});
+
+	it("evolve call failures degrade to skips and keep the batch alive", async () => {
+		const id = createMemory();
+		const summary = await runReviewBatch({ store, llm: gateThenThrowLlm(`{"worthReview": true, "reason": "看看"}`) }, [candidateOf(id)], OPTS);
+		expect(summary).toMatchObject({ approved: 1, applied: 0 });
+		expect(store.getDaily(OPTS.day)?.skipTop).toContain("evolve-llm-failed");
+	});
+
+	it("quarantine verdicts stay ledger-only in dry-run", async () => {
+		const id = createMemory();
+		const llm = fakeLlm({
+			gate: `{"worthReview": true, "reason": "看看"}`,
+			evolve: `{"verdict": "quarantine", "reason": "涉密"}`,
+		});
+		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], { ...OPTS, dryRun: true });
+		expect(summary).toMatchObject({ applied: 0 });
+		expect(store.listAll(WS).find((r) => r.id === id)?.status).toBe("active");
+	});
+
+	it("gate-rejected rewrites ledger the refusal without landing", async () => {
+		const id = createMemory("user env", "Fedora 44");
+		const llm = fakeLlm({
+			gate: `{"worthReview": true, "reason": "看看"}`,
+			evolve: `{"verdict": "rewrite", "reason": "自指", "body": "Fedora 44.", "corrects": "${id}"}`,
+		});
+		const summary = await runReviewBatch({ store, llm }, [candidateOf(id, "Fedora 44")], OPTS);
+		expect(summary).toMatchObject({ approved: 1, applied: 0 });
+		expect(store.get(WS, id)?.body).toBe("Fedora 44");
+	});
+
+	it("unrecognized usage payloads account as zero instead of failing", async () => {
+		const id = createMemory();
+		const llm = fakeLlm(
+			{ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` },
+			{ exotic: true } as never,
+		);
+		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
+		expect(summary).toMatchObject({ reviewed: 1, cheapToken: 0 });
 	});
 
 	it("hard cap drops the tail and counts backlog", async () => {

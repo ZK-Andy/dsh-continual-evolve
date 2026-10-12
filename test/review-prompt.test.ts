@@ -29,5 +29,15 @@ describe("parseEvolveAnswer", () => {
 		);
 		expect(prompt).toContain("id=dup");
 		expect(evolvePrompt({ id: "a", title: "t", description: "h", body: "b" }, [])).not.toContain("同类候选");
+		expect(evolvePrompt({ id: "a", title: "t", description: "h", body: "b", extra: "" }, [])).not.toContain("同类候选");
+		expect(
+			evolvePrompt({ id: "a", title: "t", description: "h", body: "b", extra: "判时注意时效" }, []),
+		).toContain("时效");
+	});
+
+	it("rejects scalar and broken JSON instead of throwing", () => {
+		expect(parseGateAnswer("123")).toBeNull();
+		expect(parseGateAnswer("```json\n{broken\n```")).toBeNull();
+		expect(parseEvolveAnswer("[1,2]")).toBeNull();
 	});
 });

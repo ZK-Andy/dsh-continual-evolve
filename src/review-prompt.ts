@@ -120,6 +120,8 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
 	}
 	try {
 		const parsed: unknown = JSON.parse(candidate.slice(start, end + 1));
+		/* v8 ignore next 3 — the slice always starts with `{`, so a
+		successful parse is an object by construction; the guard stays. */
 		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
 			? (parsed as Record<string, unknown>)
 			: null;

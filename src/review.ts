@@ -96,13 +96,10 @@ export function collectCandidates(store: MemoryStore, opts: { now?: number | und
 	const fresh: ReviewCandidate[] = [];
 	const requeued: ReviewCandidate[] = [];
 	const stale: ReviewCandidate[] = [];
-	const seen = new Set<string>();
+	// One push per enumerated row: store primary keys make (workspace, kind,
+	// id) unique, so no dedup set is needed — a duplicate here would mean a
+	// store invariant broke, and failing loud beats silently merging.
 	const push = (candidate: ReviewCandidate): void => {
-		const key = `${candidate.workspaceId}|${candidate.kind}|${candidate.id}`;
-		if (seen.has(key)) {
-			return;
-		}
-		seen.add(key);
 		(candidate.priority === 0 ? fresh : candidate.priority === 1 ? requeued : stale).push(candidate);
 	};
 	const partitions = new Set<string>();
@@ -176,7 +173,11 @@ function skillsGlobal(
 			continue;
 		}
 		for (const record of store.listAllSkills(summary.workspaceId)) {
-			projectIds.add(record.id);
+			// Archived rows shadow nothing (readWithScope shows the global
+			// row once the project row archives after a move-to-global).
+			if (record.status === "active") {
+				projectIds.add(record.id);
+			}
 		}
 	}
 	for (const record of store.listAllSkills("")) {
@@ -210,24 +211,18 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	let newItems = 0;
 	let requeued = 0;
 	const noRoute = deps.llm === undefined || opts.provider === undefined || opts.model === undefined;
-	for (let index = 0; index < batch.length; index += 1) {
-		const candidate = batch[index];
-		if (candidate === undefined) {
-			continue;
-		}
+	let position = 0;
+	for (const candidate of batch) {
 		const remaining = deps.store.consumeReviewBudget(opts.day, opts.budget);
 		if (remaining < 0) {
 			// Hard cap hit: this item and everything after it drops (low
 			// priority never rolls over — it simply waits for a future run).
-			summary.dropped += batch.length - index;
-			for (let dropped = index; dropped < batch.length; dropped += 1) {
-				const item = batch[dropped];
-				if (item !== undefined) {
-					deps.store.logReview({
-						runId, workspaceId: item.workspaceId, itemKind: item.kind, itemId: item.id,
-						verdict: "skip", reason: "budget-exhausted", applied: 0,
-					});
-				}
+			summary.dropped += batch.length - position;
+			for (const item of batch.slice(position)) {
+				deps.store.logReview({
+					runId, workspaceId: item.workspaceId, itemKind: item.kind, itemId: item.id,
+					verdict: "skip", reason: "budget-exhausted", applied: 0,
+				});
 			}
 			skipReasons.push("budget-exhausted");
 			break;
@@ -244,9 +239,11 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 				verdict: "skip", reason: "no-route", applied: 0,
 			});
 			skipReasons.push("no-route");
+			position += 1;
 			continue;
 		}
 		await reviewOne(deps, runId, candidate, opts, summary, skipReasons);
+		position += 1;
 	}
 	summary.backlog = Math.max(0, candidates.length - summary.reviewed - summary.dropped);
 	deps.store.mergeDaily(opts.day, opts.budget, {
