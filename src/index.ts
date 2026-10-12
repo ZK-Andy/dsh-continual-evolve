@@ -31,8 +31,8 @@
 import z from "@deepseek-ai/schemastery";
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
 import { createExtractionScheduler, type LlmStream, type SchedulerHost } from "./extraction.js";
-import type { SurfaceReader } from "./extraction-surface.js";
-import {
+import { createReviewScheduler } from "./review.js";
+import type { SurfaceReader } from "./extraction-surface.js";import {
 	createFrozenMemorySection,
 	cwdOf,
 	DEFAULT_MAX_CHARS,
@@ -95,6 +95,18 @@ export const Config = z.object({
 		 * Off keeps the plugin injection + explicit tools only.
 		 */
 		extraction: z.boolean(),
+	}),
+	/**
+	 * The autonomous content-quality loop (own prompts, own daily budget,
+	 * own ledger — shares only the store's write gates with extraction).
+	 * `dryRun` ledgers verdicts without landing them (trial mode, default
+	 * on); `dailyBudget` caps reviewed items per UTC day (default 100).
+	 */
+	review: z.object({
+		enabled: z.boolean(),
+		dryRun: z.boolean(),
+		dailyBudget: z.natural(),
+		batchSize: z.natural(),
 	}),
 	/**
 	 * The read-only memory card in the official plugin manager
@@ -180,6 +192,38 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
 }
 
 /**
+ * Arm the review scheduler through a nested inject: the loop needs only the
+ * LLM sibling (no trajectory reader — it judges stored items, not session
+ * increments), so it mounts independently from extraction. Own prompts, own
+ * budget, own ledger; the store's write gates are the only shared surface.
+ */
+function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig): void {
+	const log = host.logger("continual-evolve");
+	if (config.review?.enabled === false) {
+		log.info("review disabled by config — extraction and tools unaffected");
+		return;
+	}
+	const nested = host as HostContext & Partial<NestedInjectHost>;
+	const events = host as HostContext & Partial<SchedulerHost>;
+	if (typeof nested.inject !== "function" || typeof events.on !== "function") {
+		log.warn("host context exposes no inject/on — review not armed (injection and tools unaffected)");
+		return;
+	}
+	nested.inject(["llm"], (scoped: unknown) => {
+		const context = scoped as { llm?: unknown; get?: (name: string) => unknown };
+		const llm = (context.llm ?? context.get?.("llm")) as LlmStream | undefined;
+		createReviewScheduler(events as SchedulerHost, { store, llm }, {
+			enabled: true,
+			dryRun: config.review?.dryRun ?? true,
+			dailyBudget: config.review?.dailyBudget ?? 100,
+			batchSize: config.review?.batchSize ?? 10,
+			staleDays: 30,
+			minIntervalMs: 5 * 60 * 1000,
+		});
+	});
+}
+
+/**
  * Mount the card routes on the host web server through a nested inject, so
  * the plugin stays mountable on hosts without that service. Called once the
  * store is ready — the routes are projections of the store, not of files.
@@ -222,6 +266,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			state.store = store;
 			mountToolsWhenAvailable(host, store, state);
 			mountExtractionWhenAvailable(host, store, config);
+			mountReviewWhenAvailable(host, store, config);
 			if (config.memoryCard?.enabled !== false) {
 				mountCardWhenAvailable(host, store);
 			}

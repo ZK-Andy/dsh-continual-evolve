@@ -157,7 +157,14 @@ export function registerMemoryTools(tools: ToolsService, store: MemoryStore): ()
 					const limit = clampLimit(args.limit);
 					if (typeof args.id === "string" && args.id.length > 0) {
 						const record = store.get(cwd, args.id);
-						return record === undefined ? `没有找到 id 为 "${args.id}" 的记忆。` : formatRecord(record);
+						if (record === undefined) {
+							return `没有找到 id 为 "${args.id}" 的记忆。`;
+						}
+						// Presence heartbeat (mirrors skill_read): a body served
+						// by id means the model opened it for the task at hand.
+						// Search/list hits are noise and stay uncounted.
+						store.recordMemoryUse(cwd, record.id);
+						return formatRecord(record);
 					}
 					const query = typeof args.query === "string" ? args.query : "";
 					const records = query.length > 0 ? store.search(cwd, query, limit) : store.list(cwd).slice(0, limit);

@@ -7,7 +7,7 @@ English | [中文](README.zh.md)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-269%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-295%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -21,10 +21,11 @@ Reusable experience gathered in one session (user preferences, pitfalls, project
 ## How it works
 
 1. **Session-start injection** — the plugin registers a single system-prompt section: the workspace's memory index as a store query (hooks only, whole-line truncated over budget, ordered feedback > user > reference), the central-library path, and a three-line guide. The section is computed once per session and reused byte-for-byte, keeping the system prompt stable and the prompt cache warm; an empty store costs zero tokens.
-2. **Four tools, one writer** — `memory_write` (create/update/delete) is the explicit path for "remember …" / "forget …": every proposal passes the code gates (id shape, type enum, the feedback Why/How contract, secret screening carried over from v1, 64KB body cap, optional `corrects` links to the same-workspace active memory being superseded) inside one transaction. `memory_read` fetches bodies by id and searches by keyword — whitespace-separated terms are AND-combined, with literal substring matching for short terms and whenever the trigram index misses; the injected index carries hooks only. `skill_write` (create/update/delete in the project, plus an explicit move-to-global) sediments reusable procedures through the same discipline (kebab ids, secret screening, 64KB cap, no duplicate ids or bodies across scopes); every applied skill is materialized by the plugin as `<workspace>/.agents/skills/<id>/SKILL.md` — the database is the source of truth, the files are a read-only projection patrol restores on drift. `skill_read` fetches skill bodies by id and searches project plus global skills (the project shadows a same-named global); each body served by id increments that skill's view counter (views + last viewed), which the card shows as a presence heartbeat — viewed, not applied, so long-unviewed rows are removal candidates while pruning itself stays human. On hosts without the tools service the plugin degrades to "tell the user" phrasing and stays functional.
-3. **Proposal-based extraction** — the only background automation, audited in the `extraction_log`: every `agent/turn-stopping` schedules that session's boundary, with state kept **per session** (a run in flight keeps only its newest boundary — coalescing, not queueing; `compaction/start` and session close drain it) and **no idle timer**. A run reads the session increment since its cursor, feeds FTS-similar existing memories to one LLM call, and the model's structured proposal lands through the same gates; failures and rejections never advance the cursor. Internal agents, empty increments, turns without real user prose, and turns that already carried an explicit `memory_write` are mechanically skipped — and every skip is ledgered, consecutive quiet turns of one session as a single row carrying how many wake-ups it stands for.
-4. **Rollback is a ledger, not a mechanism** — every mutation lands an `extraction_log` row with full before/after snapshots; undo means rewriting the `before` values. Skill mutations land the same way in `skill_log`. A hygiene pass rides on every applied run: orphan FTS rows are dropped and secret-bearing rows are quarantined (hidden, never deleted; a quarantined skill's materialized file is removed so it stops loading). The read-only card surfaces quarantine anomalies.
-5. **Read-only card** — mounted on the plugin's page in the official plugin manager (the `plugins.bundle.config` slot; hosts without it silently degrade to no card), shaped like the market's own settings card and aligned with ZCode's Settings → Memory viewer: a dropdown scope selector over the store's workspace partitions (opening on the host's current workspace), a search box, per-entry relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, and a skills section listing the workspace's project skills plus visible global skills (global rows badged, project shadowing global) with the same preview, each row showing its view count. Localized through the host's `locale/*.json` metadata channel; host theme tokens, the `Button` primitive, and zh/en copy that tracks the DSH language. The card is a request-time projection of the database and has no edit path.
+2. **Four tools, one writer** — `memory_write` (create/update/delete) is the explicit path for "remember …" / "forget …": every proposal passes the code gates (id shape, type enum, the feedback Why/How contract, secret screening carried over from v1, 64KB body cap, optional `corrects` links to the same-workspace active memory being superseded) inside one transaction. `memory_read` fetches bodies by id and searches by keyword — whitespace-separated terms are AND-combined, with literal substring matching for short terms and whenever the trigram index misses; the injected index carries hooks only. Each memory body served by id increments that memory's view counter (views + last viewed, the same presence heartbeat as skills). `skill_write` (create/update/delete in the project, plus an explicit move-to-global) sediments reusable procedures through the same discipline (kebab ids, secret screening, 64KB cap, no duplicate ids or bodies across scopes); every applied skill is materialized by the plugin as `<workspace>/.agents/skills/<id>/SKILL.md` — the database is the source of truth, the files are a read-only projection patrol restores on drift. `skill_read` fetches skill bodies by id and searches project plus global skills (the project shadows a same-named global); each body served by id increments that skill's view counter (views + last viewed), which the card shows as a presence heartbeat — viewed, not applied, so long-unviewed rows are removal candidates while pruning itself stays human. On hosts without the tools service the plugin degrades to "tell the user" phrasing and stays functional.
+3. **Proposal-based extraction** — the trajectory-to-memory automation, audited in the `extraction_log`: every `agent/turn-stopping` schedules that session's boundary, with state kept **per session** (a run in flight keeps only its newest boundary — coalescing, not queueing; `compaction/start` and session close drain it) and **no idle timer**. A run reads the session increment since its cursor, feeds FTS-similar existing memories to one LLM call, and the model's structured proposal lands through the same gates; failures and rejections never advance the cursor. Internal agents, empty increments, turns without real user prose, and turns that already carried an explicit `memory_write` are mechanically skipped — and every skip is ledgered, consecutive quiet turns of one session as a single row carrying how many wake-ups it stands for.
+4. **Autonomous content-quality loop** — the second background automation, independent from extraction by construction (own prompts, own daily budget, own `review_log` ledger, no cursor; only the store's write gates are shared): a cheap gate model call decides whether a memory/skill entry deserves a close look, and only approvals run the evolve pass that judges content quality (memories on accuracy/usability/reusability/duplication/freshness, skills on trigger precision/executability/reusability/duplication) and proposes the rewrite. New writes are reviewed as they land, the existing stock drains through a bounded backlog queue, and untouched entries requeue after 30 days. Two hard guarantees bound the autonomy: delete never lands automatically (rewrite or quarantine only — quarantine hides, never deletes) and oversized rewrites degrade to quarantine. A daily cap (default 100 items, new > corrects-linked > stale > spot-check priority, the tail drops instead of rolling over) bounds the token spend, and every terminal path lands one `item-review` verdict row plus one daily rollup row (budget vs reviewed vs backlog vs dropped, tokens split by cheap/evolve purpose) for later replay. Ships in trial mode (`review.dryRun`, default on): verdicts ledgered, nothing applied.
+5. **Rollback is a ledger, not a mechanism** — every mutation lands an `extraction_log` row with full before/after snapshots; undo means rewriting the `before` values. Skill mutations land the same way in `skill_log`, review verdicts in `review_log`. A hygiene pass rides on every applied run: orphan FTS rows are dropped and secret-bearing rows are quarantined (hidden, never deleted; a quarantined skill's materialized file is removed so it stops loading). The read-only card surfaces quarantine anomalies.
+6. **Read-only card** — mounted on the plugin's page in the official plugin manager (the `plugins.bundle.config` slot; hosts without it silently degrade to no card), shaped like the market's own settings card and aligned with ZCode's Settings → Memory viewer: a dropdown scope selector over the store's workspace partitions (opening on the host's current workspace), a search box, per-entry relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, and a skills section listing the workspace's project skills plus visible global skills (global rows badged, project shadowing global) with the same preview, each row showing its view count. Localized through the host's `locale/*.json` metadata channel; host theme tokens, the `Button` primitive, and zh/en copy that tracks the DSH language. The card is a request-time projection of the database and has no edit path.
 
 Memory types follow the ZCode taxonomy: `user` (profile and environment facts), `feedback` (corrected or confirmed practices — bodies must carry **Why:** and **How to apply:** lines), `reference` (resource pointers). The extraction boundary is person- and environment-scoped knowledge only: decisions and trade-offs are repo-scoped by nature and belong to the repo's ADR route, never to memory.
 
@@ -55,6 +56,10 @@ No commands. On the first session after restart the index is injected automatica
 | `memoryIndex.order` | `400` | Section order (upstream named slots start at `PLAN_POLICY=500`) |
 | `memoryIndex.maxChars` | `6000` | Hard character budget for the injected index |
 | `memoryIndex.extraction` | `true` | The proposal-based extraction run (turn-level, per-session slots, no idle timer) |
+| `review.enabled` | `true` | The autonomous content-quality loop (own prompts/budget/ledger, trial dry-run) |
+| `review.dryRun` | `true` | Ledger verdicts without landing them (flip off after the trial distribution reads clean) |
+| `review.dailyBudget` | `100` | Reviewed items per UTC day (new > corrects-linked > stale > spot-check, tail drops) |
+| `review.batchSize` | `10` | Max items per drain run |
 | `memoryCard.enabled` | `true` | Read-only memory card in the official plugin manager (degrades to no card when the host lacks `webServer`/`plugins.bundle.config`) |
 
 Profile patch example:
@@ -65,13 +70,15 @@ Profile patch example:
     memoryIndex:
       maxChars: 8000
       extraction: true
+    review:
+      dryRun: false
 ```
 
 ## Development
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (269 tests)
+pnpm test                    # vitest (295 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds
 pnpm lint                    # oxlint src test client
 pnpm check:pack              # published-artifact consistency (also runs on prepack)
@@ -81,8 +88,12 @@ Layout:
 
 ```
 ├── src/
-│   ├── index.ts            # registration: section + tools + extraction + card wiring
+│   ├── index.ts            # registration: section + tools + extraction + review + card wiring
 │   ├── store.ts            # central SQLite store: DDL/WAL/FTS, reads, ledger, patrol, cursors
+│   ├── store-apply.ts      # the sole write gate: validate all, apply atomically, ledger
+│   ├── token-usage.ts      # single accounting entry: normalize provider usage, pure sums
+│   ├── review.ts           # autonomous quality loop: cheap gate → evolve, budget, scheduler
+│   ├── review-prompt.ts    # review prompts + verdict parsing (gate + memory/skill rubrics)
 │   ├── store-apply.ts      # the sole write gate: validate all, apply atomically, ledger
 │   ├── memory-rules.ts     # mechanical gates: enums, sizes, id shape, secret screening
 │   ├── memory-section.ts   # injection: store query / truncate / session freeze
@@ -100,7 +111,7 @@ Layout:
 ├── client/
 │   └── client.js          # hand-written client bundle: read-only card in the plugin manager
 ├── locale/                # host package metadata: localized display name + description (zh/en)
-├── test/                  # vitest suite (20 files)
+├── test/                  # vitest suite (24 files)
 ├── lib/                   # build output (tsc)
 ├── docs/                  # design.md (design) · FAQ.md (real-world pitfalls)
 └── .agents/               # AI collaboration layer (AGENTS.md, skills, ADR notes)

@@ -1,0 +1,115 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openMemoryStore, type MemoryStore } from "../src/store.js";
+
+let dbPath = "";
+let store: MemoryStore;
+const WS = "/tmp/work/review-tests";
+
+beforeEach(async () => {
+	dbPath = join(mkdtempSync(join(tmpdir(), "evolve-review-")), "memory.db");
+	store = await openMemoryStore(dbPath);
+});
+
+afterEach(() => {
+	store.close();
+});
+
+function rawDb(): DatabaseSync {
+	return new DatabaseSync(dbPath);
+}
+
+function create(title = "user env"): void {
+	const [outcome] = store.applyProposals(
+		{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+		[{ action: "create", type: "user", title, description: "用户的操作系统", body: "Fedora 44" }],
+	);
+	expect(outcome?.ok).toBe(true);
+}
+
+describe("memory usage accounting", () => {
+	it("counts servings per partition, unknown memories read undefined", () => {
+		expect(store.getMemoryUse(WS, "user-env")).toBeUndefined();
+		create();
+		store.recordMemoryUse(WS, "user-env");
+		store.recordMemoryUse(WS, "user-env");
+		const use = store.getMemoryUse(WS, "user-env");
+		expect(use?.useCount).toBe(2);
+		expect(typeof use?.lastUsedAt).toBe("string");
+		expect(store.getMemoryUse(WS, "other")).toBeUndefined();
+	});
+
+	it("keeps partitions apart and never throws on faults", () => {
+		store.recordMemoryUse(WS, "shared");
+		store.recordMemoryUse("/other", "shared");
+		expect(store.getMemoryUse(WS, "shared")?.useCount).toBe(1);
+		expect(store.getMemoryUse("/other", "shared")?.useCount).toBe(1);
+		expect(() => store.recordMemoryUse(undefined as never, "shared")).not.toThrow();
+		expect(store.getMemoryUse(undefined as never, "shared")).toBeUndefined();
+	});
+});
+
+describe("review verdict log", () => {
+	it("lands one row per verdict with usage JSON and applied flag", () => {
+		store.logReview({
+			runId: "review:1", workspaceId: WS, itemKind: "memory", itemId: "user-env",
+			verdict: "keep", reason: "准确可用", cheapUsage: { total: 300 }, applied: 0, evolveCount: 0,
+		});
+		store.logReview({
+			runId: "review:1", workspaceId: WS, itemKind: "skill", itemId: "deploy",
+			verdict: "rewrite", reason: "触发词太窄", evolveUsage: { total: 1200 }, applied: 1, evolveCount: 2,
+		});
+		const raw = rawDb();
+		try {
+			const rows = raw.prepare("SELECT item_kind, item_id, verdict, applied, evolve_count FROM review_log ORDER BY rowid").all() as {
+				item_kind: string; item_id: string; verdict: string; applied: number; evolve_count: number;
+			}[];
+			expect(rows).toEqual([
+				{ item_kind: "memory", item_id: "user-env", verdict: "keep", applied: 0, evolve_count: 0 },
+				{ item_kind: "skill", item_id: "deploy", verdict: "rewrite", applied: 1, evolve_count: 2 },
+			]);
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("prunes with the ledgers instead of growing without bound", () => {
+		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: "a", verdict: "skip", reason: "cheap-gate" });
+		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBeGreaterThanOrEqual(1);
+		const raw = rawDb();
+		try {
+			expect((raw.prepare("SELECT COUNT(*) AS n FROM review_log").get() as { n: number }).n).toBe(0);
+		} finally {
+			raw.close();
+		}
+	});
+});
+
+describe("daily hard-cap account", () => {
+	it("consumes atomically and reports -1 past the budget", () => {
+		expect(store.getDaily("2026-10-12")).toBeUndefined();
+		expect(store.consumeReviewBudget("2026-10-12", 2)).toBe(1);
+		expect(store.consumeReviewBudget("2026-10-12", 2)).toBe(0);
+		expect(store.consumeReviewBudget("2026-10-12", 2)).toBe(-1);
+		expect(store.getDaily("2026-10-12")).toMatchObject({ day: "2026-10-12", budget: 2, reviewed: 2 });
+	});
+
+	it("merges run counters additively and keeps the top skip reasons", () => {
+		store.consumeReviewBudget("2026-10-12", 100);
+		store.mergeDaily("2026-10-12", 100, {
+			newItems: 3, approved: 1, applied: 1, cheapToken: 900, evolveToken: 1200,
+			backlog: 4, dropped: 2, skipReasons: ["cheap-gate", "cheap-gate", "stale-fresh"],
+		});
+		store.mergeDaily("2026-10-12", 100, {
+			newItems: 1, cheapToken: 100, backlog: 1, skipReasons: ["cheap-gate"],
+		});
+		expect(store.getDaily("2026-10-12")).toMatchObject({
+			reviewed: 1, newItems: 4, approved: 1, applied: 1,
+			cheapToken: 1000, evolveToken: 1200, backlog: 1, dropped: 2,
+			skipTop: JSON.stringify(["cheap-gate", "stale-fresh"]),
+		});
+	});
+});

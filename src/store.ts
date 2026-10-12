@@ -128,6 +128,45 @@ CREATE TABLE IF NOT EXISTS skill_usage (
   last_used_at TEXT,
   PRIMARY KEY (workspace_id, skill_id, scope)
 ) STRICT;
+-- Memory usage counters (content-quality loop): one aggregate row per memory,
+-- the same presence-heartbeat discipline as skill_usage — a body served by id
+-- counts, search/list hits stay uncounted.
+CREATE TABLE IF NOT EXISTS memory_usage (
+  workspace_id TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TEXT,
+  PRIMARY KEY (workspace_id, memory_id)
+) STRICT;
+-- Per-item content-review verdicts (the item-review trigger's account):
+-- one row per reviewed item per run. Pruned with the ledgers.
+CREATE TABLE IF NOT EXISTS review_log (
+  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
+  item_id TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('keep','rewrite','quarantine','skip')),
+  reason TEXT,
+  cheap_usage TEXT, evolve_usage TEXT,
+  applied INTEGER NOT NULL DEFAULT 0,
+  evolve_count INTEGER NOT NULL DEFAULT 0
+);
+-- One rollup row per UTC day: the hard-cap account (budget vs reviewed vs
+-- backlog vs dropped) plus the token account split by cheap/evolve purpose.
+CREATE TABLE IF NOT EXISTS review_daily (
+  day TEXT NOT NULL PRIMARY KEY,
+  budget INTEGER NOT NULL,
+  reviewed INTEGER NOT NULL DEFAULT 0,
+  new_items INTEGER NOT NULL DEFAULT 0,
+  requeued INTEGER NOT NULL DEFAULT 0,
+  approved INTEGER NOT NULL DEFAULT 0,
+  applied INTEGER NOT NULL DEFAULT 0,
+  cheap_token INTEGER NOT NULL DEFAULT 0,
+  evolve_token INTEGER NOT NULL DEFAULT 0,
+  backlog INTEGER NOT NULL DEFAULT 0,
+  dropped INTEGER NOT NULL DEFAULT 0,
+  skip_top TEXT,
+  skip_counts TEXT
+) STRICT;
 `;
 
 /** One stored skill record (snake_case columns camelCased). Skills carry no type. */
@@ -168,6 +207,55 @@ export interface SkillUse {
 	useCount: number;
 	/** ISO instant of the last counted use, `null` when never consumed. */
 	lastUsedAt: string | null;
+}
+
+/** One per-item content-review verdict (the `item-review` account's row). */
+export interface ReviewLogEntry {
+	runId?: string | undefined;
+	workspaceId?: string | undefined;
+	itemKind: "memory" | "skill";
+	itemId: string;
+	verdict: "keep" | "rewrite" | "quarantine" | "skip";
+	reason?: string | undefined;
+	/** Normalized usage JSON of the cheap gate call, `undefined` when skipped before any call. */
+	cheapUsage?: unknown;
+	/** Normalized usage JSON of the evolve call, `undefined` unless rewritten. */
+	evolveUsage?: unknown;
+	/** Whether the rewrite landed (1) or the row is verdict-only (0). */
+	applied?: number | undefined;
+	/** How many times this item has evolved including this run. */
+	evolveCount?: number | undefined;
+}
+
+/** One day of the hard-cap account (UTC `YYYY-MM-DD`, budget = 100). */
+export interface DailyStats {
+	day: string;
+	budget: number;
+	reviewed: number;
+	newItems: number;
+	requeued: number;
+	approved: number;
+	applied: number;
+	cheapToken: number;
+	evolveToken: number;
+	backlog: number;
+	dropped: number;
+	/** JSON array of the top skip reasons, `null` when none. */
+	skipTop: string | null;
+}
+
+/** Additive counters merged into today's rollup by one run. */
+export interface DailyDelta {
+	newItems?: number | undefined;
+	requeued?: number | undefined;
+	approved?: number | undefined;
+	applied?: number | undefined;
+	cheapToken?: number | undefined;
+	evolveToken?: number | undefined;
+	/** Queue depth after the run (set, not added). */
+	backlog?: number | undefined;
+	dropped?: number | undefined;
+	skipReasons?: string[] | undefined;
 }
 
 /** One stored memory record (snake_case columns camelCased). */
@@ -306,6 +394,37 @@ export interface MemoryStore {
 	recordSkillUse(workspaceId: string, skillId: string, scope: string): void;
 	/** Aggregate usage for one skill, undefined when never consumed. */
 	getSkillUse(workspaceId: string, skillId: string, scope: string): SkillUse | undefined;
+	/**
+	 * Record one real memory consumption (a body served by id, never a list
+	 * or search hit). Same heartbeat discipline as skill usage: accounting
+	 * never fails the read it rides on.
+	 */
+	recordMemoryUse(workspaceId: string, memoryId: string): void;
+	/** Aggregate usage for one memory, undefined when never consumed. */
+	getMemoryUse(workspaceId: string, memoryId: string): SkillUse | undefined;
+	/** Append one per-item content-review verdict (the `item-review` account). */
+	logReview(entry: ReviewLogEntry): void;
+	/**
+	 * Atomically consume one unit of today's review budget: returns the
+	 * remaining budget after consumption, or -1 when the day is exhausted
+	 * (the caller drops the low-priority item and counts it as dropped).
+	 */
+	consumeReviewBudget(day: string, budget: number): number;
+	/** Today's rollup row, undefined when nothing ran yet today. */
+	getDaily(day: string): DailyStats | undefined;
+	/** Merge one run's counters into today's rollup row (upsert, additive). */
+	mergeDaily(day: string, budget: number, delta: DailyDelta): void;
+	/**
+	 * Soft-isolate one item (review quarantine verdict): hidden from
+	 * injection and reads, never deleted — the ledger keeps the before
+	 * snapshot for undo. Returns false when the row is absent.
+	 */
+	quarantine(workspaceId: string, kind: "memory" | "skill", id: string): boolean;
+	/**
+	 * The review history of one item: last verdict instant and landed
+	 * rewrite count, undefined when never reviewed (a new item).
+	 */
+	reviewStateOf(workspaceId: string, kind: "memory" | "skill", id: string): { lastTs: string | null; evolveCount: number } | undefined;
 }
 
 /** Default database location: `$DSH_HOME/evolve/memory.db`, else `~/.dsh/…`. */
@@ -580,6 +699,38 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		skillUseUpsert: database.prepare(
 			"INSERT INTO skill_usage (workspace_id, skill_id, scope, use_count, last_used_at) VALUES (?, ?, ?, 1, ?) " +
 				"ON CONFLICT (workspace_id, skill_id, scope) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
+		),
+		memUseGet: database.prepare(
+			"SELECT use_count, last_used_at FROM memory_usage WHERE workspace_id = ? AND memory_id = ?",
+		),
+		memUseUpsert: database.prepare(
+			"INSERT INTO memory_usage (workspace_id, memory_id, use_count, last_used_at) VALUES (?, ?, 1, ?) " +
+				"ON CONFLICT (workspace_id, memory_id) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
+		),
+		reviewLog: database.prepare(
+			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, cheap_usage, evolve_usage, applied, evolve_count) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		),
+		reviewLast: database.prepare(
+			"SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? ORDER BY rowid DESC LIMIT 1",
+		),
+		reviewEvolved: database.prepare(
+			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND applied = 1",
+		),
+		reviewPrune: database.prepare("DELETE FROM review_log WHERE ts < ?"),
+		dailyGet: database.prepare("SELECT * FROM review_daily WHERE day = ?"),
+		dailyUpsert: database.prepare(
+			"INSERT INTO review_daily (day, budget, reviewed, new_items, requeued, approved, applied, cheap_token, evolve_token, backlog, dropped, skip_top, skip_counts) " +
+				"VALUES (?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL) " +
+				"ON CONFLICT (day) DO UPDATE SET budget = excluded.budget",
+		),
+		dailyConsume: database.prepare(
+			"UPDATE review_daily SET reviewed = reviewed + 1 WHERE day = ? AND reviewed < budget",
+		),
+		dailyMerge: database.prepare(
+			"UPDATE review_daily SET new_items = new_items + ?, requeued = requeued + ?, " +
+				"approved = approved + ?, applied = applied + ?, cheap_token = cheap_token + ?, evolve_token = evolve_token + ?, " +
+				"backlog = ?, dropped = dropped + ?, skip_top = ?, skip_counts = ? WHERE day = ?",
 		),
 	};
 
@@ -1064,7 +1215,8 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		pruneLedger(beforeIso) {
 			const memory = Number(stmts.prune.run(beforeIso).changes);
 			const skills = Number(stmts.skillPrune.run(beforeIso).changes);
-			return memory + skills;
+			const reviews = Number(stmts.reviewPrune.run(beforeIso).changes);
+			return memory + skills + reviews;
 		},
 		close() {
 			database.close();
@@ -1160,6 +1312,115 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				return undefined;
 			}
 		},
+		recordMemoryUse(workspaceId: string, memoryId: string) {
+			try {
+				stmts.memUseUpsert.run(workspaceId, memoryId, new Date().toISOString());
+			} catch {
+				// Accounting never fails the read it rides on.
+			}
+		},
+		getMemoryUse(workspaceId: string, memoryId: string) {
+			try {
+				const row = stmts.memUseGet.get(workspaceId, memoryId) as
+					| { use_count: number; last_used_at: string | null }
+					| undefined;
+				if (row === undefined) {
+					return undefined;
+				}
+				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
+			} catch {
+				return undefined;
+			}
+		},
+		logReview(entry: ReviewLogEntry) {
+			stmts.reviewLog.run(
+				entry.runId ?? null,
+				new Date().toISOString(),
+				entry.workspaceId ?? null,
+				entry.itemKind,
+				entry.itemId,
+				entry.verdict,
+				entry.reason ?? null,
+				entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
+				entry.evolveUsage === undefined ? null : JSON.stringify(entry.evolveUsage),
+				entry.applied ?? 0,
+				entry.evolveCount ?? 0,
+			);
+		},
+		consumeReviewBudget(day: string, budget: number) {
+			stmts.dailyUpsert.run(day, budget);
+			const result = stmts.dailyConsume.run(day) as { changes?: unknown };
+			if (Number(result.changes) === 0) {
+				return -1;
+			}
+			const row = stmts.dailyGet.get(day) as { budget: number; reviewed: number } | undefined;
+			if (row === undefined) {
+				return -1;
+			}
+			return row.budget - row.reviewed;
+		},
+		getDaily(day: string) {
+			const row = stmts.dailyGet.get(day) as
+				| {
+					day: string; budget: number; reviewed: number; new_items: number; requeued: number;
+					approved: number; applied: number; cheap_token: number; evolve_token: number;
+					backlog: number; dropped: number; skip_top: string | null;
+				}
+				| undefined;
+			if (row === undefined) {
+				return undefined;
+			}
+			return {
+				day: row.day, budget: row.budget, reviewed: row.reviewed, newItems: row.new_items,
+				requeued: row.requeued, approved: row.approved, applied: row.applied,
+				cheapToken: row.cheap_token, evolveToken: row.evolve_token,
+				backlog: row.backlog, dropped: row.dropped, skipTop: row.skip_top,
+			};
+		},
+		mergeDaily(day: string, budget: number, delta: DailyDelta) {			stmts.dailyUpsert.run(day, budget);
+			const row = stmts.dailyGet.get(day) as { skip_counts: string | null; skip_top: string | null; backlog: number };
+			const counts: Record<string, number> = parseCounts(row.skip_counts);
+			for (const reason of delta.skipReasons ?? []) {
+				counts[reason] = (counts[reason] ?? 0) + 1;
+			}
+			const entries = Object.entries(counts)
+				.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+				.slice(0, 3)
+				.map(([reason]) => reason);
+			stmts.dailyMerge.run(
+				delta.newItems ?? 0, delta.requeued ?? 0, delta.approved ?? 0, delta.applied ?? 0,
+				delta.cheapToken ?? 0, delta.evolveToken ?? 0,
+				delta.backlog ?? row.backlog,
+				delta.dropped ?? 0,
+				entries.length > 0 ? JSON.stringify(entries) : row.skip_top,
+				Object.keys(counts).length > 0 ? JSON.stringify(counts) : null,
+				day,
+			);
+		},
+		quarantine(workspaceId: string, kind: "memory" | "skill", id: string) {
+			try {
+				const result = (kind === "memory" ? stmts.quarantine : stmts.skillQuarantine).run(workspaceId, id) as {
+					changes?: unknown;
+				};
+				return Number(result.changes) > 0;
+			} catch {
+				return false;
+			}
+		},
+		reviewStateOf(workspaceId: string, kind: "memory" | "skill", id: string) {
+			try {
+				const last = stmts.reviewLast.get(workspaceId, kind, id) as
+					| { ts: string | null }
+					| undefined;
+				if (last === undefined) {
+					return undefined;
+				}
+				const evolved = stmts.reviewEvolved.get(workspaceId, kind, id) as { n: number };
+				return { lastTs: last.ts, evolveCount: Number(evolved.n) };
+			} catch {
+				return undefined;
+			}
+		},
 	};
 	return store;
 }
@@ -1188,6 +1449,28 @@ function ensureMemoriesCorrects(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE memories ADD COLUMN corrects TEXT");
+}
+
+/** Parse the daily skip-counts map; corrupt payloads degrade to empty. */
+function parseCounts(raw: string | null): Record<string, number> {
+	if (raw === null) {
+		return {};
+	}
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return {};
+		}
+		const counts: Record<string, number> = {};
+		for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+			if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+				counts[key] = Math.floor(value);
+			}
+		}
+		return counts;
+	} catch {
+		return {};
+	}
 }
 
 /** JSON-encode the optional ledger fields and insert the row (never throws past a warn). */
