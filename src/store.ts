@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS extraction_log (
   trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')),
   decision TEXT, skip_reason TEXT,
   status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
-  cheap_usage TEXT,
+  cheap_usage TEXT, cheap_error TEXT,
   files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS state (
@@ -299,6 +299,13 @@ export interface LedgerEntry {
 	usage?: unknown;
 	/** Pre-gate call payload (extraction cheap gate); `undefined` when the run never reached it. */
 	cheapUsage?: unknown;
+	/**
+	 * Why the pre-gate call left no payload: the error head when the gate
+	 * threw (fail open). `undefined` when the gate never ran, never resolved
+	 * to an answer, or was not reached — the column exists so that a failed
+	 * gate is tellable from a gate that never existed.
+	 */
+	cheapError?: string | undefined;
 	/** Applied/attempted mutations: `{id, action, before?, after?, sourceSeqs}`; a parse-failed run instead carries the raw answer's head. */
 	files?: unknown;
 }
@@ -616,6 +623,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	ensureLedgerOccurrences(database);
 	ensureMemoriesCorrects(database);
 	ensureExtractionCheapUsage(database);
+	ensureExtractionCheapError(database);
 
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
@@ -650,8 +658,8 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
 		),
 		ledger: database.prepare(
-			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, files) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		latestSkip: database.prepare(
 			"SELECT rowid AS rid, skip_reason AS reason, status FROM extraction_log " +
@@ -1468,6 +1476,20 @@ function ensureExtractionCheapUsage(database: DatabaseSync): void {
 	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_usage TEXT");
 }
 
+/**
+ * Add the extraction ledger `cheap_error` column to a store created before
+ * the failed-gate head was ledgered. Separate from the `cheap_usage`
+ * migration above so a store that already carries that column still gains
+ * this one. Same single-migration discipline as the columns above.
+ */
+function ensureExtractionCheapError(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "cheap_error")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_error TEXT");
+}
+
 /** Parse the daily skip-counts map; corrupt payloads degrade to empty. */
 function parseCounts(raw: string | null): Record<string, number> {
 	if (raw === null) {
@@ -1505,6 +1527,7 @@ function writeLedger(stmt: { run(...args: unknown[]): unknown }, entry: LedgerEn
 		entry.model ?? null,
 		entry.usage === undefined ? null : JSON.stringify(entry.usage),
 		entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
+		entry.cheapError ?? null,
 		entry.files === undefined ? null : JSON.stringify(entry.files),
 	);
 }

@@ -65,11 +65,19 @@ const UNEXPECTED_ERROR_RAW_MAX = 2048;
 /** Head length of an error message embedded in a ledger `skip_reason`. */
 const ERROR_REASON_MAX = 300;
 
+/** Head length of a failed pre-gate call's error kept in the ledger `cheap_error` column. */
+const GATE_ERROR_MAX = 200;
+
 /** Split an unexpected throw into a ledger-sized reason head and file body. */
 function errorText(error: unknown): { message: string; detail: string } {
 	const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
 	const stack = error instanceof Error && typeof error.stack === "string" ? error.stack : message;
 	return { message, detail: `${message}\n${stack}`.slice(0, UNEXPECTED_ERROR_RAW_MAX) };
+}
+
+/** One-line head of a thrown pre-gate error (flat, so the column stays greppable). */
+function errorHead(error: unknown): string {
+	return errorText(error).message.replace(/\s+/g, " ").trim().slice(0, GATE_ERROR_MAX);
 }
 
 /** Options for one run. */
@@ -178,8 +186,13 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	// (manifest + full-body candidates + full increment). A "not worth it"
 	// consumes the increment exactly like a model skip; an unclear gate
 	// (unparseable/failed) fails OPEN to the full call — worst case degrades
-	// to the old single-call behavior, never to a stall.
+	// to the old single-call behavior, never to a stall. A gate that dies
+	// still rides the run's own ledger row as `cheap_error`: without it a
+	// failed gate is indistinguishable from a gate that never existed, which
+	// is how a 512-token budget truncating every call on a reasoning model
+	// stayed invisible.
 	let cheapUsage: unknown;
+	let cheapError: string | undefined;
 	{
 		const gateStarted = Date.now();
 		try {
@@ -203,8 +216,11 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 				});
 				return { status: "skipped", skipReason: verdict.reason, cursor: boundarySeq };
 			}
-		} catch {
-			// Fail open: the full call below is the old behavior.
+		} catch (error) {
+			// Fail open: the full call below is the old behavior. The error
+			// head is kept for the run's own row (never a row of its own, so
+			// one run stays one ledger row).
+			cheapError = errorHead(error);
 		}
 	}
 
@@ -227,7 +243,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	} catch (error) {
 		const { message, detail } = errorText(error);
 		try {
-			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started, cheapUsage, files: detail });
+			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started, cheapUsage, cheapError, files: detail });
 		} catch (ledgerError) {
 			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
 		}
@@ -247,6 +263,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 			model: target.model,
 			usage,
 			cheapUsage,
+			cheapError,
 			durationMs: Date.now() - started,
 			files: text.slice(0, FAILURE_RAW_MAX),
 		});
@@ -263,6 +280,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 			model: target.model,
 			usage,
 			cheapUsage,
+			cheapError,
 			durationMs: Date.now() - started,
 		});
 		return { status: "skipped", skipReason: parsed.reason, cursor: boundarySeq };
@@ -277,6 +295,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 			model: target.model,
 			usage,
 			cheapUsage,
+			cheapError,
 			decision: parsed.reason,
 		},
 		parsed.proposals as MemoryProposal[],

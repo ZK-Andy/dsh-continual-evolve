@@ -271,6 +271,24 @@ describe("runExtraction — cheap pre-gate", () => {
 		};
 	}
 
+	/** A gate call that dies before any text (e.g. a 512-token budget truncating a reasoning model). */
+	function dyingGateLlm(fullText: string, message = "stream finished with max-tokens"): LlmStream & { calls: Record<string, unknown>[] } {
+		const calls: Record<string, unknown>[] = [];
+		return {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				if (system.includes("预检门")) {
+					throw new Error(message);
+				}
+				yield { type: "text-delta", text: fullText };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+	}
+
 	const GATE_NO = JSON.stringify({ worthExtracting: false, reason: "闲聊无沉淀价值" });
 	const GATE_YES = JSON.stringify({ worthExtracting: true, reason: "用户环境事实" });
 	const FULL_APPLY = JSON.stringify({
@@ -325,7 +343,55 @@ describe("runExtraction — cheap pre-gate", () => {
 		expect(llm.calls).toHaveLength(2);
 	});
 
-	it("migrates pre-gate databases with the cheap_usage column", async () => {
+	it("a dying gate fails open and keeps its error head on the run's own row", async () => {
+		const llm = dyingGateLlm(FULL_APPLY);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		expect(llm.calls).toHaveLength(2);
+		const raw = rawDb();
+		try {
+			const rows = raw.prepare("SELECT status, cheap_usage, cheap_error, usage FROM extraction_log").all() as {
+				status: string;
+				cheap_usage: string | null;
+				cheap_error: string | null;
+				usage: string | null;
+			}[];
+			// One run, one row: the gate's death rides this run's row, never a row of its own.
+			expect(rows).toHaveLength(1);
+			expect(rows[0]?.status).toBe("applied");
+			expect(rows[0]?.cheap_usage).toBeNull();
+			expect(rows[0]?.cheap_error).toBe("stream finished with max-tokens");
+			expect(JSON.parse(rows[0]?.usage ?? "null")).toMatchObject({ totalTokens: 15 });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("a dying gate on a skip run keeps the flattened error head and still consumes the increment", async () => {
+		const llm = dyingGateLlm(
+			JSON.stringify({ decision: "skip", reason: "没有值得沉淀的" }),
+			"OUTPUT_TOKEN_LIMIT: max_tokens=512, outputTokens=512\n    at streamOnce (extraction.js:254:15)",
+		);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("skipped");
+		expect(result.skipReason).toBe("没有值得沉淀的");
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT skip_reason, cheap_usage, cheap_error FROM extraction_log").get() as {
+				skip_reason: string;
+				cheap_usage: string | null;
+				cheap_error: string | null;
+			};
+			expect(row.skip_reason).toBe("model-skip: 没有值得沉淀的");
+			expect(row.cheap_usage).toBeNull();
+			expect(row.cheap_error).toBe("OUTPUT_TOKEN_LIMIT: max_tokens=512, outputTokens=512 at streamOnce (extraction.js:254:15)");
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("migrates pre-gate databases with both gate columns", async () => {
 		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-extract-legacy-")), "memory.db");
 		const legacy = new DatabaseSync(legacyPath);
 		try {
@@ -344,10 +410,11 @@ describe("runExtraction — cheap pre-gate", () => {
 			try {
 				const columns = probe.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
 				expect(columns.some((c) => c.name === "cheap_usage")).toBe(true);
+				expect(columns.some((c) => c.name === "cheap_error")).toBe(true);
 			} finally {
 				probe.close();
 			}
-			migrated.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "x", status: "skipped", cheapUsage: { total: 1 } });
+			migrated.logSkipped({ workspaceId: WS, sessionId: "s", trigger: "turn-debounce", skipReason: "x", status: "skipped", cheapUsage: { total: 1 }, cheapError: "gate died" });
 		} finally {
 			migrated.close();
 		}
