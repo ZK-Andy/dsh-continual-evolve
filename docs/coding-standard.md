@@ -22,7 +22,7 @@
 - **fail loud**：缺失引用、误配置绝不静默跳过。
 - `catch` 必须命名它吞掉什么；`try` 只包一个语句；空 `catch {}` 禁止。
 - 领域错误用具名 Error 类（如 `EvolutionApplyPostCommitError` 携带批次数据）；错误信息必须可操作。
-- **审计语义不变**：失败不推进 cursor、不静默重试、必写 `reviews.jsonl`；"用户没回答"≠"用户拒绝"。
+- **审计语义不变**：失败不推进 cursor、不静默重试、判断落账本行可对账；"用户没回答"≠"用户拒绝"。
 
 ## 4. 命名与组织
 
@@ -36,8 +36,8 @@
 - 可调参数进 `index.ts` 的 schemastery `Config`，禁硬编码魔法数；协议常量与安全不变量（schema version、section 命名、审计字段名）保持固定。
 - 每个配置键必须在 README 配置表有对应行；键删除与 README 删除同一提交。
 - 日志走 `ctx.logger("continual-evolve")` + `logfile.ts` 文件 exporter；禁 `console.*`。
-- 直调 LLM 的 token 记账唯一入口 `token-usage.ts`；新增 LLM 调用点必须记账。
-- 机械化判断（gate/skip/declined）写 `reviews.jsonl`；人类可读投影走 `projection.ts`，两套账不混用。
+- 直调 LLM 的用量随运行行记账（`extraction_log.usage` 原始 payload）；新增 LLM 调用点必须带用量回传。
+- 机械化判断（gate/skip/declined）落账本行；人类可读投影走卡片快照，两套账不混用。
 
 ## 6. 测试
 

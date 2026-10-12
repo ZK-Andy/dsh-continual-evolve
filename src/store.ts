@@ -30,9 +30,8 @@ import {
 } from "./skill-rules.js";
 import { isValidMemoryId } from "./memory-rules.js";
 import { applyProposals, type ProposalContext, type ProposalOutcome } from "./store-apply.js";
-import { normalizeUsage, sumUsage, zeroUsage, type UsageTotals } from "./token-usage.js";
 
-export type { MemoryProposal, ProposalContext, ProposalOutcome, UsageTotals };
+export type { MemoryProposal, ProposalContext, ProposalOutcome };
 
 /** Thrown when the runtime lacks `node:sqlite` — the degrade signal. */
 export class StoreUnavailableError extends Error {}
@@ -170,23 +169,6 @@ export interface SkillUse {
 	lastUsedAt: string | null;
 }
 
-/** One review-loop audit view over the extraction ledger (read-only). */
-export interface ReviewSummary {
-	applied: number;
-	rejected: number;
-	skipped: number;
-	failed: number;
-	/** Top skip reasons, most frequent first (at most 3, display-truncated). */
-	topSkips: { reason: string; count: number }[];
-	/** Token totals over the same rows (unnormalizable payloads contribute nothing). */
-	tokens: UsageTotals;
-}
-
-/** The empty audit view: no rows, no signal — never a failure. */
-export function zeroReviewSummary(): ReviewSummary {
-	return { applied: 0, rejected: 0, skipped: 0, failed: 0, topSkips: [], tokens: zeroUsage() };
-}
-
 /** One stored memory record (snake_case columns camelCased). */
 export interface MemoryRecord {
 	workspaceId: string;
@@ -321,13 +303,6 @@ export interface MemoryStore {
 	recordSkillUse(workspaceId: string, skillId: string, scope: string): void;
 	/** Aggregate usage for one skill, undefined when never consumed. */
 	getSkillUse(workspaceId: string, skillId: string, scope: string): SkillUse | undefined;
-	/**
-	 * Read-only audit over the extraction ledger for one workspace: judgment
-	 * counts, top skip reasons, and token totals. Degrades to zeros on any
-	 * fault — the card observes, never breaks. `since` is an inclusive ISO
-	 * lower bound; empty counts every row.
-	 */
-	reviewSummary(workspaceId: string, since?: string): ReviewSummary;
 }
 
 /** Default database location: `$DSH_HOME/evolve/memory.db`, else `~/.dsh/…`. */
@@ -592,9 +567,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		skillQuarantine: database.prepare("UPDATE skills SET status = 'quarantined' WHERE workspace_id = ? AND id = ?"),
 		skillWorkspaces: database.prepare(
 			"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM skills WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
-		),
-		reviewRows: database.prepare(
-			"SELECT status, skip_reason, usage FROM extraction_log WHERE workspace_id = ? AND ts >= ?",
 		),
 		skillUseGet: database.prepare(
 			"SELECT use_count, last_used_at FROM skill_usage WHERE workspace_id = ? AND skill_id = ? AND scope = ?",
@@ -1180,51 +1152,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
 			} catch {
 				return undefined;
-			}
-		},
-		reviewSummary(workspaceId: string, since?: string) {
-			try {
-				const rows = stmts.reviewRows.all(workspaceId, since ?? "") as {
-					status: string | null;
-					skip_reason: string | null;
-					usage: string | null;
-				}[];
-				const summary = zeroReviewSummary();
-				const skips = new Map<string, number>();
-				for (const row of rows) {
-					if (row.status === "applied") {
-						summary.applied += 1;
-					} else if (row.status === "rejected") {
-						summary.rejected += 1;
-					} else if (row.status === "failed") {
-						summary.failed += 1;
-					} else {
-						summary.skipped += 1;
-					}
-					if (row.status !== "applied" && row.status !== "rejected" && typeof row.skip_reason === "string" && row.skip_reason.length > 0) {
-						skips.set(row.skip_reason, (skips.get(row.skip_reason) ?? 0) + 1);
-					}
-					if (typeof row.usage === "string" && row.usage.length > 0) {
-						try {
-							const normalized = normalizeUsage(JSON.parse(row.usage) as unknown);
-							if (normalized !== null) {
-								summary.tokens = sumUsage(summary.tokens, normalized);
-							}
-						} catch {
-							// One corrupt payload must not void the whole audit.
-						}
-					}
-				}
-				summary.topSkips = [...skips.entries()]
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 3)
-					.map(([reason, count]) => ({
-						reason: reason.length > 80 ? `${reason.slice(0, 80)}…` : reason,
-						count,
-					}));
-				return summary;
-			} catch {
-				return zeroReviewSummary();
 			}
 		},
 	};

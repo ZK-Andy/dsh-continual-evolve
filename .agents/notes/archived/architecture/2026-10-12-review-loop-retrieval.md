@@ -1,8 +1,10 @@
 # Agent Note: 取回质量评审——token 记账唯一入口与判断审计面
 
-Status: implemented
+Status: rejected — 评审对象漂移：要的是沉淀内容评审，造的是运行指标；且用户明确反对新设计走老管线。2026-10-12 整段废除回滚。
 
-> 放置路径：`.agents/notes/implemented/architecture/2026-10-12-review-loop-retrieval.md`
+Archived: 2026-10-12
+
+> 放置路径：`.agents/notes/archived/architecture/2026-10-12-review-loop-retrieval.md`（原 implemented，已废除冻结）
 > 前序：`.agents/notes/implemented/architecture/2026-10-04-zcode-alignment-teardown.md`（10-04 拆掉审计/快照/回滚/审批）；`docs/coding-standard.md` §3/§5 至今仍要求 `reviews.jsonl` 与 `token-usage.ts`，实现时两者皆空。收敛时用户加码：卡片展示一起做（无新路由，评审搭记忆快照的车）。
 
 ## Problem
