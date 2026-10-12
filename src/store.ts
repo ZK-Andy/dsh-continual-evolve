@@ -68,6 +68,7 @@ PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
   source_session TEXT,
   source_seqs TEXT,
   source_run TEXT,
+  corrects TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, id)
@@ -83,7 +84,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
 -- patrol() reconciles any residue.
 CREATE TABLE IF NOT EXISTS extraction_log (
   run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
-  trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import')),
+  trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')),
   decision TEXT, skip_reason TEXT,
   status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
   files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
@@ -184,6 +185,8 @@ export interface MemoryRecord {
 	sourceSeqs: string | null;
 	/** The extraction run that wrote it; `'explicit'` for tool writes. */
 	sourceRun: string | null;
+	/** Id of the memory this row corrects/supersedes in the same workspace, `null` when standalone. */
+	corrects: string | null;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -198,7 +201,7 @@ export interface LedgerEntry {
 	runId?: string | undefined;
 	sessionId?: string | undefined;
 	workspaceId?: string | undefined;
-	trigger: "turn-debounce" | "compaction" | "close-drain" | "explicit" | "import";
+	trigger: "turn-debounce" | "compaction" | "close-drain" | "explicit" | "import" | "item-review";
 	decision?: string | undefined;
 	skipReason?: string | undefined;
 	status?: string | undefined;
@@ -322,6 +325,7 @@ interface MemoryRow {
 	source_session: string | null;
 	source_seqs: string | null;
 	source_run: string | null;
+	corrects: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -338,6 +342,7 @@ function recordOf(row: MemoryRow): MemoryRecord {
 		sourceSession: row.source_session,
 		sourceSeqs: row.source_seqs,
 		sourceRun: row.source_run,
+		corrects: row.corrects ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
@@ -487,6 +492,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	}
 	database.exec(DDL);
 	ensureLedgerOccurrences(database);
+	ensureMemoriesCorrects(database);
 
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
@@ -1169,6 +1175,19 @@ function ensureLedgerOccurrences(database: DatabaseSync): void {
 		return;
 	}
 	database.exec(`ALTER TABLE extraction_log ADD COLUMN ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1`);
+}
+
+/**
+ * Add the memories `corrects` link column to a store created before the
+ * correction-linking field existed. Same single-migration discipline as the
+ * ledger occurrences column above.
+ */
+function ensureMemoriesCorrects(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "corrects")) {
+		return;
+	}
+	database.exec("ALTER TABLE memories ADD COLUMN corrects TEXT");
 }
 
 /** JSON-encode the optional ledger fields and insert the row (never throws past a warn). */

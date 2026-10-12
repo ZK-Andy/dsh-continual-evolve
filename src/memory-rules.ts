@@ -133,6 +133,13 @@ export interface MemoryProposal {
 	body?: string | undefined;
 	/** Trajectory provenance for extraction writes ("820-831"). */
 	sourceSeqs?: string | undefined;
+	/**
+	 * Optional id of the same-workspace memory this proposal corrects or
+	 * supersedes. The gate requires the target to exist and be active and
+	 * forbids self-links; the link persists on the row for future
+	 * correction-chasing. Append/replace only — no unlink path.
+	 */
+	corrects?: string | undefined;
 }
 
 /** The merged field values a create/update would write (delete checks none). */

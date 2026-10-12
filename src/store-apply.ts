@@ -64,6 +64,7 @@ interface MemoryRow {
 	source_session: string | null;
 	source_seqs: string | null;
 	source_run: string | null;
+	corrects: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -80,16 +81,17 @@ function recordOf(row: MemoryRow): MemoryRecord {
 		sourceSession: row.source_session,
 		sourceSeqs: row.source_seqs,
 		sourceRun: row.source_run,
+		corrects: row.corrects ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
 }
 
 const INSERT_SQL =
-	"INSERT INTO memories (workspace_id, id, type, title, description, body, status, source_session, source_seqs, source_run, created_at, updated_at) " +
-	"VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)";
+	"INSERT INTO memories (workspace_id, id, type, title, description, body, status, source_session, source_seqs, source_run, corrects, created_at, updated_at) " +
+	"VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)";
 const UPDATE_SQL =
-	"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, updated_at = ? WHERE workspace_id = ? AND id = ?";
+	"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, corrects = COALESCE(?, corrects), updated_at = ? WHERE workspace_id = ? AND id = ?";
 const DELETE_SQL = "DELETE FROM memories WHERE workspace_id = ? AND id = ?";
 const FTS_DROP_SQL =
 	"DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE workspace_id = ? AND id = ?)";
@@ -213,6 +215,10 @@ function applyOne(
 	if ("reason" in fields) {
 		return fail(proposal, fields.reason);
 	}
+	const link = checkCorrects(stmts.get, ctx.workspaceId, proposal, id);
+	if ("reason" in link) {
+		return fail(proposal, link.reason);
+	}
 	const reasons = fieldGateReasons(fields.fields);
 	if (reasons.length > 0) {
 		return fail(proposal, reasons[0] ?? "invalid record");
@@ -232,6 +238,7 @@ function applyOne(
 			ctx.sessionId ?? null,
 			proposal.sourceSeqs ?? null,
 			ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
+			link.value,
 			now,
 			now,
 		);
@@ -253,6 +260,7 @@ function applyOne(
 		fields.fields.title,
 		fields.fields.description,
 		fields.fields.body,
+		link.value,
 		db.now(),
 		ctx.workspaceId,
 		id,
@@ -265,6 +273,42 @@ function applyOne(
 /** Failure outcome, carrying the proposal id when one was readable. */
 function fail(proposal: MemoryProposal, reason: string): ProposalOutcome {
 	return { id: proposal.id ?? "", action: proposal.action as ProposalOutcome["action"], ok: false, reason };
+}
+
+/**
+ * Resolve the correction link: absent (or explicitly empty-checked) proposals
+ * carry `null`, which keeps an existing link on update and stores null on
+ * create. A named target must be a well-formed id in the same workspace,
+ * must exist, must be active, and must not be the row itself.
+ */
+function checkCorrects(
+	get: StatementSync,
+	workspaceId: string,
+	proposal: MemoryProposal,
+	id: string,
+): { value: string | null } | { reason: string } {
+	const raw = proposal.corrects;
+	if (raw === undefined) {
+		return { value: null };
+	}
+	const target = raw.trim();
+	if (target.length === 0) {
+		return { reason: "corrects must not be empty — omit it instead" };
+	}
+	if (!isValidMemoryId(target)) {
+		return { reason: `malformed corrects target "${target}"` };
+	}
+	if (target === id) {
+		return { reason: `memory "${id}" cannot correct itself` };
+	}
+	const row = get.get(workspaceId, target) as MemoryRow | undefined;
+	if (row === undefined) {
+		return { reason: `no memory "${target}" to correct` };
+	}
+	if (row.status !== "active") {
+		return { reason: `memory "${target}" is not active and cannot be corrected` };
+	}
+	return { value: target };
 }
 
 /** The proposal id, derived from the title (slug, CJK-hash fallback) on create. */

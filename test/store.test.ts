@@ -393,6 +393,88 @@ describe("patrol", () => {
 	});
 });
 
+describe("correction linking", () => {
+	function propose(proposals: Record<string, unknown>[]) {
+		return store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" }, proposals as never);
+	}
+
+	it("persists the link on create and keeps it on silent updates", () => {
+		expect(create({ id: "old-fact" })).toBe(true);
+		expect(create({ id: "new-fact", corrects: "old-fact" })).toBe(true);
+		expect(store.get(WS, "new-fact")?.corrects).toBe("old-fact");
+		expect(store.get(WS, "old-fact")?.corrects).toBeNull();
+		const updated = propose([{ action: "update", id: "new-fact", body: "Fedora 45" }]);
+		expect(updated[0]?.ok).toBe(true);
+		expect(store.get(WS, "new-fact")?.corrects).toBe("old-fact");
+	});
+
+	it("rejects dangling, malformed, empty, self, and inactive targets", () => {
+		expect(create({ id: "live" })).toBe(true);
+		for (const [corrects, reason] of [
+			["ghost", 'no memory "ghost" to correct'],
+			["BAD ID", 'malformed corrects target "BAD ID"'],
+			["   ", "corrects must not be empty — omit it instead"],
+		] as const) {
+			const outcomes = propose([{ action: "create", id: `bad-${reason.length}`, type: "user", title: "t", description: "d", body: "b", corrects }]);
+			expect(outcomes[0]).toMatchObject({ ok: false, reason });
+		}
+		const self = propose([{ action: "create", id: "narcissus", type: "user", title: "t", description: "d", body: "b", corrects: "narcissus" }]);
+		expect(self[0]).toMatchObject({ ok: false, reason: 'memory "narcissus" cannot correct itself' });
+		const db = rawDb();
+		try {
+			db.prepare("UPDATE memories SET status = 'archived' WHERE workspace_id = ? AND id = ?").run(WS, "live");
+		} finally {
+			db.close();
+		}
+		const stale = propose([{ action: "create", id: "late", type: "user", title: "t", description: "d", body: "b", corrects: "live" }]);
+		expect(stale[0]).toMatchObject({ ok: false, reason: 'memory "live" is not active and cannot be corrected' });
+		expect(store.get(WS, "late")).toBeUndefined();
+	});
+
+	it("overwrites the link when an update names one", () => {
+		expect(create({ id: "v1" })).toBe(true);
+		expect(create({ id: "v2" })).toBe(true);
+		expect(create({ id: "fix", corrects: "v1" })).toBe(true);
+		const moved = propose([{ action: "update", id: "fix", corrects: "v2" }]);
+		expect(moved[0]?.ok).toBe(true);
+		expect(store.get(WS, "fix")?.corrects).toBe("v2");
+	});
+
+	it("migrates pre-link databases and accepts the item-review trigger", async () => {
+		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-legacy-db-")), "memory.db");
+		const legacy = new DatabaseSync(legacyPath);
+		try {
+			legacy.exec(
+				"CREATE TABLE memories (workspace_id TEXT NOT NULL, id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL, " +
+					"description TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', source_session TEXT, " +
+					"source_seqs TEXT, source_run TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (workspace_id, id)) STRICT;",
+			);
+		} finally {
+			legacy.close();
+		}
+		const legacyStore = await openMemoryStore(legacyPath);
+		try {
+			const probe = new DatabaseSync(legacyPath);
+			try {
+				const columns = probe.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+				expect(columns.some((c) => c.name === "corrects")).toBe(true);
+			} finally {
+				probe.close();
+			}
+			legacyStore.logSkipped({ workspaceId: WS, trigger: "item-review", sessionId: "sess-1", status: "skipped", skipReason: "no-user-prose" });
+			const check = new DatabaseSync(legacyPath);
+			try {
+				const rows = check.prepare("SELECT trigger FROM extraction_log").all() as { trigger: string }[];
+				expect(rows.map((r) => r.trigger)).toEqual(["item-review"]);
+			} finally {
+				check.close();
+			}
+		} finally {
+			legacyStore.close();
+		}
+	});
+});
+
 describe("defaultStorePath", () => {
 	it("prefers DSH_HOME and falls back to ~/.dsh", async () => {
 		const { defaultStorePath } = await import("../src/store.js");
