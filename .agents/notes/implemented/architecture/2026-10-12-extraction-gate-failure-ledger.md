@@ -6,7 +6,7 @@ Status: implemented
 
 提取侧便宜预检门在 v0.15.8 上线时只记「门用量」（`cheap_usage`）：门调用成功就记 payload，门自己抛错则 catch 为空。fail-open 语义本身是对的（透传给贵调用，不 stall），但失败不留痕，于是「门整晚都在挂」只能靠 `cheap_usage IS NULL` 反推——而这与「这版还没有门」在账本上不可区分（两者都表现为贵调用行 `cheap_usage` 为空）。
 
-2026-10-12 晚实证：桌面 app 18:44:57 重启（装的 `lib/extraction.js:119` 门带 512 token 预算），此后 22 次全调用中 22 次 `cheap_usage` 为空（模型 `muse-spark-1.3-contributor`，带思考强度），唯一一次命中门的是 `deepseek/deepseek-v4.1-flash`（96 输出 + 54 推理 token）。评审轨在 `414ca90` 起把失败原文写进行里（`gate-llm-failed: <原文>`），提取轨没有对应物；宿主日志也不落请求级错误（同晚 21:30–21:45 全量只有托盘与 shell 代理行），账本是唯一 durable 面。
+2026-10-12 晚实证：桌面 app 18:44:57 重启（装的 `lib/extraction.js:119` 门带 512 token 预算），此后 22 次全调用中 22 次 `cheap_usage` 为空（模型 `muse-spark-1.3-contributor`，带思考强度），唯一一次命中门的是 `deepseek/deepseek-v4.1-flash`（96 输出 + 54 推理 token）。两者失败率的差异成因未坐实，且首个 `cheap_error` 样本落在 flash 上（见 Consequences）。评审轨在 `414ca90` 起把失败原文写进行里（`gate-llm-failed: <原文>`），提取轨没有对应物；宿主日志也不落请求级错误（同晚 21:30–21:45 全量只有托盘与 shell 代理行），账本是唯一 durable 面。
 
 ## Decision
 
@@ -30,6 +30,8 @@ fail-open 语义不变：不消费游标、不 stall、不为门的死亡加行�
 收益：门失败可见可查（`WHERE cheap_error IS NOT NULL`），且 provider 抛错原文自带 `max_tokens` / `outputTokens` / `reasoningTokens` 数字，直接回答「门是在烧满预算之后死的，还是路由抖动」；`cheap_usage IS NULL` 的两义性消失。
 
 代价：一列 schema 迁移 + 每次运行多写一列；账本行诊断载荷每行最多多 200 字符。
+
+首个样本（2026-10-12 22:53，`deepseek/deepseek-v4.1-flash`，本仓工作区）：`cheap_error = stream finished with error`——**路由/网关级故障**，既不是输出预算撞顶、也不是模型选择；同一轮的贵调用正常返回并落盘（1149 输出 + 829 推理 token），说明这是每次调用各自掷骰子的路由抖动，与「门在某个模型上必然死」的读法不相容。门遇路由故障是否先重试一次再 fail-open，留给后续独立决定。
 
 ### Testing
 
