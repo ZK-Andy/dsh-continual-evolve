@@ -8,7 +8,7 @@
  */
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "./store.js";
+import { MEMORY_FILE_PREVIEW_LIMIT, zeroReviewSummary, type MemoryStore, type MemoryRecord, type ReviewSummary, type SkillRecord } from "./store.js";
 import { skillUsagePartition } from "./skill-rules.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
@@ -39,6 +39,8 @@ export interface MemorySnapshot {
 	quarantined: { id: string; reason: string }[];
 	/** The last patrol pass this process recorded (null before the first). */
 	lastPatrol: { ts: string; orphanFtsRows: number; quarantined: number } | null;
+	/** Review-loop audit over the workspace's extraction ledger (zeros when none). */
+	review: ReviewSummary;
 }
 
 /**
@@ -57,6 +59,7 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 		files: [],
 		quarantined: [],
 		lastPatrol: null,
+		review: zeroReviewSummary(),
 	};
 	let all;
 	try {
@@ -93,7 +96,16 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 			.filter((record) => record.status === "quarantined")
 			.map((record) => ({ id: record.id, reason: quarantineReasonOf(store, record) })),
 		lastPatrol,
+		review: reviewOf(store, workspaceRoot),
 	};
+}
+
+function reviewOf(store: MemoryStore, root: string): ReviewSummary {
+	try {
+		return store.reviewSummary(root);
+	} catch {
+		return zeroReviewSummary();
+	}
 }
 
 function infoOf(record: MemoryRecord): MemoryFileInfo {

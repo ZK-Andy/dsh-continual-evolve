@@ -103,6 +103,7 @@ window.__ModuleLoader__.load({
 			skillScopeGlobal: "全局",
 			skillPreviewDeleted: "该技能已被删除或搬家，请刷新列表。",
 			skillUsed: "用过 {count} 次",
+			reviewStats: "评审：应用 {applied} · 拒绝 {rejected} · 跳过 {skipped} · 失败 {failed} · token {tokens}",
 			scopeLabel: "选择工作区",
 			searchPlaceholder: "搜索记忆…",
 			searchEmpty: "没有匹配的记忆文件。",
@@ -136,6 +137,7 @@ window.__ModuleLoader__.load({
 			skillScopeGlobal: "global",
 			skillPreviewDeleted: "This skill was deleted or moved — refresh the list.",
 			skillUsed: "used {count} times",
+			reviewStats: "Reviews: {applied} applied · {rejected} rejected · {skipped} skipped · {failed} failed · {tokens} tokens",
 			scopeLabel: "Choose workspace",
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
@@ -192,6 +194,22 @@ window.__ModuleLoader__.load({
 				day: "numeric",
 				year: sameYear ? undefined : "numeric",
 			}).format(date);
+		}
+
+		/**
+		 * Compact token totals for the review line: 0 / 999 / 12.4k / 3.1M.
+		 */
+		function formatTokens(total) {
+			if (typeof total !== "number" || !isFinite(total) || total <= 0) {
+				return "0";
+			}
+			if (total >= 1000000) {
+				return (total / 1000000).toFixed(1) + "M";
+			}
+			if (total >= 1000) {
+				return (total / 1000).toFixed(1) + "k";
+			}
+			return String(Math.round(total));
 		}
 
 		/**
@@ -745,6 +763,29 @@ window.__ModuleLoader__.load({
 						t("stats", { files: snapshot.fileCount }),
 					),
 				];
+				// Review-loop audit rides the memory snapshot: one compact line
+				// when the ledger has any judgments, nothing when it is quiet.
+				var review = snapshot.review;
+				if (
+					review !== null &&
+					review !== undefined &&
+					(review.applied + review.rejected + review.skipped + review.failed) > 0
+				) {
+					var reviewTokens = review.tokens === null || review.tokens === undefined ? 0 : review.tokens.total;
+					parts.push(
+						createElement(
+							"div",
+							{ key: "review", className: "dce-hint" },
+							t("reviewStats", {
+								applied: review.applied,
+								rejected: review.rejected,
+								skipped: review.skipped,
+								failed: review.failed,
+								tokens: formatTokens(reviewTokens),
+							}),
+						),
+					);
+				}
 				if (snapshot.quarantined.length > 0) {
 					parts.push(
 						createElement("div", { key: "quarantined", className: "dce-warn" }, t("quarantined") + snapshot.quarantined.map(function (entry) { return entry.id; }).join("、")),

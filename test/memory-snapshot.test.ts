@@ -145,8 +145,34 @@ describe("memoryEntryContent", () => {
 	});
 });
 
-describe("listCardWorkspaces", () => {
-	it("lists partitions with surviving directories and hides vanished ones", () => {
+describe("memorySnapshot review", () => {
+	it("carries a zeroed audit on empty workspaces and counts after runs", () => {
+		expect(memorySnapshot(store, workspace).review).toMatchObject({ applied: 0, skipped: 0, tokens: { total: 0 } });
+		expect(seed()).toBe(true);
+		store.logSkipped({ workspaceId: workspace, trigger: "turn-debounce", sessionId: "sess-1", status: "skipped", skipReason: "model-skip: 噪声", usage: { inputTokens: 7, outputTokens: 8 } });
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.review).toMatchObject({ skipped: 1, tokens: { input: 7, output: 8, total: 15 } });
+		expect(snapshot.review.topSkips[0]).toMatchObject({ reason: "model-skip: 噪声", count: 1 });
+	});
+
+	it("degrades a failing audit to zeros without breaking the snapshot", () => {
+		expect(seed()).toBe(true);
+		const hostile = new Proxy(store, {
+			get(target, prop) {
+				if (prop === "reviewSummary") {
+					throw new Error("boom");
+				}
+				const value = (target as unknown as Record<string | symbol, unknown>)[prop];
+				return typeof value === "function" ? (value as (...args: never[]) => unknown).bind(target) : value;
+			},
+		}) as unknown as MemoryStore;
+		const snapshot = memorySnapshot(hostile, workspace);
+		expect(snapshot.exists).toBe(true);
+		expect(snapshot.review).toMatchObject({ applied: 0, skipped: 0 });
+	});
+});
+
+describe("listCardWorkspaces", () => {	it("lists partitions with surviving directories and hides vanished ones", () => {
 		expect(listCardWorkspaces(store)).toEqual([]);
 		expect(seed()).toBe(true);
 		expect(listCardWorkspaces(store)).toEqual([{ root: workspace, label: workspace.split("/").pop() }]);

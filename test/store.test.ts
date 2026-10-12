@@ -393,6 +393,49 @@ describe("patrol", () => {
 	});
 });
 
+describe("reviewSummary", () => {
+	function skip(reason: string, usage: unknown = null): void {
+		store.logSkipped({ workspaceId: WS, trigger: "turn-debounce", sessionId: "sess-1", status: "skipped", skipReason: reason, usage });
+	}
+
+	it("aggregates judgments, top skips, and token totals per workspace", () => {
+		expect(store.reviewSummary(WS)).toEqual({ applied: 0, rejected: 0, skipped: 0, failed: 0, topSkips: [], tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0 } });
+		expect(create()).toBe(true);
+		skip("model-skip: 无复用价值", { inputTokens: 100, outputTokens: 200, totalTokens: 300 });
+		skip("model-skip: 无复用价值", { inputTokens: 10, outputTokens: 20 });
+		skip("internal-agent");
+		store.logSkipped({ workspaceId: WS, trigger: "turn-debounce", sessionId: "sess-1", status: "failed", skipReason: "llm-failed", usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 } });
+		const summary = store.reviewSummary(WS);
+		expect(summary.applied).toBe(1);
+		expect(summary.failed).toBe(1);
+		expect(summary.skipped).toBe(3);
+		expect(summary.tokens).toMatchObject({ input: 115, output: 225, total: 340 });
+		expect(summary.topSkips[0]).toMatchObject({ reason: "model-skip: 无复用价值", count: 2 });
+		expect(summary.topSkips.length).toBeLessThanOrEqual(3);
+	});
+
+	it("honors the since bound and ignores corrupt payloads and faults", () => {
+		skip("model-skip: 旧账", { inputTokens: 1, outputTokens: 1 });
+		const db = rawDb();
+		try {
+			db.prepare("INSERT INTO extraction_log (ts, workspace_id, trigger, status, usage) VALUES (?, ?, ?, ?, ?)").run(
+				"2020-01-01T00:00:00.000Z",
+				WS,
+				"turn-debounce",
+				"skipped",
+				"not-json{{{",
+			);
+		} finally {
+			db.close();
+		}
+		expect(store.reviewSummary(WS).skipped).toBe(2);
+		expect(store.reviewSummary(WS, "2026-01-01T00:00:00.000Z").skipped).toBe(1);
+		expect(store.reviewSummary(WS, "2026-01-01T00:00:00.000Z").tokens.total).toBe(2);
+		expect(store.reviewSummary("/tmp/work/never-there")).toMatchObject({ applied: 0, skipped: 0 });
+		expect(store.reviewSummary(undefined as never)).toMatchObject({ applied: 0, skipped: 0 });
+	});
+});
+
 describe("defaultStorePath", () => {
 	it("prefers DSH_HOME and falls back to ~/.dsh", async () => {
 		const { defaultStorePath } = await import("../src/store.js");
