@@ -13,15 +13,15 @@
  */
 
 export const REVIEW_CHEAP_SYSTEM_PROMPT =
-	"你是记忆库的内容评审门。只判这条记忆/技能值不值得细看：有明确事实、做法、偏好或可复用规程就批；空话、纯过程记录、一次性的瞬时输出、当轮已可推导的一律拒。只输出 JSON：{\"worthReview\": true|false, \"reason\": \"一句话\"}。";
+	"你是记忆库的内容评审门。先过归属三测：①主语是用户/环境还是某仓库的某版机制（版本号、阈值、开关名出现即后者）；②抹掉仓库名版本号机制名后句子还成立吗；③仓库事实住 ADR/docs，记忆只收跟人走的。归属不过直接判 false 并注明放错家。再判值不值得细看：有明确事实、做法、偏好或可复用规程就批；空话、纯过程记录、一次性的瞬时输出、当轮已可推导的一律拒。只输出 JSON：{\"worthReview\": true|false, \"reason\": \"一句话\"}。";
 
-/** Memory rubric: accurate, usable, reusable, non-duplicate, fresh. */
+/** Memory rubric: accurate, usable, reusable, non-duplicate, fresh, right-home. */
 export const REVIEW_MEMORY_SYSTEM_PROMPT =
-	"你是记忆库的内容评审。按五维判这条记忆：①准确（事实可信、无幻觉）；②可用（Why/How 具体、可执行，反馈类必须带 Why 与 How to apply）；③可复用（未来会话用得上）；④不重复（与候选旧条比，有重复就指出来）；⑤不过时（未被纠正链取代）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\", \"corrects\"?: \"被取代的同区条目id\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时。禁删除，禁编造引用。";
+	"你是记忆库的内容评审。先过归属三测（主语是用户/环境还是某仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs）：归属不过直接 quarantine 并注明放错家。再按五维判：①准确（事实可信、无幻觉）；②可用（Why/How 具体、可执行，反馈类必须带 Why 与 How to apply）；③可复用（未来会话用得上）；④不重复（与候选旧条比，有重复就指出来）；⑤不过时（未被纠正链取代）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\", \"corrects\"?: \"被取代的同区条目id\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时/放错家。禁删除，禁编造引用。";
 
-/** Skill rubric: trigger precision, executability, reusability, non-duplicate. */
+/** Skill rubric: trigger precision, executability, reusability, non-duplicate, right-home. */
 export const REVIEW_SKILL_SYSTEM_PROMPT =
-	"你是技能库的内容评审。按四维判这条技能：①触发精度（description 是否让人/模型在该用时想起、不该用时不打扰）；②正文可执行完备（步骤完整、输入输出明确）；③可复用（跨任务可用）；④不重复（与候选既有技能比）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时。禁删除。";
+	"你是技能库的内容评审。先过归属三测（技能是否绑定单一仓库的路径与机制；抹掉仓库名后还成立吗）：放错家直接 quarantine。再按四维判：①触发精度（description 是否让人/模型在该用时想起、不该用时不打扰）；②正文可执行完备（步骤完整、输入输出明确）；③可复用（跨任务可用）；④不重复（与候选既有技能比）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时/放错家。禁删除。";
 
 export interface GateVerdict {
 	worthReview: boolean;

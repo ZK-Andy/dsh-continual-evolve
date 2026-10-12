@@ -286,8 +286,11 @@ async function reviewOne(
 		}
 		summary.cheapToken += totalOf(gateRaw);
 		gateUsage = normalizedOf(gateRaw);
-	} catch {
-		deps.store.logReview({ ...base, verdict: "skip", reason: "gate-llm-failed", applied: 0 });
+	} catch (error) {
+		// The error text rides the row: a bare `gate-llm-failed` hid a ~50%
+		// per-item failure rate in production (2026-10-12) with no way to
+		// tell transient route faults from systematic ones.
+		deps.store.logReview({ ...base, verdict: "skip", reason: `gate-llm-failed: ${failureHead(error)}`, applied: 0 });
 		skipReasons.push("gate-llm-failed");
 		return;
 	}
@@ -332,8 +335,8 @@ async function reviewOne(
 			return;
 		}
 		landRewrite(deps, base, candidate, opts, evolved, gateUsage, evolveRaw, summary);
-	} catch {
-		deps.store.logReview({ ...base, verdict: "skip", reason: "evolve-llm-failed", cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
+	} catch (error) {
+		deps.store.logReview({ ...base, verdict: "skip", reason: `evolve-llm-failed: ${failureHead(error)}`, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
 		skipReasons.push("evolve-llm-failed");
 	}
 }
@@ -422,6 +425,13 @@ function landRewrite(
 
 function totalOf(raw: unknown): number {
 	return normalizeUsage(raw)?.total ?? 0;
+}
+
+/** One-line error head for ledger rows (fail-loud shape, capped length). */
+export function failureHead(error: unknown, max = 120): string {
+	const message = error instanceof Error ? error.message : String(error);
+	const head = message.split("\n", 1)[0] ?? "";
+	return head.length > max ? `${head.slice(0, max)}…` : head;
 }
 
 function normalizedOf(raw: unknown): UsageTotals {

@@ -1,8 +1,9 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { collectCandidates, rewriteMagnitude, runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
+import { collectCandidates, failureHead, rewriteMagnitude, runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";
@@ -69,6 +70,16 @@ function gateThenThrowLlm(gate: string): ReviewLlm {
 	};
 }
 
+/** Every call throws: the gate leg degrades to a skip row carrying the text. */
+function throwingLlm(): ReviewLlm {
+	return {
+		async *stream(): AsyncIterable<unknown> {
+			throw new Error("route down");
+			yield { type: "text-delta", text: "unreachable" };
+		},
+	};
+}
+
 const OPTS = { day: "2026-10-12", budget: 100, dryRun: false, provider: "p", model: "m", sessionId: "sess-1" };
 
 function candidateOf(id: string, body = "Fedora 44"): ReviewCandidate {
@@ -81,6 +92,15 @@ describe("rewriteMagnitude", () => {
 		expect(rewriteMagnitude("1234567890", "12345678")).toBeCloseTo(0.2);
 		expect(rewriteMagnitude("1234567890", "1234567890ABCD")).toBeCloseTo(0.4);
 		expect(rewriteMagnitude("", "abc")).toBe(3);
+	});
+});
+
+describe("failureHead", () => {
+	it("renders one capped line for Error and foreign throws", () => {
+		expect(failureHead(new Error("route down"))).toBe("route down");
+		expect(failureHead("plain string")).toBe("plain string");
+		expect(failureHead(new Error("first\nsecond"))).toBe("first");
+		expect(failureHead(new Error("x".repeat(200)))).toBe(`${"x".repeat(120)}…`);
 	});
 });
 
@@ -252,6 +272,19 @@ describe("runReviewBatch", () => {
 		const summary = await runReviewBatch({ store, llm: gateThenThrowLlm(`{"worthReview": true, "reason": "看看"}`) }, [candidateOf(id)], OPTS);
 		expect(summary).toMatchObject({ approved: 1, applied: 0 });
 		expect(store.getDaily(OPTS.day)?.skipTop).toContain("evolve-llm-failed");
+	});
+
+	it("ledger rows carry the failure text instead of a bare code", async () => {
+		const id = createMemory();
+		const summary = await runReviewBatch({ store, llm: throwingLlm() }, [candidateOf(id)], OPTS);
+		expect(summary).toMatchObject({ approved: 0 });
+		const db = new DatabaseSync(dbPath);
+		try {
+			const row = db.prepare("SELECT reason FROM review_log ORDER BY rowid DESC LIMIT 1").get() as { reason: string };
+			expect(row.reason).toContain("gate-llm-failed: route down");
+		} finally {
+			db.close();
+		}
 	});
 
 	it("quarantine verdicts stay ledger-only in dry-run", async () => {
