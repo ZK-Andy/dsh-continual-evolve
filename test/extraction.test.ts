@@ -183,7 +183,8 @@ describe("runExtraction — model round-trip", () => {
 		expect(prompt).toContain("旧正文");
 		// Two calls by design: the cheap pre-gate first, the full call second.
 		expect(d.llm.calls).toHaveLength(2);
-		expect(String((d.llm.calls[0]?.messages as { content: { text: string }[] }[])[0].content[0].text)).not.toContain("旧正文");
+		const gateCall = d.llm.calls[0] as { messages?: { content?: { text?: unknown }[] }[] } | undefined;
+		expect(String(gateCall?.messages?.[0]?.content?.[0]?.text ?? "")).not.toContain("旧正文");
 	});
 
 	it("a model skip consumes the increment and advances the cursor", async () => {
