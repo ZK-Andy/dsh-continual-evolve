@@ -306,13 +306,146 @@ describe("runExtraction — cheap pre-gate", () => {
 		expect(store.list(WS)).toEqual([]);
 		const raw = rawDb();
 		try {
-			const row = raw.prepare("SELECT skip_reason, status, cheap_usage, usage FROM extraction_log").get() as {
-				skip_reason: string; status: string; cheap_usage: string | null; usage: string | null;
+			const row = raw.prepare("SELECT skip_reason, status, model, cheap_usage, usage FROM extraction_log").get() as {
+				skip_reason: string; status: string; model: string | null; cheap_usage: string | null; usage: string | null;
 			};
 			expect(row.skip_reason).toBe("model-skip (cheap-gate): 闲聊无沉淀价值");
 			expect(row.status).toBe("skipped");
+			expect(row.model).toBe("deepseek-chat");
 			expect(JSON.parse(row.cheap_usage ?? "null")).toMatchObject({ totalTokens: 15 });
 			expect(row.usage).toBeNull();
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("a gate that reports usage and then dies keeps both on the run's row", async () => {
+		const calls: Record<string, unknown>[] = [];
+		const llm: LlmStream & { calls: Record<string, unknown>[] } = {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				if (system.includes("预检门")) {
+					yield { type: "usage", usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } };
+					throw new Error("gate route down");
+				}
+				yield { type: "text-delta", text: FULL_APPLY };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT model, cheap_usage, cheap_error FROM extraction_log").get() as {
+				model: string | null; cheap_usage: string | null; cheap_error: string | null;
+			};
+			expect(row.model).toBe("deepseek-chat");
+			expect(row.cheap_error).toBe("gate route down");
+			// The failed gate's own spend is accounted, not discarded.
+			expect(JSON.parse(row.cheap_usage ?? "null")).toMatchObject({ totalTokens: 5 });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("a gate cut at its budget that still answered is a verdict, not a failure", async () => {
+		const calls: Record<string, unknown>[] = [];
+		const llm: LlmStream & { calls: Record<string, unknown>[] } = {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				if (system.includes("预检门")) {
+					yield { type: "text-delta", text: GATE_NO };
+					yield { type: "usage", usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 } };
+					yield { type: "finish", reason: { kind: "max-tokens" } };
+					return;
+				}
+				yield { type: "text-delta", text: FULL_APPLY };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		// Parse before blaming the finish reason: the verdict arrived, so the cut is not a failure.
+		expect(result).toMatchObject({ status: "skipped", skipReason: "闲聊无沉淀价值" });
+		expect(llm.calls).toHaveLength(1);
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+	});
+
+	it("a cut proposal call is a failure that keeps the usage it reported", async () => {
+		const calls: Record<string, unknown>[] = [];
+		const llm: LlmStream & { calls: Record<string, unknown>[] } = {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				if (system.includes("预检门")) {
+					yield { type: "text-delta", text: GATE_YES };
+					yield { type: "finish", reason: { kind: "stop" } };
+					return;
+				}
+				yield { type: "text-delta", text: '{"decision":"apply","proposals":[' };
+				yield { type: "usage", usage: { inputTokens: 40, outputTokens: 500, totalTokens: 540 } };
+				yield { type: "finish", reason: { kind: "max-tokens" } };
+			},
+		};
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("failed");
+		expect(result.skipReason).toContain("max-tokens");
+		expect(store.cursor(WS, "sess-1")).toBeUndefined();
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT skip_reason, model, usage FROM extraction_log").get() as {
+				skip_reason: string; model: string | null; usage: string | null;
+			};
+			expect(row.skip_reason).toBe("llm-failed");
+			expect(row.model).toBe("deepseek-chat");
+			expect(JSON.parse(row.usage ?? "null")).toMatchObject({ totalTokens: 540 });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("a surface that reports no event array is an empty increment", async () => {
+		const result = await runExtraction(
+			{ store, surface: { async readSurface() { return { events: undefined as unknown as unknown[] }; } }, llm: fakeLlm("{}") },
+			target,
+			{ trigger: "turn-debounce" },
+		);
+		expect(result).toMatchObject({ status: "skipped", skipReason: "no-new-events" });
+	});
+
+	it("an llm call that reports usage and then dies ledgers both", async () => {
+		const calls: Record<string, unknown>[] = [];
+		const llm: LlmStream & { calls: Record<string, unknown>[] } = {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				if (system.includes("预检门")) {
+					yield { type: "text-delta", text: GATE_YES };
+					yield { type: "usage", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+					yield { type: "finish", reason: { kind: "stop" } };
+					return;
+				}
+				yield { type: "usage", usage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 } };
+				throw new Error("provider down mid-call");
+			},
+		};
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("failed");
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT skip_reason, status, model, usage FROM extraction_log").get() as {
+				skip_reason: string; status: string; model: string | null; usage: string | null;
+			};
+			expect(row.skip_reason).toBe("llm-failed");
+			expect(row.status).toBe("failed");
+			expect(row.model).toBe("deepseek-chat");
+			expect(JSON.parse(row.usage ?? "null")).toMatchObject({ totalTokens: 42 });
 		} finally {
 			raw.close();
 		}
@@ -512,6 +645,32 @@ describe("runExtraction — unexpected failures leave a ledger row, never throw"
 		expect(JSON.parse(rows[0]?.files ?? "null")).toContain("disk gone");
 		expect(rows[1]?.skip_reason).toBe("llm-failed");
 		expect(JSON.parse(rows[1]?.files ?? "null")).toContain("provider down");
+	});
+
+	it("chains the failure when the run's own failure-ledger write is down too", async () => {
+		const flaky: MemoryStore = {
+			...store,
+			logSkipped: (entry) => {
+				if (entry.skipReason === "llm-failed") {
+					throw new Error("ledger busy");
+				}
+				store.logSkipped(entry);
+			},
+		};
+		const errorLlm: LlmStream = {
+			async *stream() {
+				throw new Error("provider down");
+				yield {}; // unreachable — satisfies the generator contract
+			},
+		};
+		const result = await runExtraction({ store: flaky, surface: surfaceOf(USER_EVENT), llm: errorLlm }, target, { trigger: "compaction" });
+		// The chained error is what the run's failure net keeps — the ledger
+		// fault must not hide the failure that triggered it.
+		expect(result.status).toBe("failed");
+		const rows = ledgerRows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.skip_reason).toContain("unexpected-error");
+		expect(JSON.parse(rows[0]?.files ?? "null")).toContain("llm call failed (provider down); failure ledger write also failed (ledger busy)");
 	});
 
 	it("the scheduler ledgers an escaped run failure before warning", async () => {

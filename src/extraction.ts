@@ -16,15 +16,16 @@
  * session's quiet-turn skip share a single row there, counted in
  * `occurrences` (see `store.ts`), so the account stays readable at volume.
  *
+ * This module owns the entry, the failure net, and the scheduler; the pass
+ * itself is a responsibility chain (`extraction-ring.ts`) the entry assembles.
  * The model proposes; the store disposes. A failed or rejected run never
  * advances the cursor, so the increment is retried on the next trigger.
  */
-import type { MemoryProposal } from "./memory-rules.js";
-import { boundaryCursorOf, evaluateSlice, eventsAfterCursor, isInternalAgent, seqOfCursor, serializeIncrement, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
-import { CHEAP_INCREMENT_MAX, EXTRACTION_CHEAP_SYSTEM_PROMPT, EXTRACTION_SYSTEM_PROMPT, cheapPrompt, extractionPrompt, manifestLineOf, parseCheapAnswer, parseExtractionAnswer } from "./extraction-prompt.js";
+import { ERROR_REASON_MAX, errorText, runExtractionInner } from "./extraction-ring.js";
+import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
 import { cwdOf } from "./memory-section.js";
-import { resolveCallRoute, streamOnce, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
+import { resolveCallRoute, type LlmRuntime, type RouteResolver } from "./llm-call.js";
 
 export type { LlmStream, LlmRuntime, RouteResolver } from "./llm-call.js";
 
@@ -58,36 +59,6 @@ export interface ExtractionResult {
 	applied?: number | undefined;
 	/** The seq boundary the cursor advanced to (status "applied" or model skip). */
 	cursor?: number | undefined;
-}
-
-/** Head length of a failed run's raw answer kept in the ledger `files` column. */
-const FAILURE_RAW_MAX = 2048;
-
-/** Head length of an unexpected error's message/stack trace kept in the ledger `files` column. */
-const UNEXPECTED_ERROR_RAW_MAX = 2048;
-
-/** Head length of an error message embedded in a ledger `skip_reason`. */
-const ERROR_REASON_MAX = 300;
-
-/** Head length of a failed pre-gate call's error kept in the ledger `cheap_error` column. */
-const GATE_ERROR_MAX = 200;
-
-/** Output budget for one cheap-gate call (see review.ts's `GATE_MAX_TOKENS`). */
-const GATE_MAX_TOKENS = 1024;
-
-/** Output budget for the full proposal call: a decision plus replacement bodies. */
-const EXTRACTION_MAX_TOKENS = 4096;
-
-/** Split an unexpected throw into a ledger-sized reason head and file body. */
-function errorText(error: unknown): { message: string; detail: string } {
-	const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
-	const stack = error instanceof Error && typeof error.stack === "string" ? error.stack : message;
-	return { message, detail: `${message}\n${stack}`.slice(0, UNEXPECTED_ERROR_RAW_MAX) };
-}
-
-/** One-line head of a thrown pre-gate error (flat, so the column stays greppable). */
-function errorHead(error: unknown): string {
-	return errorText(error).message.replace(/\s+/g, " ").trim().slice(0, GATE_ERROR_MAX);
 }
 
 /** Options for one run. */
@@ -130,219 +101,6 @@ export async function runExtraction(deps: ExtractionDeps, target: ExtractionTarg
 		}
 		return { status: "failed", skipReason: reason };
 	}
-}
-
-/**
- * The pipeline body: one bounded increment of one session, one LLM call, one
- * gated transactional application, one ledger row, one cursor.
- */
-async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget, opts: RunOptions): Promise<ExtractionResult> {
-	const { store } = deps;
-	const ledgerBase = {
-		sessionId: target.sessionId,
-		workspaceId: target.workspaceId,
-		trigger: opts.trigger,
-	};
-	if (target.internalAgent) {
-		store.logSkipped({ ...ledgerBase, skipReason: "internal-agent", status: "skipped" });
-		return { status: "skipped", skipReason: "internal-agent" };
-	}
-	if (target.workspaceId === undefined) {
-		store.logSkipped({ ...ledgerBase, skipReason: "no-workspace", status: "skipped" });
-		return { status: "skipped", skipReason: "no-workspace" };
-	}
-	if (deps.surface === undefined) {
-		store.logSkipped({ ...ledgerBase, skipReason: "no-surface", status: "skipped" });
-		return { status: "skipped", skipReason: "no-surface" };
-	}
-	if (target.provider === undefined || target.model === undefined || deps.llm === undefined) {
-		store.logSkipped({ ...ledgerBase, skipReason: "no-route", status: "skipped" });
-		return { status: "skipped", skipReason: "no-route" };
-	}
-	// Narrowed once, here: the shared call boundary takes a concrete route.
-	const llm = deps.llm;
-	const route: ModelSelection = { provider: target.provider, model: target.model };
-
-	const cursor = store.cursor(target.workspaceId, target.sessionId);
-	let all: readonly unknown[];
-	try {
-		const snapshot = await deps.surface.readSurface(target.sessionId);
-		all = Array.isArray(snapshot.events) ? snapshot.events : [];
-	} catch (error) {
-		const { message, detail } = errorText(error);
-		try {
-			store.logSkipped({ ...ledgerBase, skipReason: "surface-read-failed", status: "failed", files: detail });
-		} catch (ledgerError) {
-			throw new Error(`surface read failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
-		}
-		return { status: "failed", skipReason: `surface read failed: ${message}` };
-	}
-	const events = eventsAfterCursor(all, cursor === undefined ? undefined : `seq:${cursor}`);
-	const slice = evaluateSlice({ events, internalAgent: false });
-	if (!slice.eligible) {
-		store.logSkipped({ ...ledgerBase, skipReason: slice.skipReason, status: "skipped" });
-		return { status: "skipped", skipReason: slice.skipReason };
-	}
-
-	const boundary = boundaryCursorOf(all);
-	const boundarySeq = seqOfCursor(boundary);
-	const workspaceId: string = target.workspaceId;
-	const advanceCursor = () => {
-		if (boundarySeq !== undefined) {
-			store.setCursor(workspaceId, target.sessionId, boundarySeq);
-		}
-	};
-
-	const increment = serializeIncrement(slice.events, opts.incrementMaxChars);
-
-	// ── Cheap pre-gate: a small verdict before the expensive full call
-	// (manifest + full-body candidates + full increment). A "not worth it"
-	// consumes the increment exactly like a model skip; an unclear gate
-	// (unparseable/failed) fails OPEN to the full call — worst case degrades
-	// to the old single-call behavior, never to a stall. A gate that dies
-	// still rides the run's own ledger row as `cheap_error`: without it a
-	// failed gate is indistinguishable from a gate that never existed, which
-	// is how a 512-token budget truncating every call on a reasoning model
-	// stayed invisible.
-	let cheapUsage: unknown;
-	let cheapError: string | undefined;
-	{
-		const gateStarted = Date.now();
-		try {
-			const gate = await streamOnce(
-				llm, route, target.sessionId,
-				EXTRACTION_CHEAP_SYSTEM_PROMPT,
-				cheapPrompt({ incrementHead: increment.slice(0, CHEAP_INCREMENT_MAX), userSeqs: slice.userSeqs }),
-				GATE_MAX_TOKENS,
-			);
-			cheapUsage = gate.usage;
-			const verdict = parseCheapAnswer(gate.text);
-			// A gate cut at its budget that still answered is a usable verdict;
-			// only a cut with nothing parseable rides the run's row as a gate
-			// error. Parse before blaming the finish reason.
-			if (verdict === null && gate.finish !== undefined && gate.finish !== "stop") {
-				throw new Error(`stream finished with ${gate.finish}`);
-			}
-			if (verdict !== null && !verdict.worth) {
-				advanceCursor();
-				store.logSkipped({
-					...ledgerBase,
-					skipReason: `model-skip (cheap-gate): ${verdict.reason}`,
-					status: "skipped",
-					model: target.model,
-					cheapUsage,
-					durationMs: Date.now() - gateStarted,
-				});
-				return { status: "skipped", skipReason: verdict.reason, cursor: boundarySeq };
-			}
-		} catch (error) {
-			// Fail open: the full call below is the old behavior. The error
-			// head is kept for the run's own row (never a row of its own, so
-			// one run stays one ledger row).
-			cheapError = errorHead(error);
-		}
-	}
-
-	const manifest = store.list(target.workspaceId).slice(0, 50).map(manifestLineOf);
-	const candidates = candidateRecords(store, target.workspaceId, slice.userText);
-	const prompt = extractionPrompt({
-		increment,
-		manifest,
-		candidates: candidates.map(formatCandidate),
-		userSeqs: slice.userSeqs,
-	});
-
-	const started = Date.now();
-	let text: string;
-	let usage: unknown;
-	try {
-		const answer = await streamOnce(llm, route, target.sessionId, EXTRACTION_SYSTEM_PROMPT, prompt, EXTRACTION_MAX_TOKENS);
-		// The full call carries the proposal payload: a cut stream is a failure.
-		if (answer.finish !== undefined && answer.finish !== "stop") {
-			throw new Error(`stream finished with ${answer.finish}`);
-		}
-		text = answer.text;
-		usage = answer.usage;
-	} catch (error) {
-		const { message, detail } = errorText(error);
-		try {
-			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", model: target.model, durationMs: Date.now() - started, cheapUsage, cheapError, files: detail });
-		} catch (ledgerError) {
-			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
-		}
-		return { status: "failed", skipReason: `llm call failed: ${message}` };
-	}
-
-	const parsed = parseExtractionAnswer(text);
-	if (parsed.decision === "error") {
-		// A malformed answer is a failed run: the increment stays unconsumed
-		// and the next trigger retries it. The answer's head rides in the
-		// ledger row — the stream is gone after this, so without it the
-		// failure is undiagnosable after the fact.
-		store.logSkipped({
-			...ledgerBase,
-			skipReason: parsed.reason,
-			status: "failed",
-			model: target.model,
-			usage,
-			cheapUsage,
-			cheapError,
-			durationMs: Date.now() - started,
-			files: text.slice(0, FAILURE_RAW_MAX),
-		});
-		return { status: "failed", skipReason: parsed.reason };
-	}
-	if (parsed.decision === "skip") {
-		// A real model decision (even "nothing worth keeping") consumed the
-		// increment — advancing the cursor here is what keeps retries honest.
-		advanceCursor();
-		store.logSkipped({
-			...ledgerBase,
-			skipReason: `model-skip: ${parsed.reason}`,
-			status: "skipped",
-			model: target.model,
-			usage,
-			cheapUsage,
-			cheapError,
-			durationMs: Date.now() - started,
-		});
-		return { status: "skipped", skipReason: parsed.reason, cursor: boundarySeq };
-	}
-
-	const outcomes = store.applyProposals(
-		{
-			workspaceId: target.workspaceId,
-			trigger: opts.trigger,
-			sessionId: target.sessionId,
-			runId: `extract:${target.sessionId}:${boundarySeq ?? "tail"}`,
-			model: target.model,
-			usage,
-			cheapUsage,
-			cheapError,
-			decision: parsed.reason,
-		},
-		parsed.proposals as MemoryProposal[],
-	);
-	if (!outcomes.every((outcome) => outcome.ok)) {
-		return { status: "rejected", skipReason: outcomes.find((outcome) => !outcome.ok)?.reason };
-	}
-	advanceCursor();
-	// Hygiene rides on every applied run: orphan FTS rows dropped, secret
-	// leakage quarantined — never a separate scheduler.
-	const patrol = store.patrol();
-	void patrol;
-	return { status: "applied", applied: outcomes.filter((outcome) => outcome.ok).length, cursor: boundarySeq };
-}
-
-/** Similar existing memories (full bodies) for the model to update against. */
-function candidateRecords(store: MemoryStore, workspaceId: string, userText: string): ReturnType<MemoryStore["search"]> {
-	const query = userText.split("\n")[0]?.slice(0, 100).trim() ?? "";
-	const hits = query.length >= 3 ? store.search(workspaceId, query, 8) : [];
-	return hits.length > 0 ? hits : store.list(workspaceId).slice(0, 8);
-}
-
-function formatCandidate(record: { id: string; type: string; title: string; description: string; body: string }): string {
-	return [`# 候选 id=${record.id}（type=${record.type}）`, `title=${record.title}`, `钩子=${record.description}`, "全文：", record.body].join("\n");
 }
 
 /** One pending extraction target (its session's coalescing slot). */
