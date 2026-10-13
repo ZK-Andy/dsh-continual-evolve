@@ -23,15 +23,20 @@ import {
 } from "./review-prompt.js";
 import type { MemoryStore } from "./store.js";
 import { cwdOf } from "./memory-section.js";
+import { resolveCallRoute, streamOnce, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 
-/** The minimal LLM face review calls (same duck-typed host service as extraction). */
-export interface ReviewLlm {
-	stream(options: Record<string, unknown>): AsyncIterable<unknown>;
-}
+/** The LLM face review calls, aliased so each scheduler can name its own. */
+export type ReviewLlm = LlmRuntime;
 
 export interface ReviewDeps {
 	store: MemoryStore;
-	llm: ReviewLlm | undefined;
+	llm: LlmRuntime | undefined;
+	/**
+	 * Route resolution for a direct call: the agent's explicit selection first,
+	 * the host default model second. Absent keeps the legacy agent-options-only
+	 * behavior (tests and older hosts).
+	 */
+	resolveRoute?: RouteResolver | undefined;
 }
 
 export interface ReviewCandidate {
@@ -86,6 +91,9 @@ export const REWRITE_MAGNITUDE_CAP = 0.3;
  * route failure, so the per-item failure rate read as a network problem.
  */
 export const GATE_MAX_TOKENS = 1024;
+
+/** Output budget for the evolve pass: a verdict plus full replacement text. */
+export const EVOLVE_MAX_TOKENS = 4096;
 
 /** Defaults for the review settings the host may override — and edit live. */
 export const REVIEW_DEFAULT_DRY_RUN = true;
@@ -224,7 +232,10 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	const runId = opts.runId ?? `review:${opts.day}:${Date.now()}`;
 	let newItems = 0;
 	let requeued = 0;
-	const noRoute = deps.llm === undefined || opts.provider === undefined || opts.model === undefined;
+	const route: ModelSelection | undefined = opts.provider === undefined || opts.model === undefined
+		? undefined
+		: { provider: opts.provider, model: opts.model };
+	const noRoute = deps.llm === undefined || route === undefined;
 	let position = 0;
 	for (const candidate of batch) {
 		const remaining = deps.store.consumeReviewBudget(opts.day, opts.budget);
@@ -247,7 +258,7 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 		} else {
 			requeued += 1;
 		}
-		if (noRoute) {
+		if (noRoute || route === undefined) {
 			deps.store.logReview({
 				runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
 				verdict: "skip", reason: "no-route", applied: 0,
@@ -256,7 +267,7 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 			position += 1;
 			continue;
 		}
-		await reviewOne(deps, runId, candidate, opts, summary, skipReasons);
+		await reviewOne(deps, runId, candidate, opts, route, summary, skipReasons);
 		position += 1;
 	}
 	summary.backlog = Math.max(0, candidates.length - summary.reviewed - summary.dropped);
@@ -274,6 +285,7 @@ async function reviewOne(
 	runId: string,
 	candidate: ReviewCandidate,
 	opts: ReviewRunOptions,
+	route: ModelSelection,
 	summary: ReviewRunSummary,
 	skipReasons: string[],
 ): Promise<void> {
@@ -284,7 +296,7 @@ async function reviewOne(
 	let gateUsage: UsageTotals = zeroUsage();
 	let gateRaw: unknown;
 	try {
-		const answer = await streamOnce(deps.llm, opts, REVIEW_CHEAP_SYSTEM_PROMPT, gatePrompt(candidate), GATE_MAX_TOKENS);
+		const answer = await streamOnce(deps.llm, route, opts.sessionId, REVIEW_CHEAP_SYSTEM_PROMPT, gatePrompt(candidate), GATE_MAX_TOKENS);
 		gateRaw = answer.usage;
 		const gate = parseGateAnswer(answer.text);
 		if (gate === null) {
@@ -324,9 +336,9 @@ async function reviewOne(
 	try {
 		const system = candidate.kind === "memory" ? REVIEW_MEMORY_SYSTEM_PROMPT : REVIEW_SKILL_SYSTEM_PROMPT;
 		const answer = await streamOnce(
-			deps.llm, opts, system,
+			deps.llm, route, opts.sessionId, system,
 			evolvePrompt({ id: candidate.id, title: candidate.title, description: candidate.description, body: candidate.body, extra, scope: candidate.scope }, neighbors),
-			4096,
+			EVOLVE_MAX_TOKENS,
 		);
 		evolveRaw = answer.usage;
 		summary.evolveToken += totalOf(evolveRaw);
@@ -485,47 +497,6 @@ function normalizedOf(raw: unknown): UsageTotals {
 	return normalizeUsage(raw) ?? zeroUsage();
 }
 
-/** One streaming text call with the host session identity forwarded. */
-async function streamOnce(
-	llm: ReviewLlm | undefined,
-	opts: ReviewRunOptions,
-	system: string,
-	prompt: string,
-	maxTokens: number,
-): Promise<{ text: string; usage: unknown; finish: string | undefined }> {
-	if (llm === undefined) {
-		throw new Error("no llm route");
-	}
-	let text = "";
-	let usage: unknown;
-	let finish: { kind?: string } | undefined;
-	for await (const chunk of llm.stream({
-		provider: opts.provider,
-		model: opts.model,
-		messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-		system,
-		maxTokens,
-		sessionId: opts.sessionId,
-	})) {
-		const piece = chunk as { type?: string; text?: unknown; usage?: unknown; reason?: { kind?: string } };
-		if (piece?.type === "text-delta" && typeof piece.text === "string") {
-			text += piece.text;
-		} else if (piece?.type === "usage") {
-			usage = piece.usage;
-		} else if (piece?.type === "finish") {
-			finish = piece.reason;
-		}
-	}
-	const finishKind = finish?.kind;
-	if (text.trim().length === 0) {
-		// Nothing usable arrived: the finish reason is the only diagnosis.
-		throw new Error(finishKind !== undefined && finishKind !== "stop" ? `stream finished with ${finishKind}` : "empty model output");
-	}
-	// The caller owns the truncation verdict: a gate answer often completes
-	// before its budget does, a replacement body never does.
-	return { text, usage, finish: finishKind };
-}
-
 /** Current UTC day `YYYY-MM-DD` for the hard-cap account. */
 export function todayUtc(): string {
 	return new Date().toISOString().slice(0, 10);
@@ -572,7 +543,7 @@ export function createReviewScheduler(
 	let running = false;
 	let lastRunAt = 0;
 	let pendingWorkspace: string | undefined;
-	let lastRoute: { provider: string | undefined; model: string | undefined; sessionId: string } | undefined;
+	let lastRoute: { provider: string; model: string; sessionId: string } | undefined;
 
 	const drain = (triggerWorkspace: string | undefined): void => {
 		if (!config.enabled || running) {
@@ -624,29 +595,26 @@ export function createReviewScheduler(
 
 	listeners.push(
 		host.on("agent/turn-stopping", (payload: { agent?: unknown }) => {
-			const agent = payload.agent as { id?: unknown; options?: { provider?: unknown; model?: unknown } } | undefined;
+			const agent = payload.agent as { id?: unknown } | undefined;
 			const id = agent?.id;
 			if (typeof id !== "string" || id.length === 0) {
 				return;
 			}
-			const provider = typeof agent?.options?.provider === "string" ? agent.options.provider : undefined;
-			const model = typeof agent?.options?.model === "string" ? agent.options.model : undefined;
-			lastRoute = { provider, model, sessionId: id };
-			drain(cwdOf(payload.agent));
-		}),
-	);
-	listeners.push(
-		host.on("session/event", (session: { id?: unknown }, event: { type?: unknown }) => {
-			if (event?.type !== "compaction/start" || typeof session?.id !== "string") {
+			// A drain needs a live route. A session running on the host default
+			// model carries no explicit selection, so the default-model service
+			// fills it in; with neither, the boundary is only remembered and the
+			// next turn boundary reviews it. This is what keeps a review call
+			// from being sent with an empty provider or a dead session identity
+			// (both of which the provider answers with a bare stream error).
+			// Absent resolver (older host, tests) still reads the agent's explicit
+			// selection: the fallback is the legacy behavior, never "no route".
+			const route = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
+			if (route === undefined) {
+				pendingWorkspace = cwdOf(agent);
 				return;
 			}
-			drain(pendingWorkspace);
-		}),
-	);
-	listeners.push(
-		host.on("agent/disposed", () => {
-			drain(pendingWorkspace);
-			pendingWorkspace = undefined;
+			lastRoute = { provider: route.provider, model: route.model, sessionId: id };
+			drain(cwdOf(agent));
 		}),
 	);
 	const armed = config.read();

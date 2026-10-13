@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-337%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-362%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -81,7 +81,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（337 例）
+pnpm test                    # vitest（362 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test client
 pnpm check:pack              # 发布产物一致性（prepack 也会跑）
@@ -95,6 +95,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 │   ├── store.ts            # 中央 SQLite 库：DDL/WAL/FTS、读面、账本、巡检、游标
 │   ├── store-apply.ts      # 唯一写门：全量校验、事务原子应用、账本
 │   ├── token-usage.ts      # 统一记账口：归一各家用量、纯累加
+│   ├── llm-call.ts         # 直属调用边界：路由、推理档位、失败原文
 │   ├── review.ts           # 内容质量自进化：便宜门 → 贵改写、预算、调度
 │   ├── review-prompt.ts    # 评审提示词 + verdict 解析（门 + 记忆/技能 rubric）
 │   ├── store-apply.ts      # 唯一写门：全量校验、事务原子应用、账本
@@ -114,7 +115,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 ├── client/
 │   └── client.js          # 手写 client bundle：官方插件管理内只读卡片
 ├── locale/                # 宿主包元数据：显示名 + 描述双语（zh/en）
-├── test/                  # vitest 测试（25 个文件）
+├── test/                  # vitest 测试（26 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/                  # design.md（设计）· FAQ.md（踩坑）
 └── .agents/               # AI 协作层（AGENTS.md、技能、ADR 笔记）

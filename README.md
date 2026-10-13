@@ -7,7 +7,7 @@ English | [中文](README.zh.md)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-337%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-362%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -81,7 +81,7 @@ Profile patch example:
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (337 tests)
+pnpm test                    # vitest (362 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds
 pnpm lint                    # oxlint src test client
 pnpm check:pack              # published-artifact consistency (also runs on prepack)
@@ -95,6 +95,7 @@ Layout:
 │   ├── store.ts            # central SQLite store: DDL/WAL/FTS, reads, ledger, patrol, cursors
 │   ├── store-apply.ts      # the sole write gate: validate all, apply atomically, ledger
 │   ├── token-usage.ts      # single accounting entry: normalize provider usage, pure sums
+│   ├── llm-call.ts         # shared direct-call boundary: route, reasoning effort, failure text
 │   ├── review.ts           # autonomous quality loop: cheap gate → evolve, budget, scheduler
 │   ├── review-prompt.ts    # review prompts + verdict parsing (gate + memory/skill rubrics)
 │   ├── store-apply.ts      # the sole write gate: validate all, apply atomically, ledger
@@ -114,7 +115,7 @@ Layout:
 ├── client/
 │   └── client.js          # hand-written client bundle: read-only card in the plugin manager
 ├── locale/                # host package metadata: localized display name + description (zh/en)
-├── test/                  # vitest suite (25 files)
+├── test/                  # vitest suite (26 files)
 ├── lib/                   # build output (tsc)
 ├── docs/                  # design.md (design) · FAQ.md (real-world pitfalls)
 └── .agents/               # AI collaboration layer (AGENTS.md, skills, ADR notes)

@@ -628,6 +628,32 @@ describe("createExtractionScheduler", () => {
 		expect(store.cursor(WS, "sess-1")).toBe(11);
 	});
 
+	it("uses the injected route resolver when the session carries no explicit selection", async () => {
+		const { listeners, d, host } = makeHost();
+		d.resolveRoute = () => ({ provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" });
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, d);
+		listeners.get("agent/turn-stopping")![0]({ agent: { id: "sess-1", session: { header: { cwd: WS } } } });
+		await vi.waitFor(() => {
+			if (store.list(WS).length === 0) {
+				throw new Error("not applied yet");
+			}
+		});
+		expect(d.llm.calls[0]?.provider).toBe("dsh-opencode-go");
+	});
+
+	it("sends nothing when neither the session nor the host has a route", async () => {
+		const { listeners, d, host } = makeHost();
+		d.resolveRoute = () => undefined;
+		const { createExtractionScheduler } = await import("../src/extraction.js");
+		createExtractionScheduler(host, d);
+		listeners.get("agent/turn-stopping")![0]({ agent: { id: "sess-1", session: { header: { cwd: WS } } } });
+		await new Promise((resolve) => setImmediate(resolve));
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(d.llm.calls).toHaveLength(0);
+		expect(store.cursor(WS, "sess-1")).toBeUndefined();
+	});
+
 	it("coalesces a mid-run turn into one follow-up run", async () => {
 		const llm = gatedLlm(answer);
 		const surface = {

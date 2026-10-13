@@ -24,17 +24,21 @@ import { boundaryCursorOf, evaluateSlice, eventsAfterCursor, isInternalAgent, se
 import { CHEAP_INCREMENT_MAX, EXTRACTION_CHEAP_SYSTEM_PROMPT, EXTRACTION_SYSTEM_PROMPT, cheapPrompt, extractionPrompt, manifestLineOf, parseCheapAnswer, parseExtractionAnswer } from "./extraction-prompt.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
 import { cwdOf } from "./memory-section.js";
+import { resolveCallRoute, streamOnce, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 
-/** The minimal LLM face extraction calls (duck-typed host service). */
-export interface LlmStream {
-	stream(options: Record<string, unknown>): AsyncIterable<unknown>;
-}
+export type { LlmStream, LlmRuntime, RouteResolver } from "./llm-call.js";
 
 /** Everything a run needs: the store, the session reader, and the LLM. */
 export interface ExtractionDeps {
 	store: MemoryStore;
 	surface: SurfaceReader | undefined;
-	llm: LlmStream | undefined;
+	llm: LlmRuntime | undefined;
+	/**
+	 * Route resolution for a direct call: the agent's explicit selection first,
+	 * the host default model second. Absent keeps the legacy agent-options-only
+	 * behavior (tests and older hosts).
+	 */
+	resolveRoute?: RouteResolver | undefined;
 }
 
 /** One extraction target: whose session, in which workspace, on which route. */
@@ -70,6 +74,9 @@ const GATE_ERROR_MAX = 200;
 
 /** Output budget for one cheap-gate call (see review.ts's `GATE_MAX_TOKENS`). */
 const GATE_MAX_TOKENS = 1024;
+
+/** Output budget for the full proposal call: a decision plus replacement bodies. */
+const EXTRACTION_MAX_TOKENS = 4096;
 
 /** Split an unexpected throw into a ledger-sized reason head and file body. */
 function errorText(error: unknown): { message: string; detail: string } {
@@ -152,6 +159,9 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 		store.logSkipped({ ...ledgerBase, skipReason: "no-route", status: "skipped" });
 		return { status: "skipped", skipReason: "no-route" };
 	}
+	// Narrowed once, here: the shared call boundary takes a concrete route.
+	const llm = deps.llm;
+	const route: ModelSelection = { provider: target.provider, model: target.model };
 
 	const cursor = store.cursor(target.workspaceId, target.sessionId);
 	let all: readonly unknown[];
@@ -200,9 +210,9 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 		const gateStarted = Date.now();
 		try {
 			const gate = await streamOnce(
-				deps.llm, target,
-				cheapPrompt({ incrementHead: increment.slice(0, CHEAP_INCREMENT_MAX), userSeqs: slice.userSeqs }),
+				llm, route, target.sessionId,
 				EXTRACTION_CHEAP_SYSTEM_PROMPT,
+				cheapPrompt({ incrementHead: increment.slice(0, CHEAP_INCREMENT_MAX), userSeqs: slice.userSeqs }),
 				GATE_MAX_TOKENS,
 			);
 			cheapUsage = gate.usage;
@@ -246,7 +256,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	let text: string;
 	let usage: unknown;
 	try {
-		const answer = await streamOnce(deps.llm, target, prompt);
+		const answer = await streamOnce(llm, route, target.sessionId, EXTRACTION_SYSTEM_PROMPT, prompt, EXTRACTION_MAX_TOKENS);
 		// The full call carries the proposal payload: a cut stream is a failure.
 		if (answer.finish !== undefined && answer.finish !== "stop") {
 			throw new Error(`stream finished with ${answer.finish}`);
@@ -256,7 +266,7 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	} catch (error) {
 		const { message, detail } = errorText(error);
 		try {
-			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", durationMs: Date.now() - started, cheapUsage, cheapError, files: detail });
+			store.logSkipped({ ...ledgerBase, skipReason: "llm-failed", status: "failed", model: target.model, durationMs: Date.now() - started, cheapUsage, cheapError, files: detail });
 		} catch (ledgerError) {
 			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
 		}
@@ -335,46 +345,6 @@ function formatCandidate(record: { id: string; type: string; title: string; desc
 	return [`# 候选 id=${record.id}（type=${record.type}）`, `title=${record.title}`, `钩子=${record.description}`, "全文：", record.body].join("\n");
 }
 
-/** One streaming text call with the host session identity forwarded. */
-async function streamOnce(
-	llm: LlmStream,
-	target: ExtractionTarget,
-	prompt: string,
-	system: string = EXTRACTION_SYSTEM_PROMPT,
-	maxTokens: number = 4096,
-): Promise<{ text: string; usage: unknown; finish: string | undefined }> {
-	let text = "";
-	let usage: unknown;
-	let finish: { kind?: string } | undefined;
-	const options: Record<string, unknown> = {
-		provider: target.provider,
-		model: target.model,
-		messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-		system,
-		maxTokens,
-		// MissingSessionID pitfall: direct calls must carry the host session.
-		sessionId: target.sessionId,
-	};
-	for await (const chunk of llm.stream(options)) {
-		const piece = chunk as { type?: string; text?: unknown; usage?: unknown; reason?: { kind?: string } };
-		if (piece?.type === "text-delta" && typeof piece.text === "string") {
-			text += piece.text;
-		} else if (piece?.type === "usage") {
-			usage = piece.usage;
-		} else if (piece?.type === "finish") {
-			finish = piece.reason;
-		}
-	}
-	const finishKind = finish?.kind;
-	if (text.trim().length === 0) {
-		// Nothing usable arrived: the finish reason is the only diagnosis.
-		throw new Error(finishKind !== undefined && finishKind !== "stop" ? `stream finished with ${finishKind}` : "empty model output");
-	}
-	// The caller owns the truncation verdict: a gate answer often completes
-	// before its budget does, a proposal body never does.
-	return { text, usage, finish: finishKind };
-}
-
 /** One pending extraction target (its session's coalescing slot). */
 interface PendingTarget {
 	agent: unknown;
@@ -419,12 +389,14 @@ export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionD
 		if (typeof id !== "string" || id.length === 0) {
 			return null;
 		}
-		const route = (agent as { options?: { provider?: unknown; model?: unknown } } | undefined)?.options;
+		// Absent resolver (older host, tests) still reads the agent's explicit
+		// selection: the fallback is the legacy behavior, never "no route".
+		const route = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
 		return {
 			agent,
 			sessionId: id,
-			provider: typeof route?.provider === "string" ? route.provider : undefined,
-			model: typeof route?.model === "string" ? route.model : undefined,
+			provider: route?.provider,
+			model: route?.model,
 		};
 	};
 

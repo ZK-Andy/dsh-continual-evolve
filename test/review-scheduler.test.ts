@@ -243,13 +243,13 @@ describe("createReviewScheduler", () => {
 		dispose();
 	});
 
-	it("drains on compaction and session close without a model route it stays quiet", async () => {
+	it("stays quiet on compaction and session close, because neither carries a live route", async () => {
 		const h = host();
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		const dispose = createReviewScheduler(h, { store, llm }, {
 			enabled: true, read: () => settings(), minIntervalMs: 0,
 		});
-		// No route seen yet: drains stay quiet and ledger nothing.
+		// Neither boundary has a session to call on: nothing is drained here.
 		h.handlers.get("session/event")?.({ id: "sess-1" } as never, { type: "compaction/start" } as never);
 		await flush();
 		expect(store.getDaily(todayUtc())).toBeUndefined();
@@ -257,6 +257,58 @@ describe("createReviewScheduler", () => {
 		await flush();
 		expect(store.getDaily(todayUtc())).toBeUndefined();
 		dispose();
+	});
+
+	it("falls back to the host default model when the session carries no explicit selection", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const h = host();
+		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const dispose = createReviewScheduler(h, {
+			store, llm,
+			resolveRoute: () => ({ provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" }),
+		}, { enabled: true, read: () => settings(), minIntervalMs: 0 });
+		// The session has no explicit selection at all — only the default model.
+		h.handlers.get("agent/turn-stopping")?.({ agent: { id: "sess-1", session: { header: { cwd: WS } } } } as never);
+		await flush();
+		expect(store.getDaily(todayUtc())?.reviewed).toBe(1);
+		dispose();
+	});
+
+	it("refuses to call when neither the session nor the host has a route", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const h = host();
+		let calls = 0;
+		const llm: ReviewLlm = {
+			async *stream(): AsyncIterable<unknown> {
+				calls += 1;
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+		const dispose = createReviewScheduler(h, { store, llm, resolveRoute: () => undefined }, {
+			enabled: true, read: () => settings(), minIntervalMs: 0,
+		});
+		h.handlers.get("agent/turn-stopping")?.({ agent: { id: "sess-1", session: { header: { cwd: WS } } } } as never);
+		await flush();
+		expect(calls).toBe(0);
+		expect(store.getDaily(todayUtc())).toBeUndefined();
+		dispose();
+	});
+
+	it("detaches its listener on dispose, so a remount never double-reviews", () => {
+		const h = host();
+		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const dispose = createReviewScheduler(h, { store, llm }, {
+			enabled: true, read: () => settings(), minIntervalMs: 0,
+		});
+		expect(h.handlers.has("agent/turn-stopping")).toBe(true);
+		dispose();
+		expect(h.handlers.has("agent/turn-stopping")).toBe(false);
 	});
 
 	it("stays inert when disabled", async () => {

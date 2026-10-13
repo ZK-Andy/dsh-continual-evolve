@@ -30,7 +30,8 @@
  */
 import z from "@deepseek-ai/schemastery";
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
-import { createExtractionScheduler, type LlmStream, type SchedulerHost } from "./extraction.js";
+import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./extraction.js";
+import { resolveCallRoute, type RouteResolver } from "./llm-call.js";
 import {
 	createReviewScheduler,
 	REVIEW_DEFAULT_BATCH_SIZE,
@@ -142,6 +143,36 @@ interface StoreState {
 	toolsAvailable: boolean;
 }
 
+/**
+ * Build the route resolver a scheduler uses for its direct calls: the agent's
+ * explicit selection first, the host's default-model service second.
+ *
+ * The default-model service is read through `ctx.get` on every call and never
+ * joins an inject list — a host without it (or an older one) must keep working,
+ * and its absence only means a session with no explicit selection has no route.
+ */
+function routeResolverOf(scoped: unknown, get: ((name: string) => unknown) | undefined): RouteResolver | undefined {
+	if (typeof get !== "function") {
+		return undefined;
+	}
+	const read = get.bind(scoped);
+	return (agent: unknown) => resolveCallRoute(agent, read);
+}
+
+/**
+ * Keep one scheduler's disposer on the owning fiber.
+ *
+ * Without this a remount (HMR, a live config edit) leaves the previous
+ * listeners attached: two schedulers then drain the same boundary, and the
+ * older one holds an LLM service the remount already replaced.
+ */
+function registerSchedulerDisposer(scoped: unknown, dispose: () => void): void {
+	const effect = (scoped as { effect?: unknown }).effect;
+	if (typeof effect === "function") {
+		(effect as (callback: () => () => void) => unknown).call(scoped, () => dispose);
+	}
+}
+
 /** Register the memory tools through a nested inject (see memory-tools.ts). */
 function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: StoreState): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
@@ -193,12 +224,16 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
 			get?: (name: string) => unknown;
 		};
 		const surface = context.sessionQuery as SurfaceReader | undefined;
-		const llm = (context.llm ?? context.get?.("llm")) as LlmStream | undefined;
+		const llm = (context.llm ?? context.get?.("llm")) as LlmRuntime | undefined;
 		if (surface === undefined || typeof surface.readSurface !== "function") {
 			log.warn("sessionQuery service present but empty — extraction not armed (injection and tools unaffected)");
 			return;
 		}
-		createExtractionScheduler(events as SchedulerHost, { store, surface, llm });
+		const resolveRoute = routeResolverOf(scoped, context.get);
+		registerSchedulerDisposer(scoped, createExtractionScheduler(events as SchedulerHost, {
+			store, surface, llm,
+			...(resolveRoute === undefined ? {} : { resolveRoute }),
+		}));
 	});
 }
 
@@ -222,8 +257,12 @@ function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config:
 	}
 	nested.inject(["llm"], (scoped: unknown) => {
 		const context = scoped as { llm?: unknown; get?: (name: string) => unknown };
-		const llm = (context.llm ?? context.get?.("llm")) as LlmStream | undefined;
-		createReviewScheduler(events as SchedulerHost, { store, llm }, {
+		const llm = (context.llm ?? context.get?.("llm")) as LlmRuntime | undefined;
+		const resolveRoute = routeResolverOf(scoped, context.get);
+		registerSchedulerDisposer(scoped, createReviewScheduler(events as SchedulerHost, {
+			store, llm,
+			...(resolveRoute === undefined ? {} : { resolveRoute }),
+		}, {
 			enabled: true,
 			read: () => ({
 				dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
@@ -232,7 +271,7 @@ function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config:
 				staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
 			}),
 			minIntervalMs: 5 * 60 * 1000,
-		});
+		}));
 	});
 }
 
