@@ -47,6 +47,7 @@ Status: implemented
 - 四个评审岗位四份说明书——记忆与技能的家规相反这件事，由"各装各的"结构性保证，不再靠散文分支（技能便宜门此前确实缺位）。
 - 所有直调经装载器后，路由解析、推理档位、输出预算、失败记账、用量留痕收在一处（不再散在调用点）。
 - 失败行自带 usage 与 route：门失败率可按模型下钻，「先补列再判根因」这类取证不再需要；同模型间歇砍断的根因（固定预算）也在设计层消除。
+- 落盘环节的库错误不再被误标成 `evolve-llm-failed`：它从链上直接抛出，交给调度器的 warn——给失败贴错标签比少一个标签更坏。
 - 代价：一次跨模块返厂（`src/llm-call.ts`、`src/subagent*.ts`、`src/chain.ts`、`src/review*.ts`、`src/extraction*.ts`、`review_log` 的列迁移及其测试），随下一批发版。本笔记取代按层修法的旧笔记 [2026-10-12-content-quality-evolution](../../implemented/architecture/2026-10-12-content-quality-evolution.md) 与 [2026-10-12-review-scope-and-dryrun-proposals](../../implemented/architecture/2026-10-12-review-scope-and-dryrun-proposals.md) 中关于分层修补的部分，并取代独立待办「门失败行补 usage + model 列」。
 
 ## Testing
