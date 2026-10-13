@@ -90,7 +90,7 @@ describe("review verdict log", () => {
 		}
 	});
 
-	it("migrates pre-trial review ledgers with the proposed column", async () => {
+	it("migrates pre-trial review ledgers with the proposed and model columns", async () => {
 		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-review-legacy-")), "memory.db");
 		const legacy = new DatabaseSync(legacyPath);
 		try {
@@ -108,10 +108,11 @@ describe("review verdict log", () => {
 			try {
 				const columns = probe.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
 				expect(columns.some((column) => column.name === "proposed")).toBe(true);
+				expect(columns.some((column) => column.name === "model")).toBe(true);
 			} finally {
 				probe.close();
 			}
-			migrated.logReview({ workspaceId: WS, itemKind: "memory", itemId: "x", verdict: "rewrite", reason: "r", proposed: { body: "b" } });
+			migrated.logReview({ workspaceId: WS, itemKind: "memory", itemId: "x", verdict: "rewrite", reason: "r", proposed: { body: "b" }, model: "deepseek-chat" });
 		} finally {
 			migrated.close();
 		}

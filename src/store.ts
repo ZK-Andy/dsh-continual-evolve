@@ -150,7 +150,8 @@ CREATE TABLE IF NOT EXISTS memory_usage (
   PRIMARY KEY (workspace_id, memory_id)
 ) STRICT;
 -- Per-item content-review verdicts (the item-review trigger's account):
--- one row per reviewed item per run. Pruned with the ledgers.
+-- one row per reviewed item per run, with the model it ran on so a failure
+-- rate can be attributed instead of guessed at. Pruned with the ledgers.
 CREATE TABLE IF NOT EXISTS review_log (
   run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
   item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
@@ -158,6 +159,7 @@ CREATE TABLE IF NOT EXISTS review_log (
   verdict TEXT NOT NULL CHECK (verdict IN ('keep','rewrite','quarantine','skip')),
   reason TEXT,
   proposed TEXT,
+  model TEXT,
   cheap_usage TEXT, evolve_usage TEXT,
   applied INTEGER NOT NULL DEFAULT 0,
   evolve_count INTEGER NOT NULL DEFAULT 0
@@ -229,6 +231,8 @@ export interface ReviewLogEntry {
 	itemId: string;
 	verdict: "keep" | "rewrite" | "quarantine" | "skip";
 	reason?: string | undefined;
+	/** The model this verdict ran on; `undefined` only when the run had no route at all. */
+	model?: string | undefined;
 	/** Normalized usage JSON of the cheap gate call, `undefined` when skipped before any call. */
 	cheapUsage?: unknown;
 	/** Normalized usage JSON of the evolve call, `undefined` unless rewritten. */
@@ -643,6 +647,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	ensureExtractionCheapUsage(database);
 	ensureExtractionCheapError(database);
 	ensureReviewProposed(database);
+	ensureReviewModel(database);
 
 	const stmts = {
 		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
@@ -739,8 +744,8 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"ON CONFLICT (workspace_id, memory_id) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
 		),
 		reviewLog: database.prepare(
-			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, cheap_usage, evolve_usage, applied, evolve_count) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, model, cheap_usage, evolve_usage, applied, evolve_count) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		reviewLast: database.prepare(
 			`SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND NOT ${INCOMPLETE_REVIEW_SQL} ORDER BY rowid DESC LIMIT 1`,
@@ -1373,6 +1378,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				entry.verdict,
 				entry.reason ?? null,
 				entry.proposed === undefined ? null : JSON.stringify(entry.proposed),
+				entry.model ?? null,
 				entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
 				entry.evolveUsage === undefined ? null : JSON.stringify(entry.evolveUsage),
 				entry.applied ?? 0,
@@ -1521,6 +1527,19 @@ function ensureReviewProposed(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE review_log ADD COLUMN proposed TEXT");
+}
+
+/**
+ * Add the review ledger `model` column to a store created before verdict rows
+ * recorded the model they ran on. Same single-migration discipline as the
+ * columns above.
+ */
+function ensureReviewModel(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "model")) {
+		return;
+	}
+	database.exec("ALTER TABLE review_log ADD COLUMN model TEXT");
 }
 
 /** Parse the daily skip-counts map; corrupt payloads degrade to empty. */
