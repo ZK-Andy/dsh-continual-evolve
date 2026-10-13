@@ -6,24 +6,23 @@
  * only know keep/rewrite/quarantine) and oversized rewrites degrade to
  * quarantine instead of landing.
  *
+ * This module owns the batch: candidate collection, the hard daily cap, the
+ * rollup, and the scheduler. The per-item walk itself is a responsibility
+ * chain (`review-ring.ts`) the batch assembles once per run — gate → evolve →
+ * landing — so the order is visible in one place and each step is one link.
+ *
  * This track is independent from the extraction pipeline by construction:
  * own prompts (`review-prompt.ts`), own budget (`review_daily`), own ledger
  * (`review_log`), no cursor, no increment. It only shares the store's write
  * gates (`applyProposals` / `applySkillProposals` / `quarantine`).
  */
-import { normalizeUsage, zeroUsage, type UsageTotals } from "./token-usage.js";
-import {
-	evolvePrompt,
-	gatePrompt,
-	parseEvolveAnswer,
-	parseGateAnswer,
-	REVIEW_CHEAP_SYSTEM_PROMPT,
-	REVIEW_MEMORY_SYSTEM_PROMPT,
-	REVIEW_SKILL_SYSTEM_PROMPT,
-} from "./review-prompt.js";
-import type { MemoryStore } from "./store.js";
+import { runChain, type ChainLink } from "./chain.js";
+import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 import { cwdOf } from "./memory-section.js";
-import { resolveCallRoute, streamOnce, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
+import { reviewChain, type ReviewItem } from "./review-ring.js";
+import { subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
+import type { MemoryStore } from "./store.js";
+import { zeroUsage } from "./token-usage.js";
 
 /** The LLM face review calls, aliased so each scheduler can name its own. */
 export type ReviewLlm = LlmRuntime;
@@ -81,30 +80,11 @@ export interface ReviewRunSummary {
 	evolveToken: number;
 }
 
-/** A rewrite lands only when the body-length ratio stays within this bound. */
-export const REWRITE_MAGNITUDE_CAP = 0.3;
-
-/**
- * Output budget for one cheap-gate call: a verdict JSON **plus** the reasoning
- * a thinking model spends before emitting it. A 512-token budget cut the gate
- * off on reasoning-model calls (2026-10-13) and the cut was ledgered as a
- * route failure, so the per-item failure rate read as a network problem.
- */
-export const GATE_MAX_TOKENS = 1024;
-
-/** Output budget for the evolve pass: a verdict plus full replacement text. */
-export const EVOLVE_MAX_TOKENS = 4096;
-
 /** Defaults for the review settings the host may override — and edit live. */
 export const REVIEW_DEFAULT_DRY_RUN = true;
 export const REVIEW_DEFAULT_DAILY_BUDGET = 100;
 export const REVIEW_DEFAULT_BATCH_SIZE = 10;
 export const REVIEW_DEFAULT_STALE_DAYS = 30;
-
-/** Relative body change: |new-old| / max(old, 1). Above the cap → quarantine. */
-export function rewriteMagnitude(oldBody: string, newBody: string): number {
-	return Math.abs(newBody.length - oldBody.length) / Math.max(oldBody.length, 1);
-}
 
 /**
  * Collect review candidates across every workspace carrying active items:
@@ -219,11 +199,11 @@ function skillsGlobal(
 }
 
 /**
- * Run one review batch: cheap gate per item, evolve pass on approval,
- * safeguards before landing, one `item-review` row per terminal path, one
- * daily merge at the end. Never throws: LLM and parse failures degrade to
- * skip rows (the run keeps going), exactly like extraction's fail-ledgered
- * discipline.
+ * Run one review batch: assemble the per-item chain once, then walk each
+ * candidate through it — cheap gate, evolve pass on approval, safeguards
+ * before landing, one `item-review` row per terminal path, one daily merge at
+ * the end. LLM and parse failures degrade to skip rows inside the chain (the
+ * run keeps going), exactly like extraction's fail-ledgered discipline.
  */
 export async function runReviewBatch(deps: ReviewDeps, candidates: readonly ReviewCandidate[], opts: ReviewRunOptions): Promise<ReviewRunSummary> {
 	const summary: ReviewRunSummary = { reviewed: 0, approved: 0, applied: 0, dropped: 0, backlog: 0, cheapToken: 0, evolveToken: 0 };
@@ -235,7 +215,10 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	const route: ModelSelection | undefined = opts.provider === undefined || opts.model === undefined
 		? undefined
 		: { provider: opts.provider, model: opts.model };
-	const noRoute = deps.llm === undefined || route === undefined;
+	const llm = deps.llm;
+	// The environment class: one loader and one chain for the whole run, in the
+	// order the ring declares. Without a route there is no ring to walk.
+	const ring = route === undefined || llm === undefined ? undefined : assembleRing({ llm, route, sessionId: opts.sessionId });
 	let position = 0;
 	for (const candidate of batch) {
 		const remaining = deps.store.consumeReviewBudget(opts.day, opts.budget);
@@ -258,7 +241,7 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 		} else {
 			requeued += 1;
 		}
-		if (noRoute || route === undefined) {
+		if (route === undefined || ring === undefined) {
 			deps.store.logReview({
 				runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
 				verdict: "skip", reason: "no-route", applied: 0,
@@ -267,7 +250,11 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 			position += 1;
 			continue;
 		}
-		await reviewOne(deps, runId, candidate, opts, route, summary, skipReasons);
+		const item: ReviewItem = {
+			deps, loader: ring.loader, route, runId, candidate, opts, summary, skipReasons,
+			gate: { usage: zeroUsage(), raw: undefined },
+		};
+		await runChain(ring.links, item);
 		position += 1;
 	}
 	summary.backlog = Math.max(0, candidates.length - summary.reviewed - summary.dropped);
@@ -280,226 +267,21 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	return summary;
 }
 
-async function reviewOne(
-	deps: ReviewDeps,
-	runId: string,
-	candidate: ReviewCandidate,
-	opts: ReviewRunOptions,
-	route: ModelSelection,
-	summary: ReviewRunSummary,
-	skipReasons: string[],
-): Promise<void> {
-	const base = {
-		runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
-	} as const;
-	// ── Cheap gate ──────────────────────────────────────────────
-	let gateUsage: UsageTotals = zeroUsage();
-	let gateRaw: unknown;
-	try {
-		const answer = await streamOnce(deps.llm, route, opts.sessionId, REVIEW_CHEAP_SYSTEM_PROMPT, gatePrompt(candidate), GATE_MAX_TOKENS);
-		gateRaw = answer.usage;
-		const gate = parseGateAnswer(answer.text);
-		if (gate === null) {
-			// A cut gate is a failure only when no complete verdict came
-			// through: the JSON usually lands before the budget runs out, so
-			// parse first and blame the finish reason only if it did not.
-			if (answer.finish !== undefined && answer.finish !== "stop") {
-				throw new Error(`stream finished with ${answer.finish}`);
-			}
-			deps.store.logReview({ ...base, verdict: "skip", reason: "gate-parse-failed", cheapUsage: gateRaw, applied: 0 });
-			skipReasons.push("gate-parse-failed");
-			return;
-		}
-		if (!gate.worthReview) {
-			summary.cheapToken += totalOf(gateRaw);
-			deps.store.logReview({ ...base, verdict: "skip", reason: gate.reason, cheapUsage: gateRaw, applied: 0 });
-			skipReasons.push("cheap-gate");
-			return;
-		}
-		summary.cheapToken += totalOf(gateRaw);
-		gateUsage = normalizedOf(gateRaw);
-	} catch (error) {
-		// The error text rides the row: a bare `gate-llm-failed` hid a ~50%
-		// per-item failure rate in production (2026-10-12) with no way to
-		// tell transient route faults from systematic ones.
-		deps.store.logReview({ ...base, verdict: "skip", reason: `gate-llm-failed: ${failureHead(error)}`, applied: 0 });
-		skipReasons.push("gate-llm-failed");
-		return;
-	}
-	summary.approved += 1;
-	// ── Evolve pass ─────────────────────────────────────────────
-	const neighbors = neighborHooks(deps.store, candidate);
-	let evolveRaw: unknown;
-	try {
-		// The feedback Why/How contract rides the rubric (system prompt) and
-		// the landing gates, never the item text: a reminder appended next to
-		// the body is what the model copies back into the rewrite.
-		const system = candidate.kind === "memory" ? REVIEW_MEMORY_SYSTEM_PROMPT : REVIEW_SKILL_SYSTEM_PROMPT;
-		const answer = await streamOnce(
-			deps.llm, route, opts.sessionId, system,
-			evolvePrompt({ id: candidate.id, title: candidate.title, description: candidate.description, body: candidate.body, scope: candidate.scope }, neighbors),
-			EVOLVE_MAX_TOKENS,
-		);
-		evolveRaw = answer.usage;
-		summary.evolveToken += totalOf(evolveRaw);
-		// The evolve pass carries full replacement text: a cut stream may hold
-		// half a body, so it never becomes a verdict.
-		if (answer.finish !== undefined && answer.finish !== "stop") {
-			throw new Error(`stream finished with ${answer.finish}`);
-		}
-		const evolved = parseEvolveAnswer(answer.text);
-		if (evolved === null) {
-			deps.store.logReview({ ...base, verdict: "skip", reason: "evolve-parse-failed", cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
-			skipReasons.push("evolve-parse-failed");
-			return;
-		}
-		if (evolved.verdict === "keep") {
-			deps.store.logReview({ ...base, verdict: "keep", reason: evolved.reason, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
-			return;
-		}
-		if (evolved.verdict === "quarantine") {
-			landQuarantine(deps, base, candidate, opts, evolved.reason, gateUsage, evolveRaw, proposedOf(evolved), summary);
-			return;
-		}
-		// ── Rewrite: magnitude cap first, dry-run second, gates last ──
-		const nextBody = evolved.body ?? candidate.body;
-		if (rewriteMagnitude(candidate.body, nextBody) > REWRITE_MAGNITUDE_CAP) {
-			landQuarantine(deps, base, candidate, opts, `幅度超限转隔离：${evolved.reason}`, gateUsage, evolveRaw, proposedOf(evolved), summary);
-			return;
-		}
-		if (opts.dryRun) {
-			deps.store.logReview({ ...base, verdict: "rewrite", reason: `试运行未落盘：${evolved.reason}`, proposed: proposedOf(evolved), cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
-			return;
-		}
-		landRewrite(deps, base, candidate, opts, evolved, gateUsage, evolveRaw, summary);
-	} catch (error) {
-		deps.store.logReview({ ...base, verdict: "skip", reason: `evolve-llm-failed: ${failureHead(error)}`, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
-		skipReasons.push("evolve-llm-failed");
-	}
-}
-
-/**
- * The rewrite payload a non-landing row keeps: exactly the fields the model
- * supplied, or `undefined` when it proposed no text at all.
- */
-function proposedOf(evolved: { title?: string | undefined; description?: string | undefined; body?: string | undefined; corrects?: string | undefined }): Record<string, string> | undefined {
-	const payload: Record<string, string> = {};
-	if (evolved.title !== undefined) {
-		payload.title = evolved.title;
-	}
-	if (evolved.description !== undefined) {
-		payload.description = evolved.description;
-	}
-	if (evolved.body !== undefined) {
-		payload.body = evolved.body;
-	}
-	if (evolved.corrects !== undefined) {
-		payload.corrects = evolved.corrects;
-	}
-	return Object.keys(payload).length === 0 ? undefined : payload;
-}
-
-function neighborHooks(store: MemoryStore, candidate: ReviewCandidate): { id: string; title: string; description: string }[] {
-	try {
-		if (candidate.kind === "memory") {
-			const query = candidate.title.slice(0, 60);
-			const hits = query.length >= 3 ? store.search(candidate.workspaceId, query, 5) : store.list(candidate.workspaceId).slice(0, 5);
-			return hits.filter((hit) => hit.id !== candidate.id).slice(0, 4).map((hit) => ({ id: hit.id, title: hit.title, description: hit.description }));
-		}
-		const hits = store.searchSkills(candidate.workspaceId, candidate.title.slice(0, 60), 5);
-		return hits.filter((hit) => hit.id !== candidate.id).slice(0, 4).map((hit) => ({ id: hit.id, title: hit.title, description: hit.description }));
-	} catch {
-		return [];
-	}
-}
-
-function landQuarantine(
-	deps: ReviewDeps,
-	base: { runId: string; workspaceId: string | undefined; itemKind: "memory" | "skill"; itemId: string },
-	candidate: ReviewCandidate,
-	opts: ReviewRunOptions,
-	reason: string,
-	gateUsage: UsageTotals,
-	evolveRaw: unknown,
-	proposed: Record<string, string> | undefined,
-	summary: ReviewRunSummary,
-): void {
-	const prior = deps.store.reviewStateOf(candidate.workspaceId, candidate.kind, candidate.id)?.evolveCount ?? 0;
-	if (opts.dryRun) {
-		deps.store.logReview({ ...base, verdict: "quarantine", reason: `试运行未隔离：${reason}`, proposed, cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0, evolveCount: prior });
-		return;
-	}
-	const ok = deps.store.quarantine(candidate.workspaceId, candidate.kind, candidate.id);
-	deps.store.logReview({
-		...base, verdict: "quarantine", reason, cheapUsage: gateUsage, evolveUsage: evolveRaw,
-		applied: ok ? 1 : 0, evolveCount: ok ? prior + 1 : prior,
-	});
-	if (ok) {
-		summary.applied += 1;
-	}
-}
-
-function landRewrite(
-	deps: ReviewDeps,
-	base: { runId: string; workspaceId: string | undefined; itemKind: "memory" | "skill"; itemId: string },
-	candidate: ReviewCandidate,
-	opts: ReviewRunOptions,
-	evolved: { reason: string; title?: string | undefined; description?: string | undefined; body?: string | undefined; corrects?: string | undefined },
-	gateUsage: UsageTotals,
-	evolveRaw: unknown,
-	summary: ReviewRunSummary,
-): void {
-	const prior = deps.store.reviewStateOf(candidate.workspaceId, candidate.kind, candidate.id)?.evolveCount ?? 0;
-	const ctx = { workspaceId: candidate.workspaceId, trigger: "item-review" as const, sessionId: opts.sessionId, runId: base.runId, model: opts.model, decision: evolved.reason };
-	if (candidate.kind === "memory") {
-		const [outcome] = deps.store.applyProposals(ctx, [{
-			action: "update", id: candidate.id,
-			title: evolved.title, description: evolved.description, body: evolved.body,
-			corrects: evolved.corrects,
-		}]);
-		const ok = outcome !== undefined && outcome.ok;
-		deps.store.logReview({
-			...base, verdict: "rewrite", reason: ok ? evolved.reason : `门禁拒绝：${outcome?.reason ?? "未知原因"}`,
-			cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: ok ? 1 : 0, evolveCount: ok ? prior + 1 : prior,
-		});
-		if (ok) {
-			summary.applied += 1;
-		}
-		return;
-	}
-	const { outcomes } = deps.store.applySkillProposals(ctx, [{
-		action: "update", scope: candidate.scope ?? "project", id: candidate.id,
-		title: evolved.title, description: evolved.description, body: evolved.body,
-	}]);
-	const outcome = outcomes[0];
-	const ok = outcome !== undefined && outcome.ok;
-	deps.store.logReview({
-		...base, verdict: "rewrite", reason: ok ? evolved.reason : `门禁拒绝：${outcome?.reason ?? "未知原因"}`,
-		cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: ok ? 1 : 0, evolveCount: ok ? prior + 1 : prior,
-	});
-	if (ok) {
-		summary.applied += 1;
-	}
-}
-
-function totalOf(raw: unknown): number {
-	return normalizeUsage(raw)?.total ?? 0;
-}
-
-/** One-line error head for ledger rows (fail-loud shape, capped length). */
-export function failureHead(error: unknown, max = 120): string {
-	const message = error instanceof Error ? error.message : String(error);
-	const head = message.split("\n", 1)[0] ?? "";
-	return head.length > max ? `${head.slice(0, max)}…` : head;
-}
-
-function normalizedOf(raw: unknown): UsageTotals {
-	return normalizeUsage(raw) ?? zeroUsage();
-}
-
 /** Current UTC day `YYYY-MM-DD` for the hard-cap account. */
 export function todayUtc(): string {
 	return new Date().toISOString().slice(0, 10);
+}
+
+/** The per-run ring: the loader bound to this run, and the chain it walks. */
+interface ReviewRing {
+	loader: SubagentLoader;
+	links: readonly ChainLink<ReviewItem>[];
+}
+
+/** Assemble one run's ring (simple factory: one context, one bound loader, one chain). */
+function assembleRing(call: SubagentCall): ReviewRing {
+	const loader = subagentLoaderFor(call);
+	return { loader, links: reviewChain() };
 }
 
 /** The event wiring surface (duck-typed cordis context, mirrors extraction). */

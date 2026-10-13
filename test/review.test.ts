@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { collectCandidates, failureHead, rewriteMagnitude, runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
+import { collectCandidates, runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
+import { failureHead, rewriteMagnitude } from "../src/review-ring.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";
@@ -369,6 +370,89 @@ describe("runReviewBatch", () => {
 		);
 		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
 		expect(summary).toMatchObject({ reviewed: 1, cheapToken: 0 });
+	});
+
+	it("ledgers the model every verdict row ran on", async () => {
+		const id = createMemory();
+		const llm = fakeLlm({ gate: `{"worthReview": true, "reason": "看看"}`, evolve: `{"verdict": "keep", "reason": "写得好"}` });
+		await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
+		const db = new DatabaseSync(dbPath);
+		try {
+			const rows = db.prepare("SELECT item_id, verdict, model FROM review_log ORDER BY rowid").all() as {
+				item_id: string; verdict: string; model: string | null;
+			}[];
+			expect(rows).toEqual([{ item_id: id, verdict: "keep", model: "m" }]);
+		} finally {
+			db.close();
+		}
+	});
+
+	it("fronts a skill candidate with the skill gate and its scope", async () => {
+		const { outcomes } = store.applySkillProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", scope: "project", id: "ts-standards", title: "TS 规范", description: "写 TS 前读", body: "1. 读规范" }],
+		);
+		expect(outcomes[0]?.ok).toBe(true);
+		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const candidates = collectCandidates(store, { limit: 10 }).filter((c) => c.kind === "skill");
+		expect(candidates).toHaveLength(1);
+		await runReviewBatch({ store, llm }, candidates, OPTS);
+		expect(llm.prompts).toHaveLength(1);
+		expect(llm.prompts[0]?.system).toContain("技能库");
+		expect(llm.prompts[0]?.prompt).toContain("scope=project");
+	});
+
+	it("keeps the usage and model of a gate call that dies after reporting them", async () => {
+		const id = createMemory();
+		const llm: ReviewLlm = {
+			async *stream(): AsyncIterable<unknown> {
+				yield { type: "usage", usage: { inputTokens: 9, outputTokens: 4, totalTokens: 13 } };
+				yield { type: "finish", reason: { kind: "error", failure: { code: "ROUTE_DOWN", message: "route down" } } };
+			},
+		};
+		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
+		expect(summary).toMatchObject({ reviewed: 1, approved: 0 });
+		const db = new DatabaseSync(dbPath);
+		try {
+			const row = db.prepare("SELECT reason, model, cheap_usage FROM review_log ORDER BY rowid DESC LIMIT 1").get() as {
+				reason: string; model: string | null; cheap_usage: string | null;
+			};
+			expect(row.reason).toContain("gate-llm-failed: LLM call error: ROUTE_DOWN: route down");
+			expect(row.model).toBe("m");
+			expect(JSON.parse(row.cheap_usage ?? "null")).toMatchObject({ totalTokens: 13 });
+		} finally {
+			db.close();
+		}
+	});
+
+	it("keeps the usage and model of an evolve call that dies after reporting them", async () => {
+		const id = createMemory();
+		const llm: ReviewLlm = {
+			async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+				const system = options.system as string;
+				if (system.includes("评审门")) {
+					yield { type: "text-delta", text: `{"worthReview": true, "reason": "看看"}` };
+					yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+					yield { type: "finish", reason: { kind: "stop" } };
+					return;
+				}
+				yield { type: "usage", usage: { inputTokens: 20, outputTokens: 8, totalTokens: 28 } };
+				throw new Error("evolve route down");
+			},
+		};
+		const summary = await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
+		expect(summary).toMatchObject({ approved: 1, applied: 0 });
+		const db = new DatabaseSync(dbPath);
+		try {
+			const row = db.prepare("SELECT reason, model, evolve_usage FROM review_log ORDER BY rowid DESC LIMIT 1").get() as {
+				reason: string; model: string | null; evolve_usage: string | null;
+			};
+			expect(row.reason).toContain("evolve-llm-failed: evolve route down");
+			expect(row.model).toBe("m");
+			expect(JSON.parse(row.evolve_usage ?? "null")).toMatchObject({ totalTokens: 28 });
+		} finally {
+			db.close();
+		}
 	});
 
 	it("hard cap drops the tail and counts backlog", async () => {

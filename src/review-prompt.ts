@@ -10,10 +10,27 @@
  * body executability, reusability, non-duplicate). The prompts are
  * deliberately behavior-blind: there are no task datasets here (unlike
  * Hermes GEPA), only the item text plus its provenance.
+ *
+ * Each of the four review jobs has its own gate/evolve prompt pair, and the
+ * memory and skill rubrics contradict each other on home-ownership by design
+ * (a memory must survive having its repo name stripped; a project skill must
+ * not). Sharing one prompt between them is what made the review ring judge
+ * skills by the memory rubric.
  */
 
-export const REVIEW_CHEAP_SYSTEM_PROMPT =
+export const REVIEW_MEMORY_CHEAP_SYSTEM_PROMPT =
 	"你是记忆库的内容评审门。先过归属三测：①主语是用户/环境还是某仓库的某版机制（版本号、阈值、开关名出现即后者）；②抹掉仓库名版本号机制名后句子还成立吗；③仓库事实住 ADR/docs，记忆只收跟人走的。归属不过直接判 false 并注明放错家。再判值不值得细看：有明确事实、做法、偏好或可复用规程就批；空话、纯过程记录、一次性的瞬时输出、当轮已可推导的一律拒。只输出 JSON：{\"worthReview\": true|false, \"reason\": \"一句话\"}。";
+
+/**
+ * The skill cheap gate: the memory gate's rubric inverted on home-ownership.
+ * A skill bound to one repo's paths, gates and workflow cards is a *project
+ * skill* — its home test is the project, not the world — so the gate that
+ * fronted skills with the memory rubric rejected them for being exactly what
+ * they are. Every judgment here is scope-relative, and the scope rides the
+ * user prompt.
+ */
+export const REVIEW_SKILL_CHEAP_SYSTEM_PROMPT =
+	"你是技能库的内容评审门。先看归属（prompt 里标了 scope）：绑定某仓库的路径/门禁/流程**不是**缺陷——住项目分区（scope=project）的技能本来就只在该项目内生效，禁用「跨项目不可复用」「抹掉仓库名不成立」当理由去拒它；只有「scope=global 却绑定某仓库」才算放错家，直接判 false 并注明。再判值不值得细看：description 让人在该用时想得起、正文步骤可执行、有可复用的规程就批；空话、一次性输出、纯过程记录、与既有技能重复的一律拒。只输出 JSON：{\"worthReview\": true|false, \"reason\": \"一句话\"}。";
 
 /** Memory rubric: accurate, usable, reusable, non-duplicate, fresh, right-home. */
 export const REVIEW_MEMORY_SYSTEM_PROMPT =
