@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	defaultRouteOf,
+	observedUsageOf,
 	resolveCallRoute,
 	selectLowestReasoningEffort,
+	selectMaxTokens,
 	streamOnce,
+	SubagentCallError,
 	type LlmRuntime,
 	type ModelInfo,
 	type ServiceGetter,
@@ -56,6 +59,23 @@ describe("selectLowestReasoningEffort", () => {
 	it("refuses metadata it cannot trust", () => {
 		expect(() => selectLowestReasoningEffort({ reasoning: { efforts: "low" } })).toThrow(/invalid model reasoning metadata/);
 		expect(() => selectLowestReasoningEffort({ reasoning: { efforts: [{ id: 7 }] } })).toThrow(/invalid model reasoning metadata/);
+	});
+});
+
+describe("selectMaxTokens", () => {
+	it("prefers the model's own advertised per-request cap", () => {
+		expect(selectMaxTokens({ defaultMaxTokens: 8192 }, 1024)).toBe(8192);
+	});
+
+	it("falls back to the definition's budget when nothing is advertised", () => {
+		expect(selectMaxTokens(undefined, 1024)).toBe(1024);
+		expect(selectMaxTokens({}, 4096)).toBe(4096);
+	});
+
+	it("refuses a capability it cannot trust", () => {
+		expect(() => selectMaxTokens({ defaultMaxTokens: "many" }, 1024)).toThrow(/invalid model max-tokens metadata/);
+		expect(() => selectMaxTokens({ defaultMaxTokens: 0 }, 1024)).toThrow(/invalid model max-tokens metadata/);
+		expect(() => selectMaxTokens({ defaultMaxTokens: 12.5 }, 1024)).toThrow(/invalid model max-tokens metadata/);
 	});
 });
 
@@ -125,6 +145,55 @@ describe("streamOnce", () => {
 		expect(llm.seen[0]?.sessionId).toBe("sess-1");
 		expect(llm.seen[0]?.provider).toBe(ROUTE.provider);
 		expect(llm.seen[0]?.model).toBe(ROUTE.model);
+	});
+
+	it("sends the model's own output cap instead of the caller's number", async () => {
+		const llm = scriptedLlm(
+			[{ type: "text-delta", text: "ok" }, { type: "finish", reason: { kind: "stop" } }],
+			{ defaultMaxTokens: 6000 },
+		);
+		await streamOnce(llm, ROUTE, "sess-1", "sys", "prompt", 1024);
+		expect(llm.seen[0]?.maxTokens).toBe(6000);
+	});
+
+	it("keeps the usage and route a failed stream already reported", async () => {
+		const llm = scriptedLlm([
+			{ type: "usage", usage: { inputTokens: 5, outputTokens: 7 } },
+			{ type: "finish", reason: { kind: "error", failure: { code: "X", message: "boom" } } },
+		]);
+		const error = await streamOnce(llm, ROUTE, "sess-1", "sys", "prompt", 1024).catch((thrown: unknown) => thrown);
+		expect(error).toBeInstanceOf(SubagentCallError);
+		expect((error as SubagentCallError).message).toBe("LLM call error: X: boom");
+		expect((error as SubagentCallError).finish).toBe("error");
+		expect((error as SubagentCallError).route).toEqual(ROUTE);
+		expect(observedUsageOf(error)).toEqual({ inputTokens: 5, outputTokens: 7 });
+	});
+
+	it("keeps the observation when the provider dies mid-stream", async () => {
+		const llm: LlmRuntime & { seen: Record<string, unknown>[] } = {
+			seen: [],
+			// eslint-disable-next-line require-yield
+			async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+				llm.seen.push(options);
+				yield { type: "usage", usage: { totalTokens: 3 } };
+				throw new Error("socket closed\nmore detail");
+			},
+		};
+		const error = await streamOnce(llm, ROUTE, "sess-1", "sys", "prompt", 1024).catch((thrown: unknown) => thrown);
+		expect((error as SubagentCallError).message).toBe("socket closed more detail");
+		expect((error as SubagentCallError).usage).toEqual({ totalTokens: 3 });
+		expect((error as Error).cause).toBeInstanceOf(Error);
+	});
+
+	it("keeps the usage on an empty or cut answer too", async () => {
+		const cut = scriptedLlm([
+			{ type: "usage", usage: { totalTokens: 11 } },
+			{ type: "finish", reason: { kind: "max-tokens" } },
+		]);
+		const error = await streamOnce(cut, ROUTE, "sess-1", "sys", "prompt", 1024).catch((thrown: unknown) => thrown);
+		expect((error as SubagentCallError).message).toBe("stream finished with max-tokens");
+		expect((error as SubagentCallError).finish).toBe("max-tokens");
+		expect((error as SubagentCallError).usage).toEqual({ totalTokens: 11 });
 	});
 
 	it("omits the effort field when the host cannot resolve capabilities", async () => {

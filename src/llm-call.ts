@@ -1,9 +1,8 @@
 /**
- * The shared boundary for the plugin's own LLM calls: extraction's cheap
- * pre-gate and full proposal call, and review's gate and evolve passes all
- * stream through here.
+ * The transport for the plugin's own LLM calls. Every subagent call
+ * (`subagentDefs.ts` definitions loaded through `subagent.ts`) ends here.
  *
- * Three disciplines live in one place because all three were learned the hard
+ * Four disciplines live in one place because all four were learned the hard
  * way, and none of them is visible at a call site:
  *
  * - **The route.** `agent.options` carries an *explicit* selection only. A
@@ -18,9 +17,16 @@
  *   gets no caller-supplied effort at all. This is the pre-teardown
  *   `llm-text.ts` discipline (see the 2026-09-24 capability note), restored
  *   after the direct calls that replaced that boundary shipped without it.
- * - **The failure text.** A terminal `error`/`aborted` finish carries the
- *   host's own failure object. Keeping only its `kind` produced a ledger full
- *   of "stream finished with error" that named no cause for a whole day.
+ * - **The output budget.** A fixed budget is a guess about how much a model
+ *   spends before it answers, and a wrong guess cuts the answer off as
+ *   `max-tokens` — which reads in the ledger as a route fault (2026-10-13).
+ *   The exact model's own advertised per-request cap wins; the definition's
+ *   declared budget is only the fallback for adapters that advertise none.
+ * - **The failure.** A terminal `error`/`aborted` finish carries the host's
+ *   own failure object, and the stream has usually reported its usage by
+ *   then. Both now ride the thrown error: keeping only the `kind` produced a
+ *   ledger full of "stream finished with error", and discarding the usage
+ *   left failed calls with no model and no token account at all.
  */
 
 /** The minimal LLM face a direct call needs (duck-typed host service). */
@@ -28,9 +34,11 @@ export interface LlmStream {
 	stream(options: Record<string, unknown>): AsyncIterable<unknown>;
 }
 
-/** Exact-model capability metadata, narrowed to the field this plugin reads. */
+/** Exact-model capability metadata, narrowed to the fields this plugin reads. */
 export interface ModelInfo {
 	reasoning?: { efforts?: unknown } | undefined;
+	/** Adapter-configured per-request output cap; the host materializes it when callers omit `maxTokens`. */
+	defaultMaxTokens?: unknown;
 }
 
 /** The LLM service plus the optional exact-model capability query. */
@@ -89,6 +97,66 @@ export function selectLowestReasoningEffort(modelInfo: ModelInfo | undefined): s
 		ids.push(id);
 	}
 	return ids.find((id) => !CLOSED_REASONING_EFFORTS.has(id)) ?? ids[0];
+}
+
+/**
+ * The output budget to send for one exact route: the model's own advertised
+ * per-request cap when it has one, the caller's fallback otherwise.
+ *
+ * A budget below what the model needs is not a cost saving — it is a
+ * truncation. Deriving it from the model's capability (the same source the
+ * reasoning effort comes from) is what keeps one model's answer from being
+ * cut off at a number chosen for another model's habits.
+ *
+ * @param modelInfo - Exact resolved-model metadata, when the provider exposes it.
+ * @param fallbackMaxTokens - The definition's declared budget.
+ * @returns The budget to send.
+ * @throws When the host reports a max-tokens capability this plugin cannot trust.
+ */
+export function selectMaxTokens(modelInfo: ModelInfo | undefined, fallbackMaxTokens: number): number {
+	const advertised = modelInfo?.defaultMaxTokens;
+	if (advertised === undefined) {
+		return fallbackMaxTokens;
+	}
+	if (typeof advertised !== "number" || !Number.isInteger(advertised) || advertised <= 0) {
+		throw new Error("continual-evolve: invalid model max-tokens metadata");
+	}
+	return advertised;
+}
+
+/**
+ * One failed call, carrying what the stream observed before it failed.
+ *
+ * The model and the tokens of a *failed* call are exactly what the ledger
+ * could not answer for (2026-10-13): the route and usage existed in memory
+ * and were dropped on the way out. They ride the error now, so every failure
+ * path can account for itself the same way a success does.
+ */
+export class SubagentCallError extends Error {
+	/** Usage payload observed before the failure, `undefined` when the stream never reported one. */
+	readonly usage: unknown;
+	/** The terminal finish kind, `undefined` when the stream failed before reporting one. */
+	readonly finish: string | undefined;
+	/** The route the failed call ran on. */
+	readonly route: ModelSelection;
+
+	constructor(message: string, observed: { usage: unknown; finish: string | undefined; route: ModelSelection; cause?: unknown }) {
+		super(message, observed.cause === undefined ? undefined : { cause: observed.cause });
+		this.name = "SubagentCallError";
+		this.usage = observed.usage;
+		this.finish = observed.finish;
+		this.route = observed.route;
+	}
+}
+
+/**
+ * The usage a failed call had already observed, for the ledger.
+ *
+ * @param error - Whatever a call threw.
+ * @returns The observed usage payload, or `undefined` when the failure carries none.
+ */
+export function observedUsageOf(error: unknown): unknown {
+	return error instanceof SubagentCallError ? error.usage : undefined;
 }
 
 /**
@@ -177,7 +245,7 @@ export interface StreamOnceResult {
  * @param sessionId - The host Agent identity providers use for request routing.
  * @param system - The system prompt for this call.
  * @param prompt - The user prompt for this call.
- * @param maxTokens - Output budget for this call.
+ * @param fallbackMaxTokens - Output budget to use when the model advertises no cap of its own.
  * @returns The assembled text, usage, finish kind, and chosen effort.
  * @throws On a missing LLM service, capability lookup failure, terminal provider error or abort, and empty output.
  */
@@ -187,57 +255,82 @@ export async function streamOnce(
 	sessionId: string | undefined,
 	system: string,
 	prompt: string,
-	maxTokens: number,
+	fallbackMaxTokens: number,
 ): Promise<StreamOnceResult> {
 	if (llm === undefined) {
 		throw new Error("no llm route");
 	}
-	const reasoningEffort = await resolveReasoningEffort(llm, route);
+	const dials = await resolveDials(llm, route, fallbackMaxTokens);
 	let text = "";
 	let usage: unknown;
 	let finish: { kind?: string; failure?: unknown } | undefined;
-	for await (const chunk of llm.stream({
-		provider: route.provider,
-		model: route.model,
-		messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-		system,
-		maxTokens,
-		sessionId,
-		...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-	})) {
-		const piece = chunk as { type?: string; text?: unknown; usage?: unknown; reason?: { kind?: string; failure?: unknown } };
-		if (piece?.type === "text-delta" && typeof piece.text === "string") {
-			text += piece.text;
-		} else if (piece?.type === "usage") {
-			usage = piece.usage;
-		} else if (piece?.type === "finish") {
-			finish = piece.reason;
+	try {
+		for await (const chunk of llm.stream({
+			provider: route.provider,
+			model: route.model,
+			messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+			system,
+			maxTokens: dials.maxTokens,
+			sessionId,
+			...(dials.reasoningEffort === undefined ? {} : { reasoningEffort: dials.reasoningEffort }),
+		})) {
+			const piece = chunk as { type?: string; text?: unknown; usage?: unknown; reason?: { kind?: string; failure?: unknown } };
+			if (piece?.type === "text-delta" && typeof piece.text === "string") {
+				text += piece.text;
+			} else if (piece?.type === "usage") {
+				usage = piece.usage;
+			} else if (piece?.type === "finish") {
+				finish = piece.reason;
+			}
 		}
+	} catch (error) {
+		// A provider that dies mid-stream still reported what it spent: the
+		// observation survives the failure so the ledger can show it.
+		throw new SubagentCallError(failureHeadOf(error), { usage, finish: finish?.kind, route, cause: error });
 	}
 	const finishKind = finish?.kind;
 	if (finishKind === "error" || finishKind === "aborted") {
-		throw new Error(failureTextOf(finishKind, finish?.failure));
+		throw new SubagentCallError(failureTextOf(finishKind, finish?.failure), { usage, finish: finishKind, route });
 	}
 	if (text.trim().length === 0) {
 		// Nothing usable arrived: the finish reason is the only diagnosis.
-		throw new Error(finishKind !== undefined && finishKind !== "stop" ? `stream finished with ${finishKind}` : "empty model output");
+		throw new SubagentCallError(
+			finishKind !== undefined && finishKind !== "stop" ? `stream finished with ${finishKind}` : "empty model output",
+			{ usage, finish: finishKind, route },
+		);
 	}
-	return { text, usage, finish: finishKind, reasoningEffort };
+	return { text, usage, finish: finishKind, reasoningEffort: dials.reasoningEffort };
+}
+
+/** One-line head of a mid-stream throw, flattened so the ledger row stays greppable. */
+function failureHeadOf(error: unknown): string {
+	const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
+	return message.replace(/\s+/g, " ").trim();
+}
+
+/** The two capability-derived dials one call sends. */
+interface CallDials {
+	reasoningEffort: string | undefined;
+	maxTokens: number;
 }
 
 /**
- * Resolve the effort to send for one exact route.
+ * Resolve both dials from one capability query.
  *
  * The host's capability query is the only source: an explicit selection's
  * effort belongs to the *main* conversation and must not silently raise an
- * auxiliary call's cost. No query (older host, test fake) means no effort.
+ * auxiliary call's cost, and an explicit `maxTokens` belongs to nothing here.
+ * No query (older host, test fake) means no effort and the caller's budget.
  */
-async function resolveReasoningEffort(llm: LlmRuntime, route: ModelSelection): Promise<string | undefined> {
+async function resolveDials(llm: LlmRuntime, route: ModelSelection, fallbackMaxTokens: number): Promise<CallDials> {
 	if (typeof llm.resolveModelInfo !== "function") {
-		return undefined;
+		return { reasoningEffort: undefined, maxTokens: fallbackMaxTokens };
 	}
 	const modelInfo = await llm.resolveModelInfo(route.provider, route.model);
-	return selectLowestReasoningEffort(modelInfo);
+	return {
+		reasoningEffort: selectLowestReasoningEffort(modelInfo),
+		maxTokens: selectMaxTokens(modelInfo, fallbackMaxTokens),
+	};
 }
 
 /** Render a terminal failure for the ledger: host code plus host message. */
