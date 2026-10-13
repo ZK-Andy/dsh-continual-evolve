@@ -29,10 +29,10 @@ describe("parseEvolveAnswer", () => {
 		);
 		expect(prompt).toContain("id=dup");
 		expect(evolvePrompt({ id: "a", title: "t", description: "h", body: "b" }, [])).not.toContain("同类候选");
-		expect(evolvePrompt({ id: "a", title: "t", description: "h", body: "b", extra: "" }, [])).not.toContain("同类候选");
-		expect(
-			evolvePrompt({ id: "a", title: "t", description: "h", body: "b", extra: "判时注意时效" }, []),
-		).toContain("时效");
+		// The item text is the last block: no rubric reminder rides after
+		// `全文：`, or the model copies it back as content.
+		expect(evolvePrompt({ id: "a", title: "t", description: "h", body: "b" }, [])).toMatch(/全文：\nb$/);
+		expect(evolvePrompt({ id: "a", title: "t", description: "h", body: "b" }, [{ id: "d", title: "t2", description: "h2" }])).toMatch(/全文：\nb\n\n同类候选/);
 	});
 
 	it("carries the skill scope so a project skill is judged inside its project", () => {

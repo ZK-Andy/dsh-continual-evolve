@@ -55,17 +55,17 @@ export function gatePrompt(entry: { kind: string; id: string; title: string; des
 
 /** The evolve prompt for one item plus its similar neighbors for dup-checking. */
 export function evolvePrompt(
-	entry: { id: string; title: string; description: string; body: string; extra?: string | undefined; scope?: "project" | "global" | undefined },
+	entry: { id: string; title: string; description: string; body: string; scope?: "project" | "global" | undefined },
 	neighbors: readonly { id: string; title: string; description: string }[],
 ): string {
 	const lines = [`id=${entry.id}`];
 	if (entry.scope !== undefined) {
 		lines.push(`scope=${entry.scope}`);
 	}
+	// Nothing rides after `全文：` — a rubric reminder adjacent to the item
+	// text gets copied back as if it were content (2026-10-14, memory
+	// `codegraph`). The rubric lives in the system prompt only.
 	lines.push(`title=${entry.title}`, `钩子=${entry.description}`, "全文：", entry.body);
-	if (entry.extra !== undefined && entry.extra.length > 0) {
-		lines.push("", entry.extra);
-	}
 	if (neighbors.length > 0) {
 		lines.push("", "同类候选（判重复用）：");
 		for (const neighbor of neighbors) {

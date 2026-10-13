@@ -329,15 +329,15 @@ async function reviewOne(
 	summary.approved += 1;
 	// ── Evolve pass ─────────────────────────────────────────────
 	const neighbors = neighborHooks(deps.store, candidate);
-	const extra = candidate.kind === "memory" && candidate.memoryType === "feedback"
-		? "注意：feedback 类正文必须带 Why 与 How to apply 两行。"
-		: undefined;
 	let evolveRaw: unknown;
 	try {
+		// The feedback Why/How contract rides the rubric (system prompt) and
+		// the landing gates, never the item text: a reminder appended next to
+		// the body is what the model copies back into the rewrite.
 		const system = candidate.kind === "memory" ? REVIEW_MEMORY_SYSTEM_PROMPT : REVIEW_SKILL_SYSTEM_PROMPT;
 		const answer = await streamOnce(
 			deps.llm, route, opts.sessionId, system,
-			evolvePrompt({ id: candidate.id, title: candidate.title, description: candidate.description, body: candidate.body, extra, scope: candidate.scope }, neighbors),
+			evolvePrompt({ id: candidate.id, title: candidate.title, description: candidate.description, body: candidate.body, scope: candidate.scope }, neighbors),
 			EVOLVE_MAX_TOKENS,
 		);
 		evolveRaw = answer.usage;

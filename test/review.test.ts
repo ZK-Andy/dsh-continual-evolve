@@ -38,12 +38,18 @@ function createMemory(title = "user env", body = "Fedora 44"): string {
 }
 
 /** Scripted host LLM: answers route by the system prompt (cheap vs evolve). */
-function fakeLlm(scenes: { gate: string; evolve: string }, usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 }): ReviewLlm & { calls: number } {
+function fakeLlm(
+	scenes: { gate: string; evolve: string },
+	usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+): ReviewLlm & { calls: number; prompts: { system: string; prompt: string }[] } {
 	const llm = {
 		calls: 0,
+		prompts: [] as { system: string; prompt: string }[],
 		async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
 			llm.calls += 1;
 			const system = options.system as string;
+			const messages = options.messages as { content?: { text?: string }[] }[] | undefined;
+			llm.prompts.push({ system, prompt: messages?.[0]?.content?.[0]?.text ?? "" });
 			const text = system.includes("评审门") ? scenes.gate : scenes.evolve;
 			yield { type: "text-delta", text };
 			yield { type: "usage", usage };
@@ -252,7 +258,7 @@ describe("runReviewBatch", () => {
 		expect(store.getDaily(OPTS.day)?.skipTop).toContain("gate-parse-failed");
 	});
 
-	it("carries the feedback contract into the evolve prompt", async () => {
+	it("keeps the feedback rubric out of the evolve prompt text", async () => {
 		const [outcome] = store.applyProposals(
 			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
 			[{
@@ -266,6 +272,35 @@ describe("runReviewBatch", () => {
 		expect(candidates[0]?.memoryType).toBe("feedback");
 		const summary = await runReviewBatch({ store, llm }, candidates, OPTS);
 		expect(summary).toMatchObject({ approved: 1 });
+		// The reminder used to ride the user prompt right below the body, and
+		// the model copied it into the rewrite verbatim (2026-10-14).
+		const evolveCall = llm.prompts.find((call) => !call.system.includes("评审门"));
+		expect(evolveCall?.prompt).toContain(`id=${candidates[0]?.id ?? ""}`);
+		expect(evolveCall?.prompt).not.toContain("feedback 类正文必须带 Why 与 How to apply");
+	});
+
+	it("still refuses a feedback rewrite that drops the Why line at landing", async () => {
+		const body = "先构建。\n\n**Why:** 避免带病上线。\n\n**How to apply:** 发版前跑构建。";
+		const [outcome] = store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "feedback", title: "部署经验", description: "部署前检查", body }],
+		);
+		const id = outcome?.id ?? "";
+		const llm = fakeLlm({
+			gate: `{"worthReview": true, "reason": "看看"}`,
+			evolve: `{"verdict": "rewrite", "reason": "精简", "body": ${JSON.stringify(body.replace("**Why:** ", ""))}}`,
+		});
+		const candidate: ReviewCandidate = { workspaceId: WS, kind: "memory", id, priority: 0, title: "部署经验", description: "部署前检查", body, memoryType: "feedback" };
+		const summary = await runReviewBatch({ store, llm }, [candidate], OPTS);
+		expect(summary).toMatchObject({ approved: 1, applied: 0 });
+		expect(store.get(WS, id)?.body).toBe(body);
+		const db = new DatabaseSync(dbPath);
+		try {
+			const row = db.prepare("SELECT reason FROM review_log ORDER BY rowid DESC LIMIT 1").get() as { reason: string };
+			expect(row.reason).toContain("门禁拒绝");
+		} finally {
+			db.close();
+		}
 	});
 
 	it("unparseable evolve answers ledger a skip without landing", async () => {
