@@ -54,6 +54,16 @@ const LEDGER_OCCURRENCES = "occurrences";
  */
 const COALESCED_SKIP_REASONS = new Set(["no-user-prose", "no-new-events"]);
 
+/**
+ * Verdict rows that leave an item queued: a call that never produced a verdict
+ * must not read as "reviewed". Without this a single gate fault (a route blip,
+ * a budget cut) locked the item out for `staleDays`, because the failure row
+ * counted as a finished review (2026-10-13).
+ */
+const INCOMPLETE_REVIEW_SQL =
+	"(coalesce(reason, '') LIKE 'gate-llm-failed%' OR coalesce(reason, '') LIKE 'evolve-llm-failed%' " +
+	"OR coalesce(reason, '') IN ('no-route', 'budget-exhausted', 'gate-parse-failed', 'evolve-parse-failed'))";
+
 const DDL = `
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
@@ -733,7 +743,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		reviewLast: database.prepare(
-			"SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? ORDER BY rowid DESC LIMIT 1",
+			`SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND NOT ${INCOMPLETE_REVIEW_SQL} ORDER BY rowid DESC LIMIT 1`,
 		),
 		reviewEvolved: database.prepare(
 			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND applied = 1",

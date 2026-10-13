@@ -22,7 +22,7 @@ fail-open 语义不变：不消费游标、不 stall、不为门的死亡加行�
 - **每次门失败单开一行**（照评审轨 `gate-llm-failed` 行的样子）。落败：破坏「一次提取运行一行」的账本不变量——运行计数、按游标的审计、日聚合都会多算，且与 model-skip 的连续跳过合并（`COALESCED_SKIP_REASONS`）互相干扰。
 - **只写宿主日志（logger / stderr）**。落败：宿主默认不落请求级错误（同晚实证），日志随进程轮转、不可跨会话对账；账本是唯一可长期回查的面。
 - **把失败写进 `skip_reason`**。落败：与终局原因混淆，且 applied / failed 行没有 `skip_reason` 该有的位置。
-- **同时把门预算从 512 调大**。不做：首个 `cheap_error` 样本坐实死因是路由故障（`stream finished with error`），与输出预算无关，512 维持。
+- **同时把门预算从 512 调大**。当时不做：首个 `cheap_error` 样本坐实的是路由故障（`stream finished with error`），与输出预算无关。2026-10-13 全量核对推翻了这个读法——23 条门失败里 7 条是 `stream finished with max-tokens`，预算已提到 1024、且截断前已完成的 verdict 继续算数（[2026-10-13-review-gate-budget-and-requeue.md](../bug-fix/2026-10-13-review-gate-budget-and-requeue.md)）。
 - **门遇路由故障先重试一次**。排除：2026-10-12 用户拍板——代理与网关都不稳定的前提下，重试只是再烧一遍自己的 token 与时间；失败即 fail-open，原文照记 `cheap_error`，后续再看。
 - **给门单独指定模型**（固定拿一个轻量模型当门，脱开会话路由）。排除：2026-10-12 用户拍板——用户会按任务切模型，门与正文不同模型会让「这条增量值不值得提」的判断随模型漂移，还多一层配置面；门继续走会话路由的 provider / model。
 
@@ -33,6 +33,8 @@ fail-open 语义不变：不消费游标、不 stall、不为门的死亡加行�
 代价：一列 schema 迁移 + 每次运行多写一列；账本行诊断载荷每行最多多 200 字符。
 
 首个样本（2026-10-12 22:53，`deepseek/deepseek-v4.1-flash`，本仓工作区）：`cheap_error = stream finished with error`——**路由/网关级故障**，既不是输出预算撞顶、也不是模型选择；同一轮的贵调用正常返回并落盘（1149 输出 + 829 推理 token），说明这是每次调用各自掷骰子的路由抖动，与「门在某个模型上必然死」的读法不相容。
+
+后续（2026-10-13，全量账本 23 条门失败）：16 条 `stream finished with error`（路由抖动，仍是多数）、**7 条 `stream finished with max-tokens`**——后者是 512 预算被推理 token 吃满导致的截断，坐实了「门死因与预算无关」只对了一半。处置见 [2026-10-13-review-gate-budget-and-requeue.md](../bug-fix/2026-10-13-review-gate-budget-and-requeue.md)。
 
 ### Testing
 

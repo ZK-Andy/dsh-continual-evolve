@@ -68,6 +68,9 @@ const ERROR_REASON_MAX = 300;
 /** Head length of a failed pre-gate call's error kept in the ledger `cheap_error` column. */
 const GATE_ERROR_MAX = 200;
 
+/** Output budget for one cheap-gate call (see review.ts's `GATE_MAX_TOKENS`). */
+const GATE_MAX_TOKENS = 1024;
+
 /** Split an unexpected throw into a ledger-sized reason head and file body. */
 function errorText(error: unknown): { message: string; detail: string } {
 	const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
@@ -200,10 +203,16 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 				deps.llm, target,
 				cheapPrompt({ incrementHead: increment.slice(0, CHEAP_INCREMENT_MAX), userSeqs: slice.userSeqs }),
 				EXTRACTION_CHEAP_SYSTEM_PROMPT,
-				512,
+				GATE_MAX_TOKENS,
 			);
 			cheapUsage = gate.usage;
 			const verdict = parseCheapAnswer(gate.text);
+			// A gate cut at its budget that still answered is a usable verdict;
+			// only a cut with nothing parseable rides the run's row as a gate
+			// error. Parse before blaming the finish reason.
+			if (verdict === null && gate.finish !== undefined && gate.finish !== "stop") {
+				throw new Error(`stream finished with ${gate.finish}`);
+			}
 			if (verdict !== null && !verdict.worth) {
 				advanceCursor();
 				store.logSkipped({
@@ -238,6 +247,10 @@ async function runExtractionInner(deps: ExtractionDeps, target: ExtractionTarget
 	let usage: unknown;
 	try {
 		const answer = await streamOnce(deps.llm, target, prompt);
+		// The full call carries the proposal payload: a cut stream is a failure.
+		if (answer.finish !== undefined && answer.finish !== "stop") {
+			throw new Error(`stream finished with ${answer.finish}`);
+		}
 		text = answer.text;
 		usage = answer.usage;
 	} catch (error) {
@@ -329,7 +342,7 @@ async function streamOnce(
 	prompt: string,
 	system: string = EXTRACTION_SYSTEM_PROMPT,
 	maxTokens: number = 4096,
-): Promise<{ text: string; usage: unknown }> {
+): Promise<{ text: string; usage: unknown; finish: string | undefined }> {
 	let text = "";
 	let usage: unknown;
 	let finish: { kind?: string } | undefined;
@@ -352,13 +365,14 @@ async function streamOnce(
 			finish = piece.reason;
 		}
 	}
-	if (finish !== undefined && finish.kind !== "stop") {
-		throw new Error(`stream finished with ${finish.kind ?? "unknown"}`);
-	}
+	const finishKind = finish?.kind;
 	if (text.trim().length === 0) {
-		throw new Error("empty model output");
+		// Nothing usable arrived: the finish reason is the only diagnosis.
+		throw new Error(finishKind !== undefined && finishKind !== "stop" ? `stream finished with ${finishKind}` : "empty model output");
 	}
-	return { text, usage };
+	// The caller owns the truncation verdict: a gate answer often completes
+	// before its budget does, a proposal body never does.
+	return { text, usage, finish: finishKind };
 }
 
 /** One pending extraction target (its session's coalescing slot). */

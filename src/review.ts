@@ -79,6 +79,20 @@ export interface ReviewRunSummary {
 /** A rewrite lands only when the body-length ratio stays within this bound. */
 export const REWRITE_MAGNITUDE_CAP = 0.3;
 
+/**
+ * Output budget for one cheap-gate call: a verdict JSON **plus** the reasoning
+ * a thinking model spends before emitting it. A 512-token budget cut the gate
+ * off on reasoning-model calls (2026-10-13) and the cut was ledgered as a
+ * route failure, so the per-item failure rate read as a network problem.
+ */
+export const GATE_MAX_TOKENS = 1024;
+
+/** Defaults for the review settings the host may override — and edit live. */
+export const REVIEW_DEFAULT_DRY_RUN = true;
+export const REVIEW_DEFAULT_DAILY_BUDGET = 100;
+export const REVIEW_DEFAULT_BATCH_SIZE = 10;
+export const REVIEW_DEFAULT_STALE_DAYS = 30;
+
 /** Relative body change: |new-old| / max(old, 1). Above the cap → quarantine. */
 export function rewriteMagnitude(oldBody: string, newBody: string): number {
 	return Math.abs(newBody.length - oldBody.length) / Math.max(oldBody.length, 1);
@@ -270,10 +284,16 @@ async function reviewOne(
 	let gateUsage: UsageTotals = zeroUsage();
 	let gateRaw: unknown;
 	try {
-		const answer = await streamOnce(deps.llm, opts, REVIEW_CHEAP_SYSTEM_PROMPT, gatePrompt(candidate), 512);
+		const answer = await streamOnce(deps.llm, opts, REVIEW_CHEAP_SYSTEM_PROMPT, gatePrompt(candidate), GATE_MAX_TOKENS);
 		gateRaw = answer.usage;
 		const gate = parseGateAnswer(answer.text);
 		if (gate === null) {
+			// A cut gate is a failure only when no complete verdict came
+			// through: the JSON usually lands before the budget runs out, so
+			// parse first and blame the finish reason only if it did not.
+			if (answer.finish !== undefined && answer.finish !== "stop") {
+				throw new Error(`stream finished with ${answer.finish}`);
+			}
 			deps.store.logReview({ ...base, verdict: "skip", reason: "gate-parse-failed", cheapUsage: gateRaw, applied: 0 });
 			skipReasons.push("gate-parse-failed");
 			return;
@@ -310,6 +330,11 @@ async function reviewOne(
 		);
 		evolveRaw = answer.usage;
 		summary.evolveToken += totalOf(evolveRaw);
+		// The evolve pass carries full replacement text: a cut stream may hold
+		// half a body, so it never becomes a verdict.
+		if (answer.finish !== undefined && answer.finish !== "stop") {
+			throw new Error(`stream finished with ${answer.finish}`);
+		}
 		const evolved = parseEvolveAnswer(answer.text);
 		if (evolved === null) {
 			deps.store.logReview({ ...base, verdict: "skip", reason: "evolve-parse-failed", cheapUsage: gateUsage, evolveUsage: evolveRaw, applied: 0 });
@@ -467,7 +492,7 @@ async function streamOnce(
 	system: string,
 	prompt: string,
 	maxTokens: number,
-): Promise<{ text: string; usage: unknown }> {
+): Promise<{ text: string; usage: unknown; finish: string | undefined }> {
 	if (llm === undefined) {
 		throw new Error("no llm route");
 	}
@@ -491,13 +516,14 @@ async function streamOnce(
 			finish = piece.reason;
 		}
 	}
-	if (finish !== undefined && finish.kind !== "stop") {
-		throw new Error(`stream finished with ${finish.kind ?? "unknown"}`);
-	}
+	const finishKind = finish?.kind;
 	if (text.trim().length === 0) {
-		throw new Error("empty model output");
+		// Nothing usable arrived: the finish reason is the only diagnosis.
+		throw new Error(finishKind !== undefined && finishKind !== "stop" ? `stream finished with ${finishKind}` : "empty model output");
 	}
-	return { text, usage };
+	// The caller owns the truncation verdict: a gate answer often completes
+	// before its budget does, a replacement body never does.
+	return { text, usage, finish: finishKind };
 }
 
 /** Current UTC day `YYYY-MM-DD` for the hard-cap account. */
@@ -511,12 +537,22 @@ export interface ReviewSchedulerHost {
 	logger(name: string): { info(message: string): void; warn(message: string): void };
 }
 
-export interface ReviewSchedulerConfig {
-	enabled: boolean;
+/** The editable review settings, re-read on every drain. */
+export interface ReviewSettings {
 	dryRun: boolean;
 	dailyBudget: number;
 	batchSize: number;
 	staleDays: number;
+}
+
+export interface ReviewSchedulerConfig {
+	enabled: boolean;
+	/**
+	 * Read the current settings for each drain: the host's configuration is
+	 * volatile, so values edited live take effect without a remount and are
+	 * never captured once at mount time.
+	 */
+	read: () => ReviewSettings;
 	/** Minimum ms between two drains (default 5 minutes). */
 	minIntervalMs: number;
 }
@@ -560,19 +596,20 @@ export function createReviewScheduler(
 		pendingWorkspace = undefined;
 		void (async () => {
 			try {
+				const settings = config.read();
 				const day = todayUtc();
 				const daily = deps.store.getDaily(day);
-				const remaining = config.dailyBudget - (daily?.reviewed ?? 0);
+				const remaining = settings.dailyBudget - (daily?.reviewed ?? 0);
 				if (remaining <= 0) {
 					return;
 				}
-				const candidates = collectCandidates(deps.store, { staleDays: config.staleDays, limit: config.batchSize * 2 });
+				const candidates = collectCandidates(deps.store, { staleDays: settings.staleDays, limit: settings.batchSize * 2 });
 				const ordered = workspace === undefined
 					? candidates
 					: [...candidates.filter((c) => c.workspaceId === workspace), ...candidates.filter((c) => c.workspaceId !== workspace)];
-				await runReviewBatch(deps, ordered.slice(0, config.batchSize), {
-					day, budget: config.dailyBudget, dryRun: config.dryRun,
-					batchSize: config.batchSize, staleDays: config.staleDays,
+				await runReviewBatch(deps, ordered.slice(0, settings.batchSize), {
+					day, budget: settings.dailyBudget, dryRun: settings.dryRun,
+					batchSize: settings.batchSize, staleDays: settings.staleDays,
 					provider: lastRoute?.provider, model: lastRoute?.model, sessionId: lastRoute?.sessionId,
 				});
 			} catch (error) {
@@ -612,8 +649,9 @@ export function createReviewScheduler(
 			pendingWorkspace = undefined;
 		}),
 	);
+	const armed = config.read();
 	host.logger("continual-evolve").info(
-		`review scheduler armed (daily cap ${config.dailyBudget}, dry-run ${config.dryRun ? "on" : "off"})`,
+		`review scheduler armed (daily cap ${armed.dailyBudget}, dry-run ${armed.dryRun ? "on" : "off"})`,
 	);
 	return () => {
 		pendingWorkspace = undefined;

@@ -31,7 +31,13 @@
 import z from "@deepseek-ai/schemastery";
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
 import { createExtractionScheduler, type LlmStream, type SchedulerHost } from "./extraction.js";
-import { createReviewScheduler } from "./review.js";
+import {
+	createReviewScheduler,
+	REVIEW_DEFAULT_BATCH_SIZE,
+	REVIEW_DEFAULT_DAILY_BUDGET,
+	REVIEW_DEFAULT_DRY_RUN,
+	REVIEW_DEFAULT_STALE_DAYS,
+} from "./review.js";
 import type { SurfaceReader } from "./extraction-surface.js";import {
 	createFrozenMemorySection,
 	cwdOf,
@@ -99,14 +105,19 @@ export const Config = z.object({
 	/**
 	 * The autonomous content-quality loop (own prompts, own daily budget,
 	 * own ledger — shares only the store's write gates with extraction).
-	 * `dryRun` ledgers verdicts without landing them (trial mode, default
-	 * on); `dailyBudget` caps reviewed items per UTC day (default 100).
+	 * Every field is volatile: a settings surface edits them without a
+	 * remount, so the scheduler re-reads them per drain instead of capturing
+	 * them at mount. `dryRun` ledgers verdicts without landing them (trial
+	 * mode, default on); `dailyBudget` caps reviewed items per UTC day
+	 * (default 100); `staleDays` is how long a reviewed item stays out of the
+	 * queue before it comes back (default 30).
 	 */
 	review: z.object({
-		enabled: z.boolean(),
-		dryRun: z.boolean(),
-		dailyBudget: z.natural(),
-		batchSize: z.natural(),
+		enabled: z.boolean().volatile(),
+		dryRun: z.boolean().volatile(),
+		dailyBudget: z.natural().volatile(),
+		batchSize: z.natural().volatile(),
+		staleDays: z.natural().volatile(),
 	}),
 	/**
 	 * The read-only memory card in the official plugin manager
@@ -199,7 +210,7 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
  */
 function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig): void {
 	const log = host.logger("continual-evolve");
-	if (config.review?.enabled === false) {
+	if (config.review?.enabled?.get() === false) {
 		log.info("review disabled by config — extraction and tools unaffected");
 		return;
 	}
@@ -214,10 +225,12 @@ function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config:
 		const llm = (context.llm ?? context.get?.("llm")) as LlmStream | undefined;
 		createReviewScheduler(events as SchedulerHost, { store, llm }, {
 			enabled: true,
-			dryRun: config.review?.dryRun ?? true,
-			dailyBudget: config.review?.dailyBudget ?? 100,
-			batchSize: config.review?.batchSize ?? 10,
-			staleDays: 30,
+			read: () => ({
+				dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
+				dailyBudget: config.review?.dailyBudget?.get() ?? REVIEW_DEFAULT_DAILY_BUDGET,
+				batchSize: config.review?.batchSize?.get() ?? REVIEW_DEFAULT_BATCH_SIZE,
+				staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
+			}),
 			minIntervalMs: 5 * 60 * 1000,
 		});
 	});

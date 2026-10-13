@@ -117,6 +117,23 @@ describe("review verdict log", () => {
 		}
 	});
 
+	it("keeps an item queued while every row is an incomplete review", () => {
+		store.logReview({
+			workspaceId: WS, itemKind: "memory", itemId: "user-env",
+			verdict: "skip", reason: "gate-llm-failed: stream finished with max-tokens",
+		});
+		expect(store.reviewStateOf(WS, "memory", "user-env")).toBeUndefined();
+		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: "user-env", verdict: "skip", reason: "no-route" });
+		expect(store.reviewStateOf(WS, "memory", "user-env")).toBeUndefined();
+		// A gate refusal is a finished review: the item stops requeueing.
+		store.logReview({
+			workspaceId: WS, itemKind: "memory", itemId: "user-env",
+			verdict: "skip", reason: "本机环境状态事实，不跟人走",
+		});
+		expect(store.reviewStateOf(WS, "memory", "user-env")?.lastTs).toBeDefined();
+		expect(store.reviewStateOf(WS, "memory", "user-env")?.evolveCount).toBe(0);
+	});
+
 	it("prunes with the ledgers instead of growing without bound", () => {
 		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: "a", verdict: "skip", reason: "cheap-gate" });
 		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBeGreaterThanOrEqual(1);

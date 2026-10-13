@@ -8,6 +8,7 @@ import {
 	runReviewBatch,
 	todayUtc,
 	type ReviewLlm,
+	type ReviewSettings,
 } from "../src/review.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
@@ -42,11 +43,34 @@ function createSkill(ws: string, id: string, scope?: "project" | "global"): void
 	expect(outcomes[0]?.ok).toBe(true);
 }
 
+/** The scheduler re-reads these per drain, so tests hand it a mutable box. */
+function settings(over: Partial<ReviewSettings> = {}): ReviewSettings {
+	return Object.assign({ dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 }, over);
+}
+
 function fakeLlm(scenes: { gate: string; evolve: string }): ReviewLlm {
 	return {
 		async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
 			const system = options.system as string;
 			yield { type: "text-delta", text: system.includes("评审门") ? scenes.gate : scenes.evolve };
+			yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+			yield { type: "finish", reason: { kind: "stop" } };
+		},
+	};
+}
+
+/** A gate whose stream is cut at its budget; the evolve call stays healthy. */
+function cutGateLlm(gateText: string): ReviewLlm {
+	return {
+		async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+			const system = options.system as string;
+			if (system.includes("评审门")) {
+				yield { type: "text-delta", text: gateText };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "max-tokens" } };
+				return;
+			}
+			yield { type: "text-delta", text: `{"verdict": "keep", "reason": "x"}` };
 			yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
 			yield { type: "finish", reason: { kind: "stop" } };
 		},
@@ -141,6 +165,35 @@ describe("failure discipline", () => {
 		expect(summary).toMatchObject({ reviewed: 1, approved: 0 });
 		expect(store.getDaily("2026-10-12")?.skipTop).toContain("gate-llm-failed");
 	});
+
+	it("keeps a gate verdict that arrived before the budget cut", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const candidates = collectCandidates(store, { limit: 10 });
+		const summary = await runReviewBatch(
+			{ store, llm: cutGateLlm(`{"worthReview": true, "reason": "值得看"}`) }, candidates,
+			{ day: "2026-10-12", budget: 100, dryRun: true, provider: "p", model: "m", sessionId: "s" },
+		);
+		// The JSON completed before the cut: a real verdict, not a failure.
+		expect(summary).toMatchObject({ reviewed: 1, approved: 1 });
+		expect(store.getDaily("2026-10-12")?.skipTop ?? "").not.toContain("gate-llm-failed");
+	});
+
+	it("fails a cut gate that left no usable verdict", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const candidates = collectCandidates(store, { limit: 10 });
+		const summary = await runReviewBatch(
+			{ store, llm: cutGateLlm(`{"worthReview": tr`) }, candidates,
+			{ day: "2026-10-12", budget: 100, dryRun: true, provider: "p", model: "m", sessionId: "s" },
+		);
+		expect(summary).toMatchObject({ reviewed: 1, approved: 0 });
+		expect(store.getDaily("2026-10-12")?.skipTop).toContain("gate-llm-failed");
+	});
 });
 
 describe("todayUtc", () => {
@@ -178,7 +231,7 @@ describe("createReviewScheduler", () => {
 		const h = host();
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		const dispose = createReviewScheduler(h, { store, llm }, {
-			enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30, minIntervalMs: 60_000,
+			enabled: true, read: () => settings(), minIntervalMs: 60_000,
 		});
 		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1") } as never);
 		await flush();
@@ -194,7 +247,7 @@ describe("createReviewScheduler", () => {
 		const h = host();
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		const dispose = createReviewScheduler(h, { store, llm }, {
-			enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30, minIntervalMs: 0,
+			enabled: true, read: () => settings(), minIntervalMs: 0,
 		});
 		// No route seen yet: drains stay quiet and ledger nothing.
 		h.handlers.get("session/event")?.({ id: "sess-1" } as never, { type: "compaction/start" } as never);
@@ -209,11 +262,37 @@ describe("createReviewScheduler", () => {
 	it("stays inert when disabled", async () => {
 		const h = host();
 		const dispose = createReviewScheduler(h, { store, llm: undefined }, {
-			enabled: false, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30, minIntervalMs: 0,
+			enabled: false, read: () => settings(), minIntervalMs: 0,
 		});
 		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1") } as never);
 		await flush();
 		expect(store.getDaily(todayUtc())).toBeUndefined();
+		dispose();
+	});
+
+	it("re-reads settings on every drain so a live edit takes effect", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "1. build the thing now" }],
+		);
+		const h = host();
+		const llm = fakeLlm({
+			gate: `{"worthReview": true, "reason": "值得看"}`,
+			evolve: `{"verdict": "rewrite", "reason": "补", "body": "1. build the thing fast"}`,
+		});
+		let live = settings({ dailyBudget: 0 });
+		const dispose = createReviewScheduler(h, { store, llm }, {
+			enabled: true, read: () => live, minIntervalMs: 0,
+		});
+		// Budget 0 for today: the drain stops before reviewing, item stays new.
+		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1", WS) } as never);
+		await flush();
+		expect(store.list(WS)[0]?.body).toBe("1. build the thing now");
+		// The next drain sees the edit: trial off, so the rewrite lands.
+		live = settings({ dailyBudget: 100, dryRun: false });
+		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1", WS) } as never);
+		await flush();
+		expect(store.list(WS)[0]?.body).toBe("1. build the thing fast");
 		dispose();
 	});
 
@@ -225,7 +304,7 @@ describe("createReviewScheduler", () => {
 		const h = host();
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		const dispose = createReviewScheduler(h, { store, llm }, {
-			enabled: true, dryRun: false, dailyBudget: 100, batchSize: 10, staleDays: 30, minIntervalMs: 0,
+			enabled: true, read: () => settings({ dryRun: false }), minIntervalMs: 0,
 		});
 		// Two boundaries in the same tick: the second lands while the first
 		// still runs and re-arms instead of overlapping.
@@ -240,7 +319,7 @@ describe("createReviewScheduler", () => {
 		const h = host();
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		const dispose = createReviewScheduler(h, { store, llm }, {
-			enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30, minIntervalMs: 0,
+			enabled: true, read: () => settings(), minIntervalMs: 0,
 		});
 		h.handlers.get("agent/turn-stopping")?.({} as never);
 		h.handlers.get("agent/turn-stopping")?.({ agent: {} } as never);
@@ -260,7 +339,7 @@ describe("createReviewScheduler", () => {
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		expect(store.consumeReviewBudget(todayUtc(), 1)).toBe(0);
 		const dispose = createReviewScheduler(h, { store, llm }, {
-			enabled: true, dryRun: true, dailyBudget: 1, batchSize: 10, staleDays: 30, minIntervalMs: 0,
+			enabled: true, read: () => settings({ dailyBudget: 1 }), minIntervalMs: 0,
 		});
 		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1", WS) } as never);
 		await flush();
@@ -270,7 +349,7 @@ describe("createReviewScheduler", () => {
 		const broken = { ...store, listWorkspaces: (): never => { throw new Error("disk gone"); } };
 		const h2 = host();
 		const dispose2 = createReviewScheduler(h2, { store: broken as MemoryStore, llm }, {
-			enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30, minIntervalMs: 0,
+			enabled: true, read: () => settings(), minIntervalMs: 0,
 		});
 		h2.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-2", WS) } as never);
 		await flush();
