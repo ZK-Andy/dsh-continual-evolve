@@ -1,9 +1,10 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { collectCandidates, runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
+import { collectCandidates } from "../src/review-candidates.js";
+import { runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
 import { failureHead, rewriteMagnitude } from "../src/review-ring.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
@@ -453,6 +454,49 @@ describe("runReviewBatch", () => {
 		} finally {
 			db.close();
 		}
+	});
+
+	it("requeues stale skills and treats an unreadable timestamp as ancient", () => {
+		const { outcomes } = store.applySkillProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", scope: "project", id: "deploy", title: "部署", description: "步骤", body: "1. build" }],
+		);
+		expect(outcomes[0]?.ok).toBe(true);
+		store.logReview({ workspaceId: WS, itemKind: "skill", itemId: "deploy", verdict: "keep", reason: "ok" });
+		expect(collectCandidates(store, { limit: 10 }).map((c) => c.id)).not.toContain("deploy");
+		const stale = collectCandidates(store, { limit: 10, now: Date.now() + 31 * 24 * 60 * 60 * 1000 });
+		expect(stale.find((c) => c.id === "deploy")?.priority).toBe(2);
+
+		// A row whose timestamp cannot be parsed counts as ancient, never as fresh.
+		const id = createMemory("坏时间戳");
+		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: id, verdict: "keep", reason: "ok" });
+		const db = new DatabaseSync(dbPath);
+		try {
+			db.prepare("UPDATE memories SET updated_at = 'not-a-date' WHERE workspace_id = ? AND id = ?").run(WS, id);
+			db.prepare("UPDATE skills SET updated_at = 'not-a-date' WHERE workspace_id = ? AND id = ?").run(WS, "deploy");
+		} finally {
+			db.close();
+		}
+		const found = collectCandidates(store, { limit: 10 });
+		expect(found.find((c) => c.id === id)?.priority).toBe(2);
+		expect(found.find((c) => c.id === "deploy")?.priority).toBe(2);
+	});
+
+	it("hides a global skill while any active project row carries the same id", () => {
+		const other = "/tmp/work/review-run-tests-2";
+		mkdirSync(other, { recursive: true });
+		const create = (workspaceId: string, sessionId: string) => store.applySkillProposals(
+			{ workspaceId, trigger: "explicit", sessionId },
+			[{ action: "create", scope: "project", id: "shared", title: "共享", description: "步骤", body: "1. x" }],
+		);
+		// This workspace keeps its project row active...
+		expect(create(WS, "s1").outcomes[0]?.ok).toBe(true);
+		// ...while another workspace moves its same-id row to the global partition.
+		expect(create(other, "s2").outcomes[0]?.ok).toBe(true);
+		const moved = store.applySkillProposals({ workspaceId: other, trigger: "explicit", sessionId: "s2" }, [{ action: "move-to-global", id: "shared" }]);
+		expect(moved.outcomes[0]?.ok).toBe(true);
+		const found = collectCandidates(store, { limit: 10 }).filter((c) => c.id === "shared");
+		expect(found.map((c) => c.workspaceId)).toEqual([WS]);
 	});
 
 	it("hard cap drops the tail and counts backlog", async () => {

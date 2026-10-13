@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-393%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-395%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -99,6 +99,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 │   ├── subagent.ts         # 所有 LLM 调用经过的装载器（装配 → 调用 → 解析 → 记账）
 │   ├── subagent-defs.ts    # 子代理定义表：提示词、预算兜底、应答解析器，一处声明
 │   ├── chain.ts            # 责任链：一环节一步，顺序由环境类组装
+│   ├── review-candidates.ts # 评审队列：什么该审（新写 > 被纠正牵连 > 陈旧）
 │   ├── review.ts           # 内容质量自进化：批量、预算、日 rollup、调度
 │   ├── review-ring.ts      # 它的链：便宜门 → 贵改写 → 落盘
 │   ├── review-prompt.ts    # 评审提示词 + verdict 解析（门 + 记忆/技能 rubric）
