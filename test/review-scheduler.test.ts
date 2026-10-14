@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectCandidates } from "../src/review-candidates.js";
 import {
@@ -408,5 +409,55 @@ describe("createReviewScheduler", () => {
 		expect(h2.warns.some((w) => w.includes("review drain failed"))).toBe(true);
 		dispose();
 		dispose2();
+	});
+
+	it("records a failed drain in the day's rollup, not only in the logger", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const h = host();
+		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const broken = { ...store, listWorkspaces: (): never => { throw new Error("disk gone"); } };
+		const dispose = createReviewScheduler(h, { store: broken as MemoryStore, llm }, {
+			enabled: true, read: () => settings(), minIntervalMs: 0,
+		});
+		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-9", WS) } as never);
+		await flush();
+
+		expect(h.warns.some((w) => w.includes("review drain failed"))).toBe(true);
+		expect(store.getDaily(todayUtc())?.skipTop ?? "").toContain("drain-failed");
+		dispose();
+	});
+
+	it("ledgers a failing item with its error text and merges the whole day's account", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const candidates = collectCandidates(store);
+		expect(candidates).toHaveLength(1);
+		// A fault inside the chain, where a store or wiring bug lands: the evolve
+		// pass's evolve-count read blows up after the gate approved the item.
+		const broken = { ...store, reviewStateOf: (): never => { throw new Error("索引炸了"); } };
+		const llm = fakeLlm({ gate: `{"worthReview": true, "reason": "值得"}`, evolve: `{"verdict": "quarantine", "reason": "该隔离"}` });
+		const summary = await runReviewBatch({ store: broken as MemoryStore, llm }, candidates, {
+			day: todayUtc(), budget: 100, dryRun: true, provider: "p", model: "m",
+		});
+
+		expect(summary.reviewed).toBe(1);
+		const db = new DatabaseSync(dbPath, { readOnly: true });
+		const row = db.prepare("SELECT verdict, reason FROM review_log ORDER BY rowid DESC LIMIT 1").get() as {
+			verdict: string; reason: string;
+		};
+		db.close();
+		expect(row.verdict).toBe("skip");
+		expect(row.reason).toBe("review-failed: 索引炸了");
+		const daily = store.getDaily(todayUtc());
+		expect(daily?.reviewed).toBe(1);
+		// The account is whole: a bare `reviewed` with every other counter at zero
+		// is exactly the shape that hid the 2026-10-14 fault.
+		expect(daily?.newItems).toBe(1);
+		expect(daily?.skipTop ?? "").toContain("review-failed");
 	});
 });

@@ -21,7 +21,7 @@ import { runChain, type ChainLink } from "./chain.js";
 import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 import { cwdOf } from "./memory-section.js";
 import { collectCandidates } from "./review-candidates.js";
-import { reviewChain, type ReviewItem } from "./review-ring.js";
+import { failureHead, reviewChain, type ReviewItem } from "./review-ring.js";
 import { subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import type { MemoryStore } from "./store.js";
 import { zeroUsage } from "./token-usage.js";
@@ -110,50 +110,77 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	// order the ring declares. Without a route there is no ring to walk.
 	const ring = route === undefined || llm === undefined ? undefined : assembleRing({ llm, route, sessionId: opts.sessionId });
 	let position = 0;
-	for (const candidate of batch) {
-		const remaining = deps.store.consumeReviewBudget(opts.day, opts.budget);
-		if (remaining < 0) {
-			// Hard cap hit: this item and everything after it drops (low
-			// priority never rolls over — it simply waits for a future run).
-			summary.dropped += batch.length - position;
-			for (const item of batch.slice(position)) {
+	// The run's account is written whatever happens to the loop: a fault that
+	// escapes one item (or the loop itself) is rethrown *after* the rollup is
+	// merged, so a dead run can never leave `reviewed` incremented with every
+	// other counter at zero and nothing saying why (2026-10-14 incident).
+	let escaped: unknown;
+	let failed = false;
+	try {
+		for (const candidate of batch) {
+			try {
+				const remaining = deps.store.consumeReviewBudget(opts.day, opts.budget);
+				if (remaining < 0) {
+					// Hard cap hit: this item and everything after it drops (low
+					// priority never rolls over — it simply waits for a future run).
+					summary.dropped += batch.length - position;
+					for (const item of batch.slice(position)) {
+						deps.store.logReview({
+							runId, workspaceId: item.workspaceId, itemKind: item.kind, itemId: item.id,
+							verdict: "skip", reason: "budget-exhausted", applied: 0,
+						});
+					}
+					skipReasons.push("budget-exhausted");
+					break;
+				}
+				summary.reviewed += 1;
+				if (candidate.priority === 0) {
+					newItems += 1;
+				} else {
+					requeued += 1;
+				}
+				if (route === undefined || ring === undefined) {
+					deps.store.logReview({
+						runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
+						verdict: "skip", reason: "no-route", applied: 0,
+					});
+					skipReasons.push("no-route");
+					position += 1;
+					continue;
+				}
+				const item: ReviewItem = {
+					deps, loader: ring.loader, route, runId, candidate, opts, summary, skipReasons,
+					gate: { usage: zeroUsage(), raw: undefined },
+				};
+				await runChain(ring.links, item);
+			} catch (error) {
+				// A fault escaping the chain (a store write, a wiring bug) gets its
+				// own row carrying the error text and costs the batch only this
+				// item — the model-facing failures already degrade inside the ring.
 				deps.store.logReview({
-					runId, workspaceId: item.workspaceId, itemKind: item.kind, itemId: item.id,
-					verdict: "skip", reason: "budget-exhausted", applied: 0,
+					runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
+					verdict: "skip", reason: `review-failed: ${failureHead(error)}`,
+					model: route?.model, applied: 0,
 				});
+				skipReasons.push("review-failed");
 			}
-			skipReasons.push("budget-exhausted");
-			break;
-		}
-		summary.reviewed += 1;
-		if (candidate.priority === 0) {
-			newItems += 1;
-		} else {
-			requeued += 1;
-		}
-		if (route === undefined || ring === undefined) {
-			deps.store.logReview({
-				runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
-				verdict: "skip", reason: "no-route", applied: 0,
-			});
-			skipReasons.push("no-route");
 			position += 1;
-			continue;
 		}
-		const item: ReviewItem = {
-			deps, loader: ring.loader, route, runId, candidate, opts, summary, skipReasons,
-			gate: { usage: zeroUsage(), raw: undefined },
-		};
-		await runChain(ring.links, item);
-		position += 1;
+	} catch (error) {
+		failed = true;
+		escaped = error;
+	} finally {
+		summary.backlog = Math.max(0, candidates.length - summary.reviewed - summary.dropped);
+		deps.store.mergeDaily(opts.day, opts.budget, {
+			newItems, requeued, approved: summary.approved, applied: summary.applied,
+			cheapToken: summary.cheapToken, evolveToken: summary.evolveToken,
+			backlog: summary.backlog, dropped: summary.dropped,
+			skipReasons: skipReasons.length > 0 ? skipReasons : undefined,
+		});
 	}
-	summary.backlog = Math.max(0, candidates.length - summary.reviewed - summary.dropped);
-	deps.store.mergeDaily(opts.day, opts.budget, {
-		newItems, requeued, approved: summary.approved, applied: summary.applied,
-		cheapToken: summary.cheapToken, evolveToken: summary.evolveToken,
-		backlog: summary.backlog, dropped: summary.dropped,
-		skipReasons: skipReasons.length > 0 ? skipReasons : undefined,
-	});
+	if (failed) {
+		throw escaped;
+	}
 	return summary;
 }
 
@@ -238,27 +265,43 @@ export function createReviewScheduler(
 		const workspace = triggerWorkspace ?? pendingWorkspace;
 		pendingWorkspace = undefined;
 		void (async () => {
+			const settings = config.read();
+			const day = todayUtc();
 			try {
-				const settings = config.read();
-				const day = todayUtc();
 				const daily = deps.store.getDaily(day);
 				const remaining = settings.dailyBudget - (daily?.reviewed ?? 0);
 				if (remaining <= 0) {
+					host.logger("continual-evolve").info(
+						`review drain skipped: daily budget spent (${daily?.reviewed ?? 0}/${settings.dailyBudget})`,
+					);
 					return;
 				}
 				const candidates = collectCandidates(deps.store, { staleDays: settings.staleDays, limit: settings.batchSize * 2 });
 				const ordered = workspace === undefined
 					? candidates
 					: [...candidates.filter((c) => c.workspaceId === workspace), ...candidates.filter((c) => c.workspaceId !== workspace)];
-				await runReviewBatch(deps, ordered.slice(0, settings.batchSize), {
+				const summary = await runReviewBatch(deps, ordered.slice(0, settings.batchSize), {
 					day, budget: settings.dailyBudget, dryRun: settings.dryRun,
 					batchSize: settings.batchSize, staleDays: settings.staleDays,
 					provider: lastRoute?.provider, model: lastRoute?.model, sessionId: lastRoute?.sessionId,
 				});
-			} catch (error) {
-				host.logger("continual-evolve").warn(
-					`review drain failed: ${error instanceof Error ? error.message : String(error)}`,
+				host.logger("continual-evolve").info(
+					`review drain: reviewed ${summary.reviewed}, approved ${summary.approved}, ` +
+						`applied ${summary.applied}, dropped ${summary.dropped}, backlog ${summary.backlog}`,
 				);
+			} catch (error) {
+				const head = failureHead(error);
+				host.logger("continual-evolve").warn(`review drain failed: ${head}`);
+				// Two records on purpose: the logger is the live channel, the day's
+				// rollup is the durable one every later reading sees. A drain that
+				// died must leave a trace in the ledger, not only in a log file.
+				try {
+					deps.store.mergeDaily(day, settings.dailyBudget, { skipReasons: [`drain-failed: ${head}`] });
+				} catch (recordError) {
+					host.logger("continual-evolve").warn(
+						`review drain failure not ledgered: ${failureHead(recordError)}`,
+					);
+				}
 			} finally {
 				running = false;
 			}
