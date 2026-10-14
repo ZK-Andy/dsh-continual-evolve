@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { openMemoryStore, type MemoryStore } from "../src/store.js";
+import { openMemoryStore, PLUGIN_LOG_MESSAGE_MAX, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";
 let store: MemoryStore;
@@ -269,7 +269,7 @@ describe("mostRecentlyActiveWorkspace", () => {
 			{ action: "create", type: "user", title: "t", description: "d", body: "b" },
 		]);
 		expect(store.mostRecentlyActiveWorkspace()).toBe("/tmp/other");
-		// The ledger is the one prunable table; the memories are the durable
+		// The ledgers are the prunable tables; the memories are the durable
 		// record and must carry the answer on their own.
 		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBe(2);
 		expect(store.mostRecentlyActiveWorkspace()).toBe("/tmp/other");
@@ -300,6 +300,30 @@ describe("ledger maintenance", () => {
 		store.logSkipped({ trigger: "compaction", skipReason: "x" });
 		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBe(1);
 		expect(store.pruneLedger(new Date().toISOString())).toBe(0);
+	});
+
+	it("logPlugin appends a durable line and caps the message", () => {
+		store.logPlugin({ level: "warn", event: "drain-failed", message: "disk gone", workspaceId: WS, sessionId: "s" });
+		store.logPlugin({ level: "error", event: "too-long", message: "x".repeat(PLUGIN_LOG_MESSAGE_MAX + 50) });
+		const raw = rawDb();
+		const rows = raw.prepare("SELECT level, event, message, workspace_id, session_id FROM plugin_log ORDER BY rowid").all() as {
+			level: string;
+			event: string;
+			message: string;
+			workspace_id: string | null;
+			session_id: string | null;
+		}[];
+		raw.close();
+		expect(rows[0]).toMatchObject({
+			level: "warn", event: "drain-failed", message: "disk gone", workspace_id: WS, session_id: "s",
+		});
+		// A runaway error string must not become a table row.
+		expect(rows[1]?.message).toHaveLength(PLUGIN_LOG_MESSAGE_MAX);
+	});
+
+	it("prunes the plugin log with the rest of the ledgers", () => {
+		store.logPlugin({ level: "info", event: "armed", message: "scheduler armed" });
+		expect(store.pruneLedger(new Date(Date.now() + 60_000).toISOString())).toBe(1);
 	});
 
 	it("coalesces consecutive quiet-turn skips into one counted row", () => {

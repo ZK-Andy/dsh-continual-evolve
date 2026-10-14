@@ -13,6 +13,7 @@ import { observedUsageOf, type ModelSelection } from "./llm-call.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
 import { CHEAP_INCREMENT_MAX, cheapPrompt, extractionPrompt, manifestLineOf, type ParsedAnswer } from "./extraction-prompt.js";
 import { todayUtc } from "./prompt-date.js";
+import { pruneIfDue } from "./retention.js";
 import { extractionGate, extractionMain } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentAnswer, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
@@ -307,6 +308,10 @@ function proposeLink(): ChainLink<ExtractionItem> {
 			// leakage quarantined — never a separate scheduler.
 			const patrol = store.patrol();
 			void patrol;
+			// Retention rides the same run: the ledgers only grow, and an
+			// applied extraction is what writes most of their rows. Day-throttled
+			// inside, so this is one state read on all but the day's first run.
+			pruneIfDue(store);
 			item.result = { status: "applied", applied: outcomes.filter((outcome) => outcome.ok).length, cursor: item.boundarySeq };
 			return "handled";
 		},

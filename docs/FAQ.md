@@ -67,6 +67,8 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
           default: 3
 ```
 
+**插件不靠这条通道留痕**：自己的诊断走 `src/plugin-log.ts`——先写库表 `plugin_log`、再镜像到宿主 logger，所以"没装 exporter 就查不到"不再成立；要实时看的时候上面这条 exporter 仍然管用（ADR `2026-10-14-plugin-log-ledger`）。
+
 输出到 stdout（终端或重定向文件，`tail -f`/`grep` 可查）；浏览器版 exporter 输出到 F12 devtools console。**级别语义（cordis 源码实证）：级别数字 error=0 / info=1 / warn=2 / debug=3，exporter 导出"消息级别 ≤ 配置值"的前缀集**——`default: 3` = 全开，`default: 2` = error+info+warn（只挡 debug），`default: 1` = error+info，`default: 0` = 只 error。"warn 及以上但不含 info"的中间集**无法表达**（info 卡在中间，线性前缀集）；想安静就 `default: 0`。
 
 ## 5. 加系统提示词 section 时踩到的上游事实（顺序槽位 / 重名 / 并列）

@@ -20,9 +20,11 @@
 ├── memory_usage                 # 记忆存在心跳：同技能纪律（按 id 取回正文 +1）
 ├── review_log                   # 内容评审 verdict 明细：每条一 verdict（keep/rewrite/quarantine/skip）+ 跑在哪个模型 + 便宜/贵用量 + 落盘标志 + 未落盘时的拟改稿，随账本轮转
 ├── review_daily                 # 日 rollup（一行一天）：预算 vs 实审 vs 积压 vs 丢弃 + token 按便宜/贵分账
-└── state                        # 提取游标（seq:<n>，按工作区+会话分隔）与巡检状态
+├── plugin_log                   # 插件自有日志：level + 稳定事件名 + 原文 + 归属（宿主 logger 无承接方，运维事实落这里，业务事实仍归上面各领域账本）
+└── state                        # 提取游标（seq:<n>，按工作区+会话分隔）、巡检状态与裁剪水位（prune:last）
 ```
 
+- **账本分工与裁剪**：业务事实住各自的领域账本（`extraction_log` / `review_log` / `skill_log`，互不复制）；没有领域行可挂的运维事实（卡片路由未挂载、section 注入失败、配置关停、调度器意外异常）走 `src/plugin-log.ts` 的 `createPluginLog` —— 先写 `plugin_log`、再镜像 `event: message` 到宿主 logger（宿主那面默认无 exporter，见 FAQ #4），库写失败绝不抛。四张账本统一 30 天窗口裁剪（`src/retention.ts` 的 `pruneIfDue`，按 UTC 日节流、幂等），触发点是 store 就绪、写日志、提取应用后的巡检——不需要额外调度器。
 - **开局注入**（`src/memory-section.ts`）：`evolve:memory-index` section（order 400）注入本工作区的记忆索引——查库结果而非文件，只含钩子（id/标题/描述/类型），feedback > user > reference 排序；超预算按整行截断并提示 `memory_read` 检索。会话内逐字节冻结守 prompt cache；空 store 零 token。
 - **唯一写门**（`src/store-apply.ts` + `src/memory-rules.ts`）：两条写路径共用同一入口 `applyProposals`——全量校验（type 枚举、尺寸上限、id 规范含 CJK hash 兜底、feedback 的 Why/How 契约、v1 移植的 secret 正则筛查）→ 事务内原子应用 → 账本行（before/after 全文）。任何一条提案被拒，整批回滚且不推游标。
 - **写路径 A：`memory_write`**（`src/memory-tools.ts`）：主会话显式"记住/忘掉"走工具；`memory_read` 按 id 取正文、按关键词检索（空格分隔的关键词取 AND：全部 ≥3 字符走 trigram，任一短词或 FTS 未命中则回退字面子串匹配；注入索引只有钩子）。宿主工具定义手写为裸注册形状（标准 JSON Schema、根级 required，FAQ #2），零运行时 DSH import。

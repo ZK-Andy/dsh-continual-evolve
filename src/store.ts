@@ -181,6 +181,19 @@ CREATE TABLE IF NOT EXISTS review_daily (
   skip_top TEXT,
   skip_counts TEXT
 ) STRICT;
+-- The plugin's own log. A stock host attaches no exporter to its logger, so a
+-- ctx.logger call leaves no trace anywhere (docs/FAQ.md #4) — diagnostics that
+-- have no domain ledger row of their own land here instead. Pruned with the
+-- ledgers; the event column is a stable slug, so runs can be counted and grepped.
+CREATE TABLE IF NOT EXISTS plugin_log (
+  ts TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('info','warn','error')),
+  event TEXT NOT NULL,
+  message TEXT NOT NULL,
+  workspace_id TEXT,
+  session_id TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_plugin_log_ts ON plugin_log(ts);
 `;
 
 /** One stored skill record (snake_case columns camelCased). Skills carry no type. */
@@ -332,6 +345,23 @@ export interface LedgerEntry {
 	files?: unknown;
 }
 
+/** One plugin-log line: the level, a stable event slug, and the message. */
+export interface PluginLogEntry {
+	level: "info" | "warn" | "error";
+	/**
+	 * The event's stable name (`drain-failed`, `card-no-webserver` …), so the
+	 * table can be counted and grepped instead of read line by line.
+	 */
+	event: string;
+	message: string;
+	/** The partition the line belongs to, when the call site knows one. */
+	workspaceId?: string | undefined;
+	sessionId?: string | undefined;
+}
+
+/** Longest message kept; a runaway error string must not become a table row. */
+export const PLUGIN_LOG_MESSAGE_MAX = 2000;
+
 /** Workspace rows the card's selector lists. */
 export interface WorkspaceSummary {
 	workspaceId: string;
@@ -392,7 +422,12 @@ export interface MemoryStore {
 	mostRecentlyActiveWorkspace(): string | undefined;
 	/** Hygiene pass: orphan FTS cleanup + secret quarantine. */
 	patrol(): PatrolResult;
-	/** Ledger rows older than the cutoff, removed (the one unbounded table). */
+	/**
+	 * Append one plugin-log line — the durable home for plugin diagnostics,
+	 * because the host's logger has no exporter on a stock install.
+	 */
+	logPlugin(entry: PluginLogEntry): void;
+	/** Ledger and log rows older than the cutoff, removed (the unbounded tables). */
 	pruneLedger(beforeIso: string): number;
 	close(): void;
 	/** One active skill row from a partition, undefined when absent. */
@@ -754,6 +789,10 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND applied = 1",
 		),
 		reviewPrune: database.prepare("DELETE FROM review_log WHERE ts < ?"),
+		pluginLog: database.prepare(
+			"INSERT INTO plugin_log (ts, level, event, message, workspace_id, session_id) VALUES (?, ?, ?, ?, ?, ?)",
+		),
+		pluginLogPrune: database.prepare("DELETE FROM plugin_log WHERE ts < ?"),
 		dailyGet: database.prepare("SELECT * FROM review_daily WHERE day = ?"),
 		dailyUpsert: database.prepare(
 			"INSERT INTO review_daily (day, budget, reviewed, new_items, requeued, approved, applied, cheap_token, evolve_token, backlog, dropped, skip_top, skip_counts) " +
@@ -1248,11 +1287,22 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			stmts.stateSet.run(GLOBAL_WORKSPACE, PATROL_STATE_KEY, JSON.stringify(result));
 			return result;
 		},
+		logPlugin(entry) {
+			stmts.pluginLog.run(
+				new Date().toISOString(),
+				entry.level,
+				entry.event,
+				entry.message.slice(0, PLUGIN_LOG_MESSAGE_MAX),
+				entry.workspaceId ?? null,
+				entry.sessionId ?? null,
+			);
+		},
 		pruneLedger(beforeIso) {
 			const memory = Number(stmts.prune.run(beforeIso).changes);
 			const skills = Number(stmts.skillPrune.run(beforeIso).changes);
 			const reviews = Number(stmts.reviewPrune.run(beforeIso).changes);
-			return memory + skills + reviews;
+			const logs = Number(stmts.pluginLogPrune.run(beforeIso).changes);
+			return memory + skills + reviews + logs;
 		},
 		close() {
 			database.close();

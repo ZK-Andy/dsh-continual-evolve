@@ -216,7 +216,11 @@ describe("createReviewScheduler", () => {
 					handlers.delete(event);
 				};
 			}),
-			logger: () => ({ info: (): void => {}, warn: (message: string): void => { warns.push(message); } }),
+			log: {
+				info: (): void => {},
+				warn: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
+				error: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
+			},
 		};
 	}
 
@@ -406,12 +410,12 @@ describe("createReviewScheduler", () => {
 		});
 		h2.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-2", WS) } as never);
 		await flush();
-		expect(h2.warns.some((w) => w.includes("review drain failed"))).toBe(true);
+		expect(h2.warns.some((w) => w.includes("review-drain-failed"))).toBe(true);
 		dispose();
 		dispose2();
 	});
 
-	it("records a failed drain in the day's rollup, not only in the logger", async () => {
+	it("records a failed drain in the day's rollup, not only in the log", async () => {
 		store.applyProposals(
 			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
 			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
@@ -425,7 +429,7 @@ describe("createReviewScheduler", () => {
 		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-9", WS) } as never);
 		await flush();
 
-		expect(h.warns.some((w) => w.includes("review drain failed"))).toBe(true);
+		expect(h.warns.some((w) => w.includes("review-drain-failed"))).toBe(true);
 		expect(store.getDaily(todayUtc())?.skipTop ?? "").toContain("drain-failed");
 		dispose();
 	});

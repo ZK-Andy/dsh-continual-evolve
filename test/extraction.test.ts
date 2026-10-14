@@ -714,7 +714,11 @@ describe("runExtraction — unexpected failures leave a ledger row, never throw"
 				listeners.set(event, list);
 				return () => undefined;
 			},
-			logger: () => ({ info: () => undefined, warn: (message: string) => warns.push(message) }),
+			log: {
+				info: (): void => undefined,
+				warn: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
+				error: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
+			},
 		};
 		const throwingSurface = {
 			async readSurface(): Promise<{ events: unknown[] }> {
@@ -757,7 +761,11 @@ describe("createExtractionScheduler", () => {
 				listeners.set(event, list);
 				return () => listeners.set(event, list.filter((h) => h !== handler));
 			},
-			logger: () => ({ info: () => undefined, warn: (m: string) => warns.push(m) }),
+			log: {
+				info: (): void => undefined,
+				warn: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
+				error: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
+			},
 		};
 		return { listeners, warns, d, host };
 	}

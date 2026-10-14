@@ -21,6 +21,7 @@ import { runChain, type ChainLink } from "./chain.js";
 import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 import { cwdOf } from "./memory-section.js";
 import { todayUtc } from "./prompt-date.js";
+import type { PluginLog } from "./plugin-log.js";
 import { collectCandidates } from "./review-candidates.js";
 import { failureHead, reviewChain, type ReviewItem } from "./review-ring.js";
 import { subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
@@ -200,7 +201,8 @@ function assembleRing(call: SubagentCall): ReviewRing {
 /** The event wiring surface (duck-typed cordis context, mirrors extraction). */
 export interface ReviewSchedulerHost {
 	on(event: string, handler: (...args: never[]) => void): unknown;
-	logger(name: string): { info(message: string): void; warn(message: string): void };
+	/** The plugin's own log face: durable in the store, mirrored live. */
+	log: PluginLog;
 }
 
 /** The editable review settings, re-read on every drain. */
@@ -267,8 +269,10 @@ export function createReviewScheduler(
 				const daily = deps.store.getDaily(day);
 				const remaining = settings.dailyBudget - (daily?.reviewed ?? 0);
 				if (remaining <= 0) {
-					host.logger("continual-evolve").info(
-						`review drain skipped: daily budget spent (${daily?.reviewed ?? 0}/${settings.dailyBudget})`,
+					host.log.info(
+						"review-budget-spent",
+						`drain skipped: daily budget spent (${daily?.reviewed ?? 0}/${settings.dailyBudget})`,
+						{ workspaceId: workspace },
 					);
 					return;
 				}
@@ -281,22 +285,22 @@ export function createReviewScheduler(
 					batchSize: settings.batchSize, staleDays: settings.staleDays,
 					provider: lastRoute?.provider, model: lastRoute?.model, sessionId: lastRoute?.sessionId,
 				});
-				host.logger("continual-evolve").info(
-					`review drain: reviewed ${summary.reviewed}, approved ${summary.approved}, ` +
+				host.log.info(
+					"review-drain",
+					`reviewed ${summary.reviewed}, approved ${summary.approved}, ` +
 						`applied ${summary.applied}, dropped ${summary.dropped}, backlog ${summary.backlog}`,
+					{ workspaceId: workspace, sessionId: lastRoute?.sessionId },
 				);
 			} catch (error) {
 				const head = failureHead(error);
-				host.logger("continual-evolve").warn(`review drain failed: ${head}`);
-				// Two records on purpose: the logger is the live channel, the day's
+				host.log.warn("review-drain-failed", head, { workspaceId: workspace, sessionId: lastRoute?.sessionId });
+				// Two records on purpose: the log is the live channel, the day's
 				// rollup is the durable one every later reading sees. A drain that
-				// died must leave a trace in the ledger, not only in a log file.
+				// died must leave a trace in the ledger, not only in a log row.
 				try {
 					deps.store.mergeDaily(day, settings.dailyBudget, { skipReasons: [`drain-failed: ${head}`] });
 				} catch (recordError) {
-					host.logger("continual-evolve").warn(
-						`review drain failure not ledgered: ${failureHead(recordError)}`,
-					);
+					host.log.warn("review-drain-unledgered", failureHead(recordError), { workspaceId: workspace });
 				}
 			} finally {
 				running = false;
@@ -329,8 +333,9 @@ export function createReviewScheduler(
 		}),
 	);
 	const armed = config.read();
-	host.logger("continual-evolve").info(
-		`review scheduler armed (daily cap ${armed.dailyBudget}, dry-run ${armed.dryRun ? "on" : "off"})`,
+	host.log.info(
+		"review-armed",
+		`scheduler armed (daily cap ${armed.dailyBudget}, dry-run ${armed.dryRun ? "on" : "off"})`,
 	);
 	return () => {
 		pendingWorkspace = undefined;

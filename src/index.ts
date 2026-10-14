@@ -38,6 +38,7 @@ import {
 	REVIEW_DEFAULT_DAILY_BUDGET,
 	REVIEW_DEFAULT_DRY_RUN,
 	REVIEW_DEFAULT_STALE_DAYS,
+	type ReviewSchedulerHost,
 } from "./review.js";
 import type { SurfaceReader } from "./extraction-surface.js";import {
 	createFrozenMemorySection,
@@ -51,6 +52,8 @@ import { registerMemoryTools } from "./memory-tools.js";
 import { registerSkillTools } from "./skill-tools.js";
 import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
+import { createPluginLog, type PluginLog } from "./plugin-log.js";
+import { pruneIfDue } from "./retention.js";
 import { newestRegistryPath } from "./workspace-hint.js";
 
 export const name = "continual-evolve";
@@ -174,10 +177,11 @@ function registerSchedulerDisposer(scoped: unknown, dispose: () => void): void {
 }
 
 /** Register the memory tools through a nested inject (see memory-tools.ts). */
-function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: StoreState): void {
+function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: StoreState, log: PluginLog): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
-		host.logger("continual-evolve").warn(
+		log.warn(
+			"tools-not-mounted",
 			"host context exposes no inject — memory tools not registered (injection unaffected; explicit memory management falls back to telling the user)",
 		);
 		return;
@@ -185,7 +189,8 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
 	nested.inject(["tools"], (scoped: unknown) => {
 		const tools = (scoped as { tools?: unknown }).tools;
 		if (tools === undefined || typeof (tools as { register?: unknown }).register !== "function") {
-			host.logger("continual-evolve").warn(
+			log.warn(
+				"tools-empty",
 				"tools service present but empty — memory tools not registered (injection unaffected)",
 			);
 			return;
@@ -193,8 +198,8 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
 		registerMemoryTools(tools as Parameters<typeof registerMemoryTools>[0], store);
 		registerSkillTools(tools as Parameters<typeof registerSkillTools>[0], store);
 		state.toolsAvailable = true;
-		host.logger("continual-evolve").info("memory_write and memory_read registered");
-		host.logger("continual-evolve").info("skill_write and skill_read registered");
+		log.info("memory-tools-registered", "memory_write and memory_read registered");
+		log.info("skill-tools-registered", "skill_write and skill_read registered");
 	});
 }
 
@@ -205,18 +210,19 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
  * without either service (or without `.on`) simply never arms — injection
  * and the explicit tools remain functional.
  */
-function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig): void {
-	const log = host.logger("continual-evolve");
+function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig, log: PluginLog): void {
 	if (config.memoryIndex?.extraction === false) {
-		log.info("extraction disabled by config — injection and memory_write remain active");
+		log.info("extraction-disabled", "extraction disabled by config — injection and memory_write remain active");
 		return;
 	}
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	const events = host as HostContext & Partial<SchedulerHost>;
-	if (typeof nested.inject !== "function" || typeof events.on !== "function") {
-		log.warn("host context exposes no inject/on — extraction not armed (injection and tools unaffected)");
+	const on = events.on;
+	if (typeof nested.inject !== "function" || typeof on !== "function") {
+		log.warn("extraction-not-armed", "host context exposes no inject/on — extraction not armed (injection and tools unaffected)");
 		return;
 	}
+	const schedulerHost: SchedulerHost = { on: (event, handler) => on.call(events, event, handler), log };
 	nested.inject(["sessionQuery", "llm"], (scoped: unknown) => {
 		const context = scoped as {
 			sessionQuery?: unknown;
@@ -226,11 +232,11 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
 		const surface = context.sessionQuery as SurfaceReader | undefined;
 		const llm = (context.llm ?? context.get?.("llm")) as LlmRuntime | undefined;
 		if (surface === undefined || typeof surface.readSurface !== "function") {
-			log.warn("sessionQuery service present but empty — extraction not armed (injection and tools unaffected)");
+			log.warn("extraction-no-surface", "sessionQuery service present but empty — extraction not armed (injection and tools unaffected)");
 			return;
 		}
 		const resolveRoute = routeResolverOf(scoped, context.get);
-		registerSchedulerDisposer(scoped, createExtractionScheduler(events as SchedulerHost, {
+		registerSchedulerDisposer(scoped, createExtractionScheduler(schedulerHost, {
 			store, surface, llm,
 			...(resolveRoute === undefined ? {} : { resolveRoute }),
 		}));
@@ -243,23 +249,24 @@ function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, con
  * increments), so it mounts independently from extraction. Own prompts, own
  * budget, own ledger; the store's write gates are the only shared surface.
  */
-function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig): void {
-	const log = host.logger("continual-evolve");
+function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig, log: PluginLog): void {
 	if (config.review?.enabled?.get() === false) {
-		log.info("review disabled by config — extraction and tools unaffected");
+		log.info("review-disabled", "review disabled by config — extraction and tools unaffected");
 		return;
 	}
 	const nested = host as HostContext & Partial<NestedInjectHost>;
-	const events = host as HostContext & Partial<SchedulerHost>;
-	if (typeof nested.inject !== "function" || typeof events.on !== "function") {
-		log.warn("host context exposes no inject/on — review not armed (injection and tools unaffected)");
+	const events = host as HostContext & Partial<ReviewSchedulerHost>;
+	const on = events.on;
+	if (typeof nested.inject !== "function" || typeof on !== "function") {
+		log.warn("review-not-armed", "host context exposes no inject/on — review not armed (injection and tools unaffected)");
 		return;
 	}
+	const schedulerHost: ReviewSchedulerHost = { on: (event, handler) => on.call(events, event, handler), log };
 	nested.inject(["llm"], (scoped: unknown) => {
 		const context = scoped as { llm?: unknown; get?: (name: string) => unknown };
 		const llm = (context.llm ?? context.get?.("llm")) as LlmRuntime | undefined;
 		const resolveRoute = routeResolverOf(scoped, context.get);
-		registerSchedulerDisposer(scoped, createReviewScheduler(events as SchedulerHost, {
+		registerSchedulerDisposer(scoped, createReviewScheduler(schedulerHost, {
 			store, llm,
 			...(resolveRoute === undefined ? {} : { resolveRoute }),
 		}, {
@@ -284,10 +291,11 @@ function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config:
  * `ctx.get` on every request (the FAQ #2 sibling-service rule — the service is
  * optional, so it must not join the inject list, which would gate the mount).
  */
-function mountCardWhenAvailable(host: HostContext, store: MemoryStore): void {
+function mountCardWhenAvailable(host: HostContext, store: MemoryStore, log: PluginLog): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
-		host.logger("continual-evolve").warn(
+		log.warn(
+			"card-not-mounted",
 			"host context exposes no inject — memory card routes not mounted (memory section unaffected)",
 		);
 		return;
@@ -296,7 +304,8 @@ function mountCardWhenAvailable(host: HostContext, store: MemoryStore): void {
 		const context = scoped as { webServer?: CardWebServer; get?: (name: string) => unknown };
 		const webServer = context.webServer;
 		if (webServer === undefined) {
-			host.logger("continual-evolve").warn(
+			log.warn(
+				"card-empty-server",
 				"webServer service present but empty — memory card routes not mounted (memory section unaffected)",
 			);
 			return;
@@ -311,22 +320,33 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 	if (config.memoryIndex?.enabled === false) {
 		return;
 	}
-	const log = host.logger("continual-evolve");
 	const state: StoreState = { store: undefined, toolsAvailable: false };
+	// One log face for the whole plugin: durable as soon as the store is open,
+	// mirrored to the host's logger either way. Created before the store exists
+	// so the failure path below can report itself.
+	const log = createPluginLog(() => state.store, host.logger("continual-evolve"));
 	void openMemoryStore().then(
 		(store) => {
 			state.store = store;
-			mountToolsWhenAvailable(host, store, state);
-			mountExtractionWhenAvailable(host, store, config);
-			mountReviewWhenAvailable(host, store, config);
+			// Retention has no scheduler: the day-throttled check rides mount and
+			// every log write, so the ledgers stay bounded in a long-lived process.
+			try {
+				pruneIfDue(store);
+			} catch (error) {
+				log.warn("prune-failed", `ledger retention skipped: ${error instanceof Error ? error.message : String(error)}`);
+			}
+			mountToolsWhenAvailable(host, store, state, log);
+			mountExtractionWhenAvailable(host, store, config, log);
+			mountReviewWhenAvailable(host, store, config, log);
 			if (config.memoryCard?.enabled !== false) {
-				mountCardWhenAvailable(host, store);
+				mountCardWhenAvailable(host, store, log);
 			}
 		},
 		(error: unknown) => {
 			// node:sqlite missing (old runtime) or the database unusable:
 			// degrade to a no-op plugin, never take the host down.
 			log.warn(
+				"store-unavailable",
 				`memory store unavailable — injection and tools disabled: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -350,7 +370,9 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 					importWorkspaceMd(store, cwd);
 				} catch (error) {
 					log.warn(
+						"md-import-failed",
 						`legacy memory import failed for ${cwd}: ${error instanceof Error ? error.message : String(error)}`,
+						{ workspaceId: cwd },
 					);
 				}
 			}
@@ -364,5 +386,5 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			);
 		},
 	});
-	log.info("continual-evolve memory section registered (central SQLite store, sole-writer gates)");
+	log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 }

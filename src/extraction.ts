@@ -26,6 +26,7 @@ import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extracti
 import type { LedgerEntry, MemoryStore } from "./store.js";
 import { cwdOf } from "./memory-section.js";
 import { resolveCallRoute, type LlmRuntime, type RouteResolver } from "./llm-call.js";
+import type { PluginLog } from "./plugin-log.js";
 
 export type { LlmStream, LlmRuntime, RouteResolver } from "./llm-call.js";
 
@@ -122,7 +123,8 @@ interface SessionSlot {
 /** The event wiring surface (duck-typed cordis context). */
 export interface SchedulerHost {
 	on(event: string, handler: (...args: never[]) => void): unknown;
-	logger(name: string): { info(message: string): void; warn(message: string): void };
+	/** The plugin's own log face: durable in the store, mirrored live. */
+	log: PluginLog;
 }
 
 /**
@@ -197,7 +199,7 @@ export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionD
 			} catch {
 				// The ledger is down — the warn below is the last resort.
 			}
-			host.logger("continual-evolve").warn(`extraction run failed unexpectedly: ${message}`);
+			host.log.warn("extraction-unexpected", `run failed unexpectedly: ${message}`, { sessionId });
 		}).finally(() => {
 			slot.running = false;
 			if (slot.pending !== null) {
@@ -264,9 +266,7 @@ export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionD
 			slots.delete(id);
 		}),
 	);
-	host.logger("continual-evolve").info(
-		"extraction scheduler armed (per-session slots, turn-level, single-flight per session)",
-	);
+	host.log.info("extraction-armed", "scheduler armed (per-session slots, turn-level, single-flight per session)");
 	return () => {
 		slots.clear();
 		for (const listener of listeners) {
