@@ -83,7 +83,6 @@ interface HostContext {
 			text: string | ((context: SectionContext) => string);
 		}): void;
 	};
-	logger(name: string): { info(message: string): void; warn(message: string): void };
 }
 
 export const Config = z.object({
@@ -321,10 +320,10 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 		return;
 	}
 	const state: StoreState = { store: undefined, toolsAvailable: false };
-	// One log face for the whole plugin: durable as soon as the store is open,
-	// mirrored to the host's logger either way. Created before the store exists
-	// so the failure path below can report itself.
-	const log = createPluginLog(() => state.store, host.logger("continual-evolve"));
+	// One log face for the whole plugin, writing to the store once it is open.
+	// Created before the store exists: the early mounts and the failure path
+	// below call it, and lines written before readiness are dropped.
+	const log = createPluginLog(() => state.store);
 	void openMemoryStore().then(
 		(store) => {
 			state.store = store;
@@ -342,13 +341,11 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 				mountCardWhenAvailable(host, store, log);
 			}
 		},
-		(error: unknown) => {
-			// node:sqlite missing (old runtime) or the database unusable:
-			// degrade to a no-op plugin, never take the host down.
-			log.warn(
-				"store-unavailable",
-				`memory store unavailable — injection and tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-			);
+		(_error: unknown) => {
+			// node:sqlite missing (old runtime) or the database unusable: degrade
+			// to a no-op plugin, never take the host down. Nothing is logged: the
+			// store is this plugin's only log home, and it is the thing that just
+			// failed — the host's logger has no sink to fall back on.
 		},
 	);
 	const frozen = createFrozenMemorySection();

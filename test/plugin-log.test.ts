@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createPluginLog, type LiveLogger } from "../src/plugin-log.js";
+import { createPluginLog } from "../src/plugin-log.js";
 import { LEDGER_RETENTION_DAYS, pruneIfDue } from "../src/retention.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
@@ -17,16 +17,6 @@ beforeEach(async () => {
 afterEach(() => {
 	store.close();
 });
-
-/** The live channel, recorded: the host logger face is two levels of text. */
-function liveRecorder(): LiveLogger & { lines: string[] } {
-	const lines: string[] = [];
-	return {
-		lines,
-		info: (message: string): void => { lines.push(`info:${message}`); },
-		warn: (message: string): void => { lines.push(`warn:${message}`); },
-	};
-}
 
 /** Raw connection: the log's own shape is what the durable claim is about. */
 function rawDb(): DatabaseSync {
@@ -48,39 +38,29 @@ function loggedRows(): { ts: string; level: string; event: string; message: stri
 }
 
 describe("createPluginLog", () => {
-	it("writes the durable row and mirrors the line live", () => {
-		const live = liveRecorder();
-		const log = createPluginLog(() => store, live);
+	it("writes the durable row, partition and all", () => {
+		const log = createPluginLog(() => store);
 		log.warn("drain-failed", "disk gone", { workspaceId: "/tmp/ws", sessionId: "sess-1" });
+		log.info("review-armed", "daily cap 100");
 		expect(loggedRows()).toMatchObject([
 			{ level: "warn", event: "drain-failed", message: "disk gone", workspace_id: "/tmp/ws", session_id: "sess-1" },
+			{ level: "info", event: "review-armed", message: "daily cap 100", workspace_id: null, session_id: null },
 		]);
-		// The live channel has no field for the slug: the mirror folds it in.
-		expect(live.lines).toEqual(["warn:drain-failed: disk gone"]);
 	});
 
-	it("mirrors at warn for error — the host face carries two levels", () => {
-		const live = liveRecorder();
-		createPluginLog(() => store, live).error("store-unavailable", "no sqlite");
-		expect(live.lines).toEqual(["warn:store-unavailable: no sqlite"]);
-		expect(loggedRows()[0]?.level).toBe("error");
-	});
-
-	it("mirrors without a store instead of dropping the line", () => {
-		const live = liveRecorder();
-		createPluginLog(() => undefined, live).info("defaultRoot", "no store yet");
-		expect(live.lines).toEqual(["info:defaultRoot: no store yet"]);
+	it("drops the line when the store never opened — no second channel exists", () => {
+		const log = createPluginLog(() => undefined);
+		expect(() => log.error("store-unavailable", "no sqlite")).not.toThrow();
 		expect(loggedRows()).toEqual([]);
 	});
 
 	it("never throws when the durable write fails", () => {
-		const live = liveRecorder();
 		const broken = {
 			...store,
 			logPlugin: (): never => { throw new Error("database is locked"); },
 		} as MemoryStore;
-		expect(() => createPluginLog(() => broken, live).warn("drain-failed", "disk gone")).not.toThrow();
-		expect(live.lines).toEqual(["warn:drain-failed: disk gone"]);
+		expect(() => createPluginLog(() => broken).warn("drain-failed", "disk gone")).not.toThrow();
+		expect(loggedRows()).toEqual([]);
 	});
 
 	it("rides its own durability: a write also runs the daily prune", () => {
@@ -89,15 +69,8 @@ describe("createPluginLog", () => {
 			.prepare("INSERT INTO plugin_log (ts, level, event, message) VALUES (?, 'info', 'ancient', 'x')")
 			.run(new Date(Date.now() - (LEDGER_RETENTION_DAYS + 1) * DAY_MS).toISOString());
 		raw.close();
-		const log = createPluginLog(() => store, liveRecorder());
-		log.info("armed", "scheduler armed");
+		createPluginLog(() => store).info("armed", "scheduler armed");
 		expect(loggedRows().map((row) => row.event)).toEqual(["armed"]);
-	});
-
-	it("keeps the partition when the call site knows one", () => {
-		createPluginLog(() => store, liveRecorder()).warn("review-drain-failed", "disk gone", { workspaceId: "/tmp/ws" });
-		expect(loggedRows()[0]?.workspace_id).toBe("/tmp/ws");
-		expect(loggedRows()[0]?.session_id).toBeNull();
 	});
 });
 

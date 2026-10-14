@@ -1,21 +1,15 @@
 /**
- * The plugin's log face: one call writes the durable row, then mirrors the
- * line to the host's logger.
+ * The plugin's log face: one call writes one durable row.
  *
- * The host logger is the live channel and a stock host attaches no exporter to
- * it (docs/FAQ.md #4), so it can never be the only home of a fact worth
- * re-reading — the store is written first. Logging never throws: a diagnostic
- * write that can take a session down is worse than a lost line, and the caller
- * has no recovery for either.
+ * The host's logger is not a channel this plugin uses. A stock host attaches no
+ * exporter to it (docs/FAQ.md #4), so it can never be the home of a fact worth
+ * re-reading — and the sink belongs to the user's environment, which the plugin
+ * does not control. The store is the only home, which also means a diagnostic
+ * written while the store is unavailable is dropped: this face never throws,
+ * because a log line that can take a session down costs more than a lost line.
  */
 import { pruneIfDue } from "./retention.js";
 import type { MemoryStore } from "./store.js";
-
-/** The live channel the host exposes (duck-typed; the host may add levels we never call). */
-export interface LiveLogger {
-	info(message: string): void;
-	warn(message: string): void;
-}
 
 /** The partition a line belongs to, when the call site knows one. */
 export interface LogWhere {
@@ -23,7 +17,7 @@ export interface LogWhere {
 	sessionId?: string | undefined;
 }
 
-/** The log face feature code holds: durable in the store, mirrored live. */
+/** The log face feature code holds: durable in the store, nothing else. */
 export interface PluginLog {
 	info(event: string, message: string, where?: LogWhere): void;
 	warn(event: string, message: string, where?: LogWhere): void;
@@ -31,34 +25,26 @@ export interface PluginLog {
 }
 
 /**
- * Bind a log face to one store accessor and one live channel.
+ * Bind a log face to one store accessor.
  *
  * @param storeOf - Reads the store each call: the sink outlives store startup,
- *   and a host whose store never opened gets the mirror only.
- * @param live - The host's logger; every line is mirrored there as
- *   `event: message` (the live channel has no structured field to put the slug
- *   in). `error` mirrors at `warn` — the host face here carries two levels.
+ *   and a host whose store never opened has nowhere to write.
  * @returns The log face feature code calls.
  */
-export function createPluginLog(storeOf: () => MemoryStore | undefined, live: LiveLogger): PluginLog {
+export function createPluginLog(storeOf: () => MemoryStore | undefined): PluginLog {
 	const write = (level: "info" | "warn" | "error", event: string, message: string, where?: LogWhere): void => {
 		const store = storeOf();
-		if (store !== undefined) {
-			try {
-				store.logPlugin({ level, event, message, ...where });
-				// Retention rides the writes: the log is the one table written
-				// without a scheduler of its own, so it prunes itself.
-				pruneIfDue(store);
-			} catch {
-				// Swallowed by design: the durable write and its prune are
-				// best-effort, and the mirror below still reports the line.
-			}
+		if (store === undefined) {
+			return;
 		}
-		const line = `${event}: ${message}`;
-		if (level === "error") {
-			live.warn(line);
-		} else {
-			live[level](line);
+		try {
+			store.logPlugin({ level, event, message, ...where });
+			// Retention rides the writes: the log is the one table written
+			// without a scheduler of its own, so it prunes itself.
+			pruneIfDue(store);
+		} catch {
+			// Swallowed by design: the durable write and its prune are
+			// best-effort, and there is no second channel to fall back to.
 		}
 	};
 	return {

@@ -17,7 +17,6 @@ function makeCtx(): { sections: RecordedSection[]; host: Parameters<typeof apply
 		systemPrompt: {
 			section: (s: RecordedSection) => sections.push(s),
 		},
-		logger: () => ({ info: () => undefined, warn: () => undefined }),
 	};
 	return { sections, host };
 }
