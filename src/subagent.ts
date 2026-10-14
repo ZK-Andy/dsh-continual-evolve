@@ -16,12 +16,23 @@
  */
 import { SubagentCallError, streamOnce, type LlmRuntime, type ModelSelection } from "./llm-call.js";
 
+/** The per-call facts a definition's instruction may be built from. */
+export interface SubagentContext {
+	/** The run's baseline day `YYYY-MM-DD` (UTC) — the clock time-relative judgments use. */
+	readonly today: string;
+}
+
 /** One subagent definition: everything that distinguishes one job from another. */
 export interface SubagentDefinition<Answer> {
 	/** The job's name, for diagnostics; unique across the registry (asserted by test). */
 	readonly id: string;
-	/** The job's entire instruction, sent as the system prompt — nothing is appended at the call site. */
-	readonly system: string;
+	/**
+	 * The job's entire instruction, sent as the system prompt — nothing is
+	 * appended at the call site. The builder form is for jobs whose
+	 * instruction depends on a per-call fact (the clock a rubric judges dates
+	 * against); the loader resolves it once per call.
+	 */
+	readonly system: string | ((context: SubagentContext) => string);
 	/** Output budget fallback; the exact model's advertised cap wins when it has one. */
 	readonly maxTokens: number;
 	/**
@@ -32,11 +43,13 @@ export interface SubagentDefinition<Answer> {
 	readonly parse: (text: string) => Answer;
 }
 
-/** What one call is bound to: the LLM service, the exact route, the session identity. */
+/** What one call is bound to: the LLM service, the exact route, the session identity, the day. */
 export interface SubagentCall {
 	llm: LlmRuntime | undefined;
 	route: ModelSelection;
 	sessionId: string | undefined;
+	/** The run's baseline day `YYYY-MM-DD` (UTC): the clock every instruction is anchored to. */
+	today: string;
 }
 
 /** One finished call: the parsed answer, the raw text, and the observed call facts. */
@@ -66,13 +79,14 @@ export interface SubagentLoader {
  * Build the loader for one call context — the simple factory: the context
  * produces the bound runner, the definitions table produces the strategies.
  *
- * @param call - The LLM service, the exact route, and the session identity to send.
+ * @param call - The LLM service, the exact route, the session identity, and the baseline day to send.
  * @returns A loader whose `run` is the only LLM entry point a feature needs.
  */
 export function subagentLoaderFor(call: SubagentCall): SubagentLoader {
 	return {
 		async run<Answer>(definition: SubagentDefinition<Answer>, prompt: string): Promise<SubagentAnswer<Answer>> {
-			const result = await streamOnce(call.llm, call.route, call.sessionId, definition.system, prompt, definition.maxTokens);
+			const system = typeof definition.system === "function" ? definition.system({ today: call.today }) : definition.system;
+			const result = await streamOnce(call.llm, call.route, call.sessionId, system, prompt, definition.maxTokens);
 			return { answer: definition.parse(result.text), text: result.text, usage: result.usage, finish: result.finish };
 		},
 	};

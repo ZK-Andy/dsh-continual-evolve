@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-397%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-401%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -98,6 +98,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 │   ├── llm-call.ts         # 唯一传输层：路由、推理档位、输出预算、失败事实
 │   ├── subagent.ts         # 所有 LLM 调用经过的装载器（装配 → 调用 → 解析 → 记账）
 │   ├── subagent-defs.ts    # 子代理定义表：提示词、预算兜底、应答解析器，一处声明
+│   ├── prompt-date.ts      # 提示词的时钟：本轮基准日 + 那行「今天」指令
 │   ├── chain.ts            # 责任链：一环节一步，顺序由环境类组装
 │   ├── review-candidates.ts # 评审队列：什么该审（新写 > 被纠正牵连 > 陈旧）
 │   ├── review.ts           # 内容质量自进化：批量、预算、日 rollup、调度

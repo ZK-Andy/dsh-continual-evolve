@@ -189,6 +189,23 @@ describe("runReviewBatch", () => {
 		expect(store.getDaily(OPTS.day)?.skipTop).toContain("cheap-gate");
 	});
 
+	it("anchors both review calls to the run's day, on the instruction side", async () => {
+		const id = createMemory();
+		const llm = fakeLlm({ gate: `{"worthReview": true, "reason": "看看"}`, evolve: `{"verdict": "keep", "reason": "写得好"}` });
+		await runReviewBatch({ store, llm }, [candidateOf(id)], OPTS);
+		expect(llm.prompts).toHaveLength(2);
+		for (const call of llm.prompts) {
+			// Without a clock the model reads recent past dates as future ones
+			// and strips them: the baseline names the day and says which side of
+			// it is a defect.
+			expect(call.system).toContain(`今天是 ${OPTS.day}`);
+			expect(call.system).toContain("只有晚于今天的日期");
+			// The clock is instruction, not content: beside the item text it
+			// gets copied back into rewrites (the 2026-10-14 reminder copy-back).
+			expect(call.prompt).not.toContain(OPTS.day);
+		}
+	});
+
 	it("keep verdicts land verdict-only rows", async () => {
 		const id = createMemory();
 		const llm = fakeLlm({ gate: `{"worthReview": true, "reason": "看看"}`, evolve: `{"verdict": "keep", "reason": "写得好"}` });

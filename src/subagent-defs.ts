@@ -28,7 +28,8 @@ import {
 	type EvolveVerdict,
 	type GateVerdict,
 } from "./review-prompt.js";
-import type { SubagentDefinition } from "./subagent.js";
+import { dateBaseline } from "./prompt-date.js";
+import type { SubagentContext, SubagentDefinition } from "./subagent.js";
 
 /**
  * Output-budget fallbacks, used only for adapters that advertise no
@@ -40,10 +41,20 @@ export const GATE_MAX_TOKENS = 1024;
 export const EVOLVE_MAX_TOKENS = 4096;
 export const EXTRACTION_MAX_TOKENS = 4096;
 
+/**
+ * Bind one instruction to the run's clock.
+ *
+ * Every job here reads item text that can name dates, and a direct call
+ * carries no clock of its own — so "today" is instruction, not data, and it
+ * arrives as the same appended line for every job in the ring.
+ */
+const withDateBaseline = (instruction: string) => (context: SubagentContext): string =>
+	`${instruction}\n\n${dateBaseline(context.today)}`;
+
 /** The memory cheap gate: is this entry worth a close look at all? */
 export const reviewGateMemory: SubagentDefinition<GateVerdict | null> = {
 	id: "review-gate-memory",
-	system: REVIEW_MEMORY_CHEAP_SYSTEM_PROMPT,
+	system: withDateBaseline(REVIEW_MEMORY_CHEAP_SYSTEM_PROMPT),
 	maxTokens: GATE_MAX_TOKENS,
 	parse: (text) => parseGateAnswer(text),
 };
@@ -51,7 +62,7 @@ export const reviewGateMemory: SubagentDefinition<GateVerdict | null> = {
 /** The skill cheap gate: same question, scope-relative home rules. */
 export const reviewGateSkill: SubagentDefinition<GateVerdict | null> = {
 	id: "review-gate-skill",
-	system: REVIEW_SKILL_CHEAP_SYSTEM_PROMPT,
+	system: withDateBaseline(REVIEW_SKILL_CHEAP_SYSTEM_PROMPT),
 	maxTokens: GATE_MAX_TOKENS,
 	parse: (text) => parseGateAnswer(text),
 };
@@ -59,7 +70,7 @@ export const reviewGateSkill: SubagentDefinition<GateVerdict | null> = {
 /** The memory evolve pass: five-dimension judgment plus the proposed rewrite. */
 export const reviewEvolveMemory: SubagentDefinition<EvolveVerdict | null> = {
 	id: "review-evolve-memory",
-	system: REVIEW_MEMORY_SYSTEM_PROMPT,
+	system: withDateBaseline(REVIEW_MEMORY_SYSTEM_PROMPT),
 	maxTokens: EVOLVE_MAX_TOKENS,
 	parse: (text) => parseEvolveAnswer(text),
 };
@@ -67,7 +78,7 @@ export const reviewEvolveMemory: SubagentDefinition<EvolveVerdict | null> = {
 /** The skill evolve pass: scope-relative reuse, executability, duplication. */
 export const reviewEvolveSkill: SubagentDefinition<EvolveVerdict | null> = {
 	id: "review-evolve-skill",
-	system: REVIEW_SKILL_SYSTEM_PROMPT,
+	system: withDateBaseline(REVIEW_SKILL_SYSTEM_PROMPT),
 	maxTokens: EVOLVE_MAX_TOKENS,
 	parse: (text) => parseEvolveAnswer(text),
 };
@@ -75,7 +86,7 @@ export const reviewEvolveSkill: SubagentDefinition<EvolveVerdict | null> = {
 /** The extraction pre-gate: does this increment hold anything worth proposing? */
 export const extractionGate: SubagentDefinition<CheapVerdict | null> = {
 	id: "extraction-gate",
-	system: EXTRACTION_CHEAP_SYSTEM_PROMPT,
+	system: withDateBaseline(EXTRACTION_CHEAP_SYSTEM_PROMPT),
 	maxTokens: GATE_MAX_TOKENS,
 	parse: (text) => parseCheapAnswer(text),
 };
@@ -83,7 +94,7 @@ export const extractionGate: SubagentDefinition<CheapVerdict | null> = {
 /** The extraction proposal call: the run's one expensive call. */
 export const extractionMain: SubagentDefinition<ParsedAnswer> = {
 	id: "extraction-main",
-	system: EXTRACTION_SYSTEM_PROMPT,
+	system: withDateBaseline(EXTRACTION_SYSTEM_PROMPT),
 	maxTokens: EXTRACTION_MAX_TOKENS,
 	parse: (text) => parseExtractionAnswer(text),
 };

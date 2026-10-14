@@ -20,6 +20,7 @@
 import { runChain, type ChainLink } from "./chain.js";
 import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 import { cwdOf } from "./memory-section.js";
+import { todayUtc } from "./prompt-date.js";
 import { collectCandidates } from "./review-candidates.js";
 import { failureHead, reviewChain, type ReviewItem } from "./review-ring.js";
 import { subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
@@ -56,7 +57,7 @@ export interface ReviewCandidate {
 }
 
 export interface ReviewRunOptions {
-	/** UTC day `YYYY-MM-DD` the hard cap accounts against. */
+	/** UTC day `YYYY-MM-DD` the hard cap accounts against — also the clock the prompts judge dates by. */
 	day: string;
 	/** Hard cap for the day (100). Candidates past it count as dropped. */
 	budget: number;
@@ -108,7 +109,7 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	const llm = deps.llm;
 	// The environment class: one loader and one chain for the whole run, in the
 	// order the ring declares. Without a route there is no ring to walk.
-	const ring = route === undefined || llm === undefined ? undefined : assembleRing({ llm, route, sessionId: opts.sessionId });
+	const ring = route === undefined || llm === undefined ? undefined : assembleRing({ llm, route, sessionId: opts.sessionId, today: opts.day });
 	let position = 0;
 	// The run's account is written whatever happens to the loop: a fault that
 	// escapes one item (or the loop itself) is rethrown *after* the rollup is
@@ -182,11 +183,6 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 		throw escaped;
 	}
 	return summary;
-}
-
-/** Current UTC day `YYYY-MM-DD` for the hard-cap account. */
-export function todayUtc(): string {
-	return new Date().toISOString().slice(0, 10);
 }
 
 /** The per-run ring: the loader bound to this run, and the chain it walks. */

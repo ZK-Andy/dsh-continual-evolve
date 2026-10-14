@@ -66,6 +66,8 @@ export interface RunOptions {
 	trigger: LedgerEntry["trigger"];
 	/** Character ceiling for the serialized increment (default 40000). */
 	incrementMaxChars?: number;
+	/** Baseline day `YYYY-MM-DD` (UTC) the prompts judge dates by; defaults to the run's wall clock. */
+	today?: string | undefined;
 }
 
 /**

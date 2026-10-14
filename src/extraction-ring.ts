@@ -12,6 +12,7 @@ import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
 import { observedUsageOf, type ModelSelection } from "./llm-call.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
 import { CHEAP_INCREMENT_MAX, cheapPrompt, extractionPrompt, manifestLineOf, type ParsedAnswer } from "./extraction-prompt.js";
+import { todayUtc } from "./prompt-date.js";
 import { extractionGate, extractionMain } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentAnswer, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
@@ -87,7 +88,7 @@ export async function runExtractionInner(deps: ExtractionDeps, target: Extractio
 	// Narrowed once, here: the loader takes one concrete route and session.
 	const workspaceId: string = target.workspaceId;
 	const route: ModelSelection = { provider: target.provider, model: target.model };
-	const call: SubagentCall = { llm: deps.llm, route, sessionId: target.sessionId };
+	const call: SubagentCall = { llm: deps.llm, route, sessionId: target.sessionId, today: opts.today ?? todayUtc() };
 
 	const cursor = store.cursor(workspaceId, target.sessionId);
 	let all: readonly unknown[];

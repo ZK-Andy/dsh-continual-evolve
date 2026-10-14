@@ -7,7 +7,7 @@ English | [中文](README.zh.md)
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-397%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-401%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-96%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-90%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -98,6 +98,7 @@ Layout:
 │   ├── llm-call.ts         # the only transport: route, reasoning effort, output budget, failure facts
 │   ├── subagent.ts         # the loader every LLM call goes through (assemble → call → parse → account)
 │   ├── subagent-defs.ts    # every subagent job in one table: prompt, budget fallback, answer parser
+│   ├── prompt-date.ts      # the clock prompts judge dates by: the run's day + its instruction line
 │   ├── chain.ts            # responsibility chain: one step per link, order assembled by the caller
 │   ├── review-candidates.ts # its queue: what is due (new > corrects-linked > stale)
 │   ├── review.ts           # autonomous quality loop: batch, budget, rollup, scheduler

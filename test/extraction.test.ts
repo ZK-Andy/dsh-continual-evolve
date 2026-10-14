@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runExtraction, type ExtractionDeps, type LlmStream } from "../src/extraction.js";
+import { todayUtc } from "../src/prompt-date.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;
@@ -134,6 +135,24 @@ describe("runExtraction — mechanical skips (each ledgered, cursor untouched)",
 });
 
 describe("runExtraction — model round-trip", () => {
+	it("anchors both extraction calls to the day the run names", async () => {
+		const d = deps();
+		await runExtraction(d, target, { trigger: "turn-debounce", today: "2026-10-14" });
+		expect(d.llm.calls).toHaveLength(2);
+		for (const call of d.llm.calls) {
+			// The extraction rubric asks for relative dates to be written out
+			// absolutely; without a baseline the model has nothing to convert from.
+			expect(String(call.system)).toContain("今天是 2026-10-14");
+			expect(String(call.system)).toContain("时间基准");
+		}
+	});
+
+	it("falls back to the wall clock's UTC day when the run names none", async () => {
+		const d = deps();
+		await runExtraction(d, target, { trigger: "turn-debounce" });
+		expect(String(d.llm.calls[0]?.system)).toContain(`今天是 ${todayUtc()}`);
+	});
+
 	it("applies proposals, lands provenance, advances the cursor, and runs patrol", async () => {
 		const d = deps();
 		const result = await runExtraction(d, target, { trigger: "turn-debounce" });

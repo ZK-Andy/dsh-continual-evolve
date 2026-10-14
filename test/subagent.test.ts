@@ -12,6 +12,12 @@ import {
 } from "../src/subagent-defs.js";
 
 const ROUTE = { provider: "deepseek", model: "deepseek-chat" };
+const TODAY = "2026-10-14";
+
+/** The instruction one definition sends, resolved with a fixed clock. */
+function instructionOf(definition: SubagentDefinition<unknown>): string {
+	return typeof definition.system === "function" ? definition.system({ today: TODAY }) : definition.system;
+}
 
 /** A scripted runtime that records every options object it is called with. */
 function scriptedLlm(chunks: readonly unknown[], modelInfo?: { defaultMaxTokens?: unknown }): LlmRuntime & { seen: Record<string, unknown>[] } {
@@ -46,7 +52,7 @@ describe("subagentLoaderFor", () => {
 			{ type: "usage", usage: { totalTokens: 5 } },
 			{ type: "finish", reason: { kind: "stop" } },
 		]);
-		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: "sess-1" });
+		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: "sess-1", today: TODAY });
 		const answer = await loader.run(DEFINITION, "PROMPT");
 		expect(answer.answer).toBe("parsed:ok");
 		expect(answer.text).toBe("ok");
@@ -65,9 +71,22 @@ describe("subagentLoaderFor", () => {
 			[{ type: "text-delta", text: "ok" }, { type: "finish", reason: { kind: "stop" } }],
 			{ defaultMaxTokens: 8192 },
 		);
-		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: undefined });
+		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: undefined, today: TODAY });
 		await loader.run(DEFINITION, "PROMPT");
 		expect(llm.seen[0]?.maxTokens).toBe(8192);
+	});
+
+	it("resolves a builder instruction against the call's day", async () => {
+		const llm = scriptedLlm([{ type: "text-delta", text: "ok" }, { type: "finish", reason: { kind: "stop" } }]);
+		const dated: SubagentDefinition<string> = {
+			id: "dated-job",
+			system: ({ today }) => `SYS today=${today}`,
+			maxTokens: 100,
+			parse: (text) => text,
+		};
+		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: undefined, today: TODAY });
+		await loader.run(dated, "PROMPT");
+		expect(llm.seen[0]?.system).toBe("SYS today=2026-10-14");
 	});
 
 	it("surfaces a failed call with the usage and route the stream already reported", async () => {
@@ -75,7 +94,7 @@ describe("subagentLoaderFor", () => {
 			{ type: "usage", usage: { inputTokens: 4, outputTokens: 6 } },
 			{ type: "finish", reason: { kind: "error", failure: { code: "PROVIDER_DOWN", message: "provider down" } } },
 		]);
-		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: "sess-1" });
+		const loader = subagentLoaderFor({ llm, route: ROUTE, sessionId: "sess-1", today: TODAY });
 		const error = await loader.run(DEFINITION, "PROMPT").catch((thrown: unknown) => thrown);
 		expect(error).toBeInstanceOf(SubagentCallError);
 		expect((error as SubagentCallError).message).toContain("PROVIDER_DOWN: provider down");
@@ -126,15 +145,19 @@ describe("subagent definitions", () => {
 			"extraction-main",
 		]);
 		for (const definition of SUBAGENT_DEFINITIONS) {
-			expect(definition.system.length).toBeGreaterThan(0);
+			// Every job reads item text that can name dates, so every job is told
+			// what "today" is — one missing instruction is one job judging dates
+			// from its own prior.
+			expect(instructionOf(definition)).toContain(`今天是 ${TODAY}`);
+			expect(instructionOf(definition)).toContain("只有晚于今天的日期");
 			expect(definition.maxTokens).toBeGreaterThan(0);
 			expect(typeof definition.parse).toBe("function");
 		}
 	});
 
 	it("gives the memory and skill gates their own rubrics", () => {
-		const memory = REVIEW_GATE_BY_KIND.memory.system;
-		const skill = REVIEW_GATE_BY_KIND.skill.system;
+		const memory = instructionOf(REVIEW_GATE_BY_KIND.memory);
+		const skill = instructionOf(REVIEW_GATE_BY_KIND.skill);
 		// The memory gate is the memory home test; the skill gate inverts the
 		// reuse clause for project-scope rows. One prompt cannot say both.
 		expect(memory).toContain("记忆库");
@@ -142,7 +165,7 @@ describe("subagent definitions", () => {
 		expect(skill).toContain("技能库");
 		expect(skill).toContain("scope=project");
 		expect(skill).toContain("放错家");
-		expect(REVIEW_EVOLVE_BY_KIND.memory.system).not.toBe(REVIEW_EVOLVE_BY_KIND.skill.system);
+		expect(instructionOf(REVIEW_EVOLVE_BY_KIND.memory)).not.toBe(instructionOf(REVIEW_EVOLVE_BY_KIND.skill));
 	});
 
 	it("wires each definition's parser to its own answer shape", () => {

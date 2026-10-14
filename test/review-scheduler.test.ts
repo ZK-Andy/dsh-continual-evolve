@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { todayUtc } from "../src/prompt-date.js";
 import { collectCandidates } from "../src/review-candidates.js";
 import {
 	createReviewScheduler,
 	runReviewBatch,
-	todayUtc,
 	type ReviewLlm,
 	type ReviewSettings,
 } from "../src/review.js";
