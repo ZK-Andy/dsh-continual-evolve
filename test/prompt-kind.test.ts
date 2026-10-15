@@ -144,6 +144,21 @@ describe("ledger, usage, recency, patrol", () => {
 		expect(store.getPrompt(workspace, "leaky")?.status).toBe("quarantined");
 		expect(store.listAllPrompts(workspace).some((row) => row.id === "leaky" && row.status === "quarantined")).toBe(true);
 	});
+
+	it("drops orphan prompt FTS rows on patrol", () => {
+		const db = new DatabaseSync(dbPath);
+		try {
+			db.prepare("INSERT INTO prompts_fts (workspace_id, id, title, description, body) VALUES (?, ?, 't', 'd', 'b')").run(
+				workspace,
+				"ghost",
+			);
+		} finally {
+			db.close();
+		}
+		const result = store.patrol();
+		expect(result.promptOrphanFtsRows).toBe(1);
+		expect(store.patrol().promptOrphanFtsRows).toBe(0);
+	});
 });
 
 describe("evolve tools", () => {

@@ -6,7 +6,7 @@
 ## 最小证据
 
 <!-- 按 diff 面选最窄检查，贴 change-scope 或 CI 链接 -->
-- `scripts/change-scope.sh` 输出：
+- `pnpm run change-scope` 输出：
 - `CI` 链接：
 
 ## Reviewer Checklist

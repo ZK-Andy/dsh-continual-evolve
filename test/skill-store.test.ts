@@ -230,6 +230,24 @@ describe("skill patrol", () => {
 		expect(existsSync(skillFile(wsA, "leaky"))).toBe(false);
 	});
 
+	it("counts file errors when a quarantined skill's file is hand-written", () => {
+		const raw = new DatabaseSync(dbPath);
+		try {
+			raw.prepare("INSERT INTO skills (workspace_id, id, title, description, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)").run(
+				wsA, "leaky-hand", "t", "d", "token xoxb-abcdefghij1234", "2026-10-11T00:00:00.000Z", "2026-10-11T00:00:00.000Z",
+			);
+		} finally {
+			raw.close();
+		}
+		mkdirSync(join(wsA, ".agents", "skills", "leaky-hand"), { recursive: true });
+		writeFileSync(skillFile(wsA, "leaky-hand"), "# hand-written\n", "utf8");
+		const result = store.patrol();
+		expect(result.skillQuarantined.map((q) => q.id)).toEqual(["leaky-hand"]);
+		expect(result.skillFileErrors).toBe(1);
+		// Hand-written files stay in place, with the error counted.
+		expect(existsSync(skillFile(wsA, "leaky-hand"))).toBe(true);
+	});
+
 	it("recreates missing files, rewrites drifted ones, and drops orphan managed files", () => {
 		apply(wsA, [{ action: "create", id: "deploy", ...FIELDS }]);
 		// Missing file.

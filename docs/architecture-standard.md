@@ -1,6 +1,6 @@
 # TS 架构规范
 
-> 适用 `src/` 全部模块（经典分层后：`store.ts`（存储装配）/ `index.ts`（插件组装根）/ `surfaces/`（工具、卡片、注入、投影）/ `services/`（写门禁执行）/ `data/`（连接、通用仓储、迁移、账本），`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
+> 适用 `src/` 全部模块（经典分层后：`store.ts`（存储装配）/ `index.ts`（插件组装根）/ `surfaces/`（工具、卡片、注入、投影）/ `services/`（写门禁规则与批量应用）/ `data/`（连接、通用仓储、迁移、账本、巡检），`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
 
 ## 1. 组装根唯一性
 
