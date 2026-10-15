@@ -5,7 +5,7 @@
  * fails. Explicit tool writes and extraction runs land through this same
  * gate — there is no other writer.
  */
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import {
 	fieldGateReasons,
 	isValidMemoryId,
@@ -54,6 +54,8 @@ export interface ApplyDatabase {
 	now(): string;
 	/** The memories repository: all memories-table access goes through it. */
 	memories: Repository<MemoryRow>;
+	/** The pre-prepared extraction ledger statement (owned by `data/ledger.ts`). */
+	ledger: StatementSync;
 }
 
 /**
@@ -99,13 +101,9 @@ export function applyProposals(
 	if (!applied) {
 		ledger.decision = `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
 	}
-	writeMemoryLedger(db.database.prepare(LEDGER_SQL), ledger);
+	writeMemoryLedger(db.ledger, ledger);
 	return { outcomes, applied };
 }
-
-const LEDGER_SQL =
-	"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files) " +
-	"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 /** Validate one proposal and land it; appends the audit payload on success. */
 function applyOne(

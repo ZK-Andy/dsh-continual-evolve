@@ -112,7 +112,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return memories.searchRows(workspaceId, query, limit).map(recordOf);
 		},
 		applyProposals(ctx, proposals) {
-			return applyProposals({ database, now: () => new Date().toISOString(), memories }, ctx, proposals).outcomes;
+			return applyProposals({ database, now: () => new Date().toISOString(), memories, ledger: stmts.ledger }, ctx, proposals).outcomes;
 		},
 		logSkipped(entry) {
 			if (coalesceSkipRun(stmts.latestSkip, stmts.bumpSkip, entry)) {
