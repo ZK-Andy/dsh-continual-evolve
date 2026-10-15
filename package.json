@@ -66,6 +66,7 @@
     "check:docs": "tsx scripts/run-gates.ts docs",
     "check:handoff": "tsx scripts/verify-handoff-structure.ts --self-test && tsx scripts/verify-handoff-structure.ts",
     "check:governance": "tsx scripts/verify-governance.ts",
+    "check:budgets": "tsx scripts/verify-src-budgets.ts",
     "check:pack": "tsx scripts/verify-pack-contents.ts"
   },
   "peerDependencies": {
