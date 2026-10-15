@@ -27,7 +27,17 @@ export interface ResourceKind {
 	readonly selectVisible: string;
 	readonly selectFts: string;
 	readonly selectWorkspaces: string;
-	readonly selectRecent: string;
+	/**
+	 * Newest-instant probe for the most-recently-active race, `null` when the
+	 * kind feeds it from a ledger instead of its own table (skills read
+	 * `skill_log`, so only memories declare this).
+	 */
+	readonly selectRecent: string | null;
+	/**
+	 * Body-dedupe lookup (`SELECT id … WHERE body = ?`), `null` when the
+	 * kind has no same-body gate (only skills dedupe on body today).
+	 */
+	readonly selectSameBody: string | null;
 	readonly selectFtsOrphans: string;
 	readonly deleteFtsRow: string;
 	readonly selectActiveRows: string;
@@ -74,7 +84,8 @@ export class Repository<Row> {
 	private readonly visible: StatementSync;
 	private readonly fts: StatementSync;
 	private readonly workspaces: StatementSync;
-	private readonly recent: StatementSync;
+	private readonly recentStmt: StatementSync | undefined;
+	private readonly sameBodyStmt: StatementSync | undefined;
 	private readonly ftsOrphans: StatementSync;
 	private readonly ftsDropOne: StatementSync;
 	private readonly activeRows: StatementSync;
@@ -86,6 +97,7 @@ export class Repository<Row> {
 	private readonly ftsInsert: StatementSync;
 	private readonly usageGet: StatementSync;
 	private readonly usageUpsert: StatementSync;
+	private archiveStmt: StatementSync | undefined;
 	/** LIKE fallback: one statement per token count — the query set repeats, the counts don't grow. */
 	private readonly likeStmts = new Map<number, StatementSync>();
 
@@ -102,7 +114,8 @@ export class Repository<Row> {
 		this.visible = database.prepare(kind.selectVisible);
 		this.fts = database.prepare(kind.selectFts);
 		this.workspaces = database.prepare(kind.selectWorkspaces);
-		this.recent = database.prepare(kind.selectRecent);
+		this.recentStmt = kind.selectRecent === null ? undefined : database.prepare(kind.selectRecent);
+		this.sameBodyStmt = kind.selectSameBody === null ? undefined : database.prepare(kind.selectSameBody);
 		this.ftsOrphans = database.prepare(kind.selectFtsOrphans);
 		this.ftsDropOne = database.prepare(kind.deleteFtsRow);
 		this.activeRows = database.prepare(kind.selectActiveRows);
@@ -220,7 +233,32 @@ export class Repository<Row> {
 
 	/** The partition's newest instant, for the most-recently-active race. */
 	recentInstant(): { workspace_id?: unknown; ts?: unknown } | undefined {
-		return this.recent.get() as { workspace_id?: unknown; ts?: unknown } | undefined;
+		return this.recentStmt?.get() as unknown as { workspace_id?: unknown; ts?: unknown } | undefined;
+	}
+
+	/**
+	 * Owner id of an identical active body, for the same-body dedupe gate.
+	 * Undefined both when unconfigured and when no duplicate exists.
+	 */
+	findBodyOwner(workspaceId: string, body: string): string | undefined {
+		const row = this.sameBodyStmt?.get(workspaceId, body) as unknown as { id: string } | undefined;
+		return row?.id;
+	}
+
+	/**
+	 * Archive one row in place (status + timestamp). Derived from the table
+	 * name — archiving is the same shape for every kind, so it is not a
+	 * descriptor field.
+	 */
+	archiveRow(workspaceId: string, id: string, ts: string): void {
+		let stmt = this.archiveStmt;
+		if (stmt === undefined) {
+			stmt = this.database.prepare(
+				`UPDATE ${this.kind.table} SET status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?`,
+			);
+			this.archiveStmt = stmt;
+		}
+		stmt.run(ts, workspaceId, id);
 	}
 
 	/** Aggregate usage for one item, undefined when never consumed. */

@@ -122,6 +122,21 @@ export function feedbackWhyHowMissing(body: string): string {
 	return missing.join("、");
 }
 
+/**
+ * Shared single-field gate: empty check, then length cap, with
+ * caller-supplied messages — each kind phrases its own contract, the shape
+ * stays in one place. Returns the blocking reason, undefined when passing.
+ */
+export function textFieldGate(value: string, emptyReason: string, limit: number, limitReason: string): string | undefined {
+	if (value.trim().length === 0) {
+		return emptyReason;
+	}
+	if (value.length > limit) {
+		return limitReason;
+	}
+	return undefined;
+}
+
 /** One proposed mutation — the closed proposal shape both write paths speak. */
 export interface MemoryProposal {
 	action: "create" | "update" | "delete";
@@ -161,20 +176,19 @@ export function fieldGateReasons(fields: ProposedFields): string[] {
 	if (!MEMORY_TYPES.includes(fields.type)) {
 		reasons.push(`type must be one of ${MEMORY_TYPES.join("/")}`);
 	}
-	if (fields.title.trim().length === 0) {
-		reasons.push("title must not be empty");
-	} else if (fields.title.length > MEMORY_TITLE_LIMIT) {
-		reasons.push(`title exceeds ${MEMORY_TITLE_LIMIT} characters`);
-	}
-	if (fields.description.trim().length === 0) {
-		reasons.push("description must not be empty — it is the injection hook");
-	} else if (fields.description.length > MEMORY_DESCRIPTION_LIMIT) {
-		reasons.push(`description exceeds ${MEMORY_DESCRIPTION_LIMIT} characters`);
-	}
-	if (fields.body.trim().length === 0) {
-		reasons.push("body must not be empty");
-	} else if (fields.body.length > MEMORY_BODY_LIMIT) {
-		reasons.push(`body exceeds the ${MEMORY_BODY_LIMIT}-character cap`);
+	for (const reason of [
+		textFieldGate(fields.title, "title must not be empty", MEMORY_TITLE_LIMIT, `title exceeds ${MEMORY_TITLE_LIMIT} characters`),
+		textFieldGate(
+			fields.description,
+			"description must not be empty — it is the injection hook",
+			MEMORY_DESCRIPTION_LIMIT,
+			`description exceeds ${MEMORY_DESCRIPTION_LIMIT} characters`,
+		),
+		textFieldGate(fields.body, "body must not be empty", MEMORY_BODY_LIMIT, `body exceeds the ${MEMORY_BODY_LIMIT}-character cap`),
+	]) {
+		if (reason !== undefined) {
+			reasons.push(reason);
+		}
 	}
 	if (fields.type === "feedback") {
 		const missing = feedbackWhyHowMissing(fields.body);

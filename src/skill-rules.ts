@@ -21,6 +21,7 @@ import {
 	MEMORY_TITLE_LIMIT,
 	secretLeakReason,
 	slugifyId,
+	textFieldGate,
 } from "./memory-rules.js";
 
 export { isValidMemoryId as isValidSkillId, slugifyId as slugifySkillId };
@@ -71,20 +72,19 @@ export interface SkillFields {
  */
 export function skillFieldGateReasons(fields: SkillFields): string[] {
 	const reasons: string[] = [];
-	if (fields.title.trim().length === 0) {
-		reasons.push("title must not be empty");
-	} else if (fields.title.length > MEMORY_TITLE_LIMIT) {
-		reasons.push(`title exceeds ${MEMORY_TITLE_LIMIT} characters`);
-	}
-	if (fields.description.trim().length === 0) {
-		reasons.push("description must not be empty — it is the skill trigger");
-	} else if (fields.description.length > MEMORY_DESCRIPTION_LIMIT) {
-		reasons.push(`description exceeds ${MEMORY_DESCRIPTION_LIMIT} characters`);
-	}
-	if (fields.body.trim().length === 0) {
-		reasons.push("body must not be empty");
-	} else if (fields.body.length > MEMORY_BODY_LIMIT) {
-		reasons.push(`body exceeds the ${MEMORY_BODY_LIMIT}-character cap`);
+	for (const reason of [
+		textFieldGate(fields.title, "title must not be empty", MEMORY_TITLE_LIMIT, `title exceeds ${MEMORY_TITLE_LIMIT} characters`),
+		textFieldGate(
+			fields.description,
+			"description must not be empty — it is the skill trigger",
+			MEMORY_DESCRIPTION_LIMIT,
+			`description exceeds ${MEMORY_DESCRIPTION_LIMIT} characters`,
+		),
+		textFieldGate(fields.body, "body must not be empty", MEMORY_BODY_LIMIT, `body exceeds the ${MEMORY_BODY_LIMIT}-character cap`),
+	]) {
+		if (reason !== undefined) {
+			reasons.push(reason);
+		}
 	}
 	const leak = secretLeakReason(`${fields.title}\n${fields.description}\n${fields.body}`);
 	if (leak !== undefined) {

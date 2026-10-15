@@ -13,7 +13,6 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import type { MemoryProposal } from "./memory-rules.js";
 import { secretLeakReason } from "./memory-rules.js";
 import {
@@ -32,7 +31,7 @@ import { isValidMemoryId } from "./memory-rules.js";
 import { applyProposals, type ProposalContext, type ProposalOutcome } from "./store-apply.js";
 import { openDatabase } from "./data/database.js";
 import { LEDGER_OCCURRENCES, migrateDatabase } from "./data/migrate.js";
-import { ftsPhrase, likePattern, queryTokens, Repository, type ResourceKind } from "./data/repository.js";
+import { Repository, type ResourceKind } from "./data/repository.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
 export { StoreUnavailableError } from "./data/database.js";
@@ -455,6 +454,7 @@ const MEMORIES: ResourceKind = {
 	selectRecent:
 		"SELECT workspace_id, MAX(updated_at) AS ts FROM memories " +
 		"WHERE status = 'active' AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+	selectSameBody: null,
 	selectFtsOrphans:
 		"SELECT f.rowid AS rid FROM memories_fts f LEFT JOIN memories m ON m.workspace_id = f.workspace_id AND m.id = f.id WHERE m.id IS NULL",
 	deleteFtsRow: "DELETE FROM memories_fts WHERE rowid = ?",
@@ -475,6 +475,47 @@ const MEMORIES: ResourceKind = {
 	usageUpsertSql:
 		"INSERT INTO memory_usage (workspace_id, memory_id, use_count, last_used_at) VALUES (?, ?, 1, ?) " +
 		"ON CONFLICT (workspace_id, memory_id) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
+};
+
+/**
+ * The skills kind descriptor: the same SQL the per-skill statements below
+ * used to carry inline. P2 routes every skills-table access through it;
+ * the skill ledger (`skill_log`) and the file projection stay here.
+ */
+const SKILLS: ResourceKind = {
+	table: "skills",
+	order: "ORDER BY updated_at DESC",
+	likeColumns: ["title", "description", "body"],
+	selectById: "SELECT * FROM skills WHERE workspace_id = ? AND id = ?",
+	selectActive: "SELECT * FROM skills WHERE workspace_id = ? AND status = 'active' ORDER BY updated_at DESC",
+	selectVisible: "SELECT * FROM skills WHERE workspace_id = ? AND status != 'archived' ORDER BY updated_at DESC",
+	selectFts:
+		"SELECT s.* FROM skills s WHERE (s.workspace_id, s.id) IN (" +
+		"SELECT workspace_id, id FROM skills_fts WHERE skills_fts MATCH ? AND workspace_id = ?) " +
+		"AND s.status = 'active' ORDER BY updated_at DESC LIMIT ?",
+	selectWorkspaces:
+		"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM skills WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
+	selectRecent: null,
+	selectSameBody: "SELECT id FROM skills WHERE workspace_id = ? AND status = 'active' AND body = ? LIMIT 1",
+	selectFtsOrphans:
+		"SELECT f.rowid AS rid FROM skills_fts f LEFT JOIN skills m ON m.workspace_id = f.workspace_id AND m.id = f.id WHERE m.id IS NULL",
+	deleteFtsRow: "DELETE FROM skills_fts WHERE rowid = ?",
+	selectActiveRows: "SELECT * FROM skills WHERE status = 'active'",
+	updateQuarantine: "UPDATE skills SET status = 'quarantined' WHERE workspace_id = ? AND id = ?",
+	insertSql:
+		"INSERT INTO skills (workspace_id, id, title, description, body, status, source_session, source_seqs, source_run, created_at, updated_at) " +
+		"VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+	updateSql: "UPDATE skills SET title = ?, description = ?, body = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+	deleteSql: "DELETE FROM skills WHERE workspace_id = ? AND id = ?",
+	ftsDropSql:
+		"DELETE FROM skills_fts WHERE rowid IN (SELECT rowid FROM skills_fts WHERE workspace_id = ? AND id = ?)",
+	ftsInsertSql:
+		"INSERT INTO skills_fts (workspace_id, id, title, description, body) " +
+		"SELECT workspace_id, id, title, description, body FROM skills WHERE workspace_id = ? AND id = ?",
+	usageGetSql: "SELECT use_count, last_used_at FROM skill_usage WHERE workspace_id = ? AND skill_id = ? AND scope = ?",
+	usageUpsertSql:
+		"INSERT INTO skill_usage (workspace_id, skill_id, scope, use_count, last_used_at) VALUES (?, ?, ?, 1, ?) " +
+		"ON CONFLICT (workspace_id, skill_id, scope) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
 };
 
 /** The materialized directory for one skill partition (global vs project). */
@@ -557,6 +598,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	const database = await openDatabase(path);
 	migrateDatabase(database);
 	const memories = new Repository<MemoryRow>(database, MEMORIES);
+	const skills = new Repository<SkillRow>(database, SKILLS);
 
 	const stmts = {
 		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
@@ -587,43 +629,11 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			`UPDATE extraction_log SET ts = ?, ${LEDGER_OCCURRENCES} = ${LEDGER_OCCURRENCES} + 1 WHERE rowid = ?`,
 		),
 		prune: database.prepare("DELETE FROM extraction_log WHERE ts < ?"),
-		skillGet: database.prepare("SELECT * FROM skills WHERE workspace_id = ? AND id = ?"),
-		skillList: database.prepare("SELECT * FROM skills WHERE workspace_id = ? AND status = 'active' ORDER BY updated_at DESC"),
-		skillListAll: database.prepare("SELECT * FROM skills WHERE workspace_id = ? AND status != 'archived' ORDER BY updated_at DESC"),
-		skillFts: database.prepare(
-			`SELECT s.* FROM skills s WHERE (s.workspace_id, s.id) IN (
-				 SELECT workspace_id, id FROM skills_fts WHERE skills_fts MATCH ? AND workspace_id = ?
-				) AND s.status = 'active' ORDER BY updated_at DESC LIMIT ?`,
-		),
-		skillInsert: database.prepare(
-			"INSERT INTO skills (workspace_id, id, title, description, body, status, source_session, source_seqs, source_run, created_at, updated_at) " +
-				"VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
-		),
-		skillUpdate: database.prepare("UPDATE skills SET title = ?, description = ?, body = ?, updated_at = ? WHERE workspace_id = ? AND id = ?"),
-		skillArchive: database.prepare("UPDATE skills SET status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?"),
-		skillDelete: database.prepare("DELETE FROM skills WHERE workspace_id = ? AND id = ?"),
-		skillSameBody: database.prepare("SELECT id FROM skills WHERE workspace_id = ? AND status = 'active' AND body = ? LIMIT 1"),
 		skillLog: database.prepare(
 			"INSERT INTO skill_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files, warnings) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		skillPrune: database.prepare("DELETE FROM skill_log WHERE ts < ?"),
-		skillFtsOrphans: database.prepare(
-			"SELECT f.rowid AS rid FROM skills_fts f LEFT JOIN skills m ON m.workspace_id = f.workspace_id AND m.id = f.id WHERE m.id IS NULL",
-		),
-		skillFtsDrop: database.prepare("DELETE FROM skills_fts WHERE rowid = ?"),
-		skillActiveRows: database.prepare("SELECT * FROM skills WHERE status = 'active'"),
-		skillQuarantine: database.prepare("UPDATE skills SET status = 'quarantined' WHERE workspace_id = ? AND id = ?"),
-		skillWorkspaces: database.prepare(
-			"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM skills WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
-		),
-		skillUseGet: database.prepare(
-			"SELECT use_count, last_used_at FROM skill_usage WHERE workspace_id = ? AND skill_id = ? AND scope = ?",
-		),
-		skillUseUpsert: database.prepare(
-			"INSERT INTO skill_usage (workspace_id, skill_id, scope, use_count, last_used_at) VALUES (?, ?, ?, 1, ?) " +
-				"ON CONFLICT (workspace_id, skill_id, scope) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
-		),
 		reviewLog: database.prepare(
 			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, model, cheap_usage, evolve_usage, applied, evolve_count) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -681,33 +691,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 
 	// Skill LIKE fallback mirrors the memory one: one OR-triplet per token,
 	// every token required, statements cached by token count.
-	const skillLikeStmts = new Map<number, ReturnType<DatabaseSync["prepare"]>>();
-	const skillLikeSearch = (workspaceId: string, tokens: readonly string[], limit: number): SkillRecord[] => {
-		let stmt = skillLikeStmts.get(tokens.length);
-		if (stmt === undefined) {
-			const clause = tokens
-				.map(() => "(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
-				.join(" AND ");
-			stmt = database.prepare(
-				`SELECT * FROM skills WHERE workspace_id = ? AND status = 'active' AND ${clause} ORDER BY updated_at DESC LIMIT ?`,
-			);
-			skillLikeStmts.set(tokens.length, stmt);
-		}
-		const patterns = tokens.flatMap((token) => {
-			const pattern = likePattern(token);
-			return [pattern, pattern, pattern];
-		});
-		return (stmt.all(workspaceId, ...patterns, limit) as unknown as SkillRow[]).map(skillRecordOf);
-	};
-
-	/** Re-sync the FTS row for one skill id from its table row (delete + insert). */
-	const skillFtsSync = (workspaceId: string, id: string): void => {
-		database.prepare("DELETE FROM skills_fts WHERE rowid IN (SELECT rowid FROM skills_fts WHERE workspace_id = ? AND id = ?)").run(workspaceId, id);
-		database.prepare(
-			"INSERT INTO skills_fts (workspace_id, id, title, description, body) SELECT workspace_id, id, title, description, body FROM skills WHERE workspace_id = ? AND id = ?",
-		).run(workspaceId, id);
-	};
-
 	interface SkillLedgerFile {
 		id: string;
 		action: SkillProposal["action"];
@@ -825,11 +808,11 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			if (reasons.length > 0) {
 				return skillFail(proposal, reasons[0] ?? "invalid skill");
 			}
-			const projectRow = stmts.skillGet.get(ctx.workspaceId, id) as SkillRow | undefined;
+			const projectRow = skills.getRow(ctx.workspaceId, id);
 			if (projectRow !== undefined && projectRow.status !== "archived") {
 				return skillFail(proposal, `skill "${id}" already exists in this project — update it instead of creating a duplicate`);
 			}
-			const globalRow = stmts.skillGet.get("", id) as SkillRow | undefined;
+			const globalRow = skills.getRow("", id);
 			if (globalRow !== undefined && globalRow.status !== "archived") {
 				const global = skillRecordOf(globalRow);
 				if (identicalSkill(global, merged.fields)) {
@@ -837,26 +820,26 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				}
 				return skillFail(proposal, `global skill "${id}" exists with different content — rename yours, or delete the global row first`);
 			}
-			const sameBody = stmts.skillSameBody.get(ctx.workspaceId, merged.fields.body) as { id: string } | undefined;
-			if (sameBody !== undefined && sameBody.id !== id) {
-				return skillFail(proposal, `identical skill "${sameBody.id}" already exists in this project — reuse it instead of duplicating`);
+			const sameBody = skills.findBodyOwner(ctx.workspaceId, merged.fields.body);
+			if (sameBody !== undefined && sameBody !== id) {
+				return skillFail(proposal, `identical skill "${sameBody}" already exists in this project — reuse it instead of duplicating`);
 			}
-			const sameGlobalBody = stmts.skillSameBody.get("", merged.fields.body) as { id: string } | undefined;
+			const sameGlobalBody = skills.findBodyOwner("", merged.fields.body);
 			if (sameGlobalBody !== undefined) {
-				return skillFail(proposal, `identical global skill "${sameGlobalBody.id}" already exists — call it directly instead of duplicating`);
+				return skillFail(proposal, `identical global skill "${sameGlobalBody}" already exists — call it directly instead of duplicating`);
 			}
-			stmts.skillInsert.run(
+			skills.insertRow([
 				ctx.workspaceId, id, merged.fields.title, merged.fields.description, merged.fields.body,
 				ctx.sessionId ?? null, proposal.sourceSeqs ?? null, ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null), now, now,
-			);
-			skillFtsSync(ctx.workspaceId, id);
-			files.push({ id, action, scope: "project", after: skillRecordOf(stmts.skillGet.get(ctx.workspaceId, id) as unknown as SkillRow), sourceSeqs: proposal.sourceSeqs });
+			]);
+			skills.syncFts(ctx.workspaceId, id);
+			files.push({ id, action, scope: "project", after: skillRecordOf(skills.getRow(ctx.workspaceId, id) as SkillRow), sourceSeqs: proposal.sourceSeqs });
 			intents.push({ partition: ctx.workspaceId, id, op: "write" });
 			return { id, action, ok: true };
 		}
 
 		if (action === "move-to-global") {
-			const projectRow = stmts.skillGet.get(ctx.workspaceId, id) as SkillRow | undefined;
+			const projectRow = skills.getRow(ctx.workspaceId, id);
 			if (projectRow === undefined || projectRow.status === "archived") {
 				return skillFail(proposal, `no project skill "${id}" to move — create it in the project first`);
 			}
@@ -864,7 +847,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			if (project.status !== "active") {
 				return skillFail(proposal, `project skill "${id}" is ${project.status} — only active skills move to global`);
 			}
-			const globalRow = stmts.skillGet.get("", id) as SkillRow | undefined;
+			const globalRow = skills.getRow("", id);
 			if (globalRow !== undefined && globalRow.status !== "archived") {
 				return skillFail(proposal, `global skill "${id}" already exists — delete it first, or keep the project copy shadowing it`);
 			}
@@ -872,15 +855,15 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			if (reasons.length > 0) {
 				return skillFail(proposal, reasons[0] ?? "invalid skill");
 			}
-			stmts.skillInsert.run(
+			skills.insertRow([
 				"", id, project.title, project.description, project.body,
 				project.sourceSession, project.sourceSeqs, ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null), now, now,
-			);
-			skillFtsSync("", id);
-			stmts.skillArchive.run(now, ctx.workspaceId, id);
-			skillFtsSync(ctx.workspaceId, id);
+			]);
+			skills.syncFts("", id);
+			skills.archiveRow(ctx.workspaceId, id, now);
+			skills.syncFts(ctx.workspaceId, id);
 			files.push({ id, action, scope: "project", before: project });
-			files.push({ id, action, scope: "global", after: skillRecordOf(stmts.skillGet.get("", id) as unknown as SkillRow) });
+			files.push({ id, action, scope: "global", after: skillRecordOf(skills.getRow("", id) as SkillRow) });
 			intents.push({ partition: "", id, op: "write" });
 			intents.push({ partition: ctx.workspaceId, id, op: "remove" });
 			return { id, action, ok: true };
@@ -891,15 +874,15 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return skillFail(proposal, scope.reason);
 		}
 		const partition = skillPartitionOf(ctx, scope);
-		const existingRow = stmts.skillGet.get(partition, id) as SkillRow | undefined;
+		const existingRow = skills.getRow(partition, id);
 		const existing = existingRow === undefined || existingRow.status === "archived" ? undefined : skillRecordOf(existingRow);
 
 		if (action === "delete") {
 			if (existing === undefined) {
 				return skillFail(proposal, `no ${scope} skill "${id}" to delete`);
 			}
-			stmts.skillDelete.run(partition, id);
-			skillFtsSync(partition, id);
+			skills.deleteRow(partition, id);
+			skills.syncFts(partition, id);
 			files.push({ id, action, scope, before: existing });
 			intents.push({ partition, id, op: "remove" });
 			return { id, action, ok: true };
@@ -916,9 +899,9 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		if (reasons.length > 0) {
 			return skillFail(proposal, reasons[0] ?? "invalid skill");
 		}
-		stmts.skillUpdate.run(merged.fields.title, merged.fields.description, merged.fields.body, now, partition, id);
-		skillFtsSync(partition, id);
-		files.push({ id, action, scope, before: existing, after: skillRecordOf(stmts.skillGet.get(partition, id) as unknown as SkillRow) });
+		skills.updateRow([merged.fields.title, merged.fields.description, merged.fields.body, now, partition, id]);
+		skills.syncFts(partition, id);
+		files.push({ id, action, scope, before: existing, after: skillRecordOf(skills.getRow(partition, id) as SkillRow) });
 		intents.push({ partition, id, op: "write" });
 		return { id, action, ok: true };
 	};
@@ -929,7 +912,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	 * carrying the generated marker are ever written or removed.
 	 */
 	const reconcileSkillFiles = (result: PatrolResult): void => {
-		const active = stmts.skillActiveRows.all() as unknown as SkillRow[];
+		const active = skills.activeRowList();
 		for (const row of active) {
 			const record = skillRecordOf(row);
 			const root = skillRootOf(record.workspaceId);
@@ -977,7 +960,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				if (!content.includes(SKILL_GENERATED_MARKER)) {
 					continue;
 				}
-				const row = stmts.skillGet.get(partition, name) as SkillRow | undefined;
+				const row = skills.getRow(partition, name);
 				if (row !== undefined && row.status === "active") {
 					continue;
 				}
@@ -1080,14 +1063,14 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 					result.quarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
 				}
 			}
-			for (const row of stmts.skillFtsOrphans.all() as { rid: number }[]) {
-				stmts.skillFtsDrop.run(row.rid);
+			for (const rid of skills.ftsOrphanIds()) {
+				skills.dropFtsRow(rid);
 				result.skillOrphanFtsRows += 1;
 			}
-			for (const row of stmts.skillActiveRows.all() as unknown as SkillRow[]) {
+			for (const row of skills.activeRowList()) {
 				const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
 				if (reason !== undefined) {
-					stmts.skillQuarantine.run(row.workspace_id, row.id);
+					skills.quarantineRow(row.workspace_id, row.id);
 					result.skillQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
 					// A quarantined skill must stop loading immediately: drop
 					// its managed file (hand-written files stay, with an error
@@ -1123,27 +1106,17 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			database.close();
 		},
 		getSkill(workspaceId, id) {
-			const row = stmts.skillGet.get(workspaceId, id) as SkillRow | undefined;
+			const row = skills.getRow(workspaceId, id);
 			return row === undefined ? undefined : skillRecordOf(row);
 		},
 		listSkills(workspaceId) {
-			return (stmts.skillList.all(workspaceId) as unknown as SkillRow[]).map(skillRecordOf);
+			return skills.listRows(workspaceId).map(skillRecordOf);
 		},
 		listAllSkills(workspaceId) {
-			return (stmts.skillListAll.all(workspaceId) as unknown as SkillRow[]).map(skillRecordOf);
+			return skills.listVisibleRows(workspaceId).map(skillRecordOf);
 		},
 		searchSkills(workspaceId, query, limit = 20) {
-			const tokens = queryTokens(query);
-			if (tokens.length === 0) {
-				return [];
-			}
-			if (tokens.every((token) => token.length >= 3)) {
-				const hits = stmts.skillFts.all(tokens.map(ftsPhrase).join(" AND "), workspaceId, limit) as unknown as SkillRow[];
-				if (hits.length > 0) {
-					return hits.map(skillRecordOf);
-				}
-			}
-			return skillLikeSearch(workspaceId, tokens, limit);
+			return skills.searchRows(workspaceId, query, limit).map(skillRecordOf);
 		},
 		applySkillProposals(ctx, proposals) {
 			const outcomes: SkillProposalOutcome[] = [];
@@ -1167,7 +1140,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			if (applied) {
 				for (const intent of intents) {
 					const root = skillRootOf(intent.partition);
-					const row = stmts.skillGet.get(intent.partition, intent.id) as SkillRow | undefined;
+					const row = skills.getRow(intent.partition, intent.id);
 					if (intent.op === "write") {
 						if (row === undefined || row.status !== "active") {
 							continue;
@@ -1187,7 +1160,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return { outcomes, warnings };
 		},
 		listSkillWorkspaces() {
-			return (stmts.skillWorkspaces.all() as { workspace_id: string; n: number; u: string }[]).map((row) => ({
+			return skills.workspaceList().map((row) => ({
 				workspaceId: row.workspace_id,
 				activeCount: row.n,
 				updatedAt: row.u,
@@ -1195,16 +1168,14 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		},
 		recordSkillUse(workspaceId: string, skillId: string, scope: string) {
 			try {
-				stmts.skillUseUpsert.run(workspaceId, skillId, scope, new Date().toISOString());
+				skills.recordUsage(workspaceId, [skillId, scope], new Date().toISOString());
 			} catch {
 				// Accounting never fails the read it rides on.
 			}
 		},
 		getSkillUse(workspaceId: string, skillId: string, scope: string) {
 			try {
-				const row = stmts.skillUseGet.get(workspaceId, skillId, scope) as
-					| { use_count: number; last_used_at: string | null }
-					| undefined;
+				const row = skills.getUsage(workspaceId, [skillId, scope]);
 				if (row === undefined) {
 					return undefined;
 				}
@@ -1303,10 +1274,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				if (kind === "memory") {
 					return memories.quarantineRow(workspaceId, id);
 				}
-				const result = stmts.skillQuarantine.run(workspaceId, id) as {
-					changes?: unknown;
-				};
-				return Number(result.changes) > 0;
+				return skills.quarantineRow(workspaceId, id);
 			} catch {
 				return false;
 			}
