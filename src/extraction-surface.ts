@@ -63,7 +63,7 @@ export function evaluateSlice(input: SliceInput): Slice {
 	if (events.length === 0) {
 		return { events, eligible: false, skipReason: "no-new-events", userText: "", userSeqs };
 	}
-	if (containsExplicitMemoryWrite(events)) {
+	if (containsExplicitEvolveWrite(events)) {
 		return { events, eligible: false, skipReason: "direct-memory-write", userText: "", userSeqs };
 	}
 	const userText = directUserText(events);
@@ -74,11 +74,13 @@ export function evaluateSlice(input: SliceInput): Slice {
 }
 
 /**
- * True when the increment already contains a `memory_write` tool call: the
+ * True when the increment already contains an `evolve_write` tool call: the
  * user's explicit instruction was handled in-turn by the gated write path,
- * so re-extracting the same turn would only duplicate it.
+ * so re-extracting the same turn would only duplicate it. The trajectory
+ * rows carry the tool name but not its arguments, so any kind matches —
+ * the pre-unified `memory_write` name matched the same way.
  */
-export function containsExplicitMemoryWrite(events: readonly unknown[]): boolean {
+export function containsExplicitEvolveWrite(events: readonly unknown[]): boolean {
 	for (const raw of events) {
 		if (!raw || typeof raw !== "object") {
 			continue;
@@ -88,7 +90,7 @@ export function containsExplicitMemoryWrite(events: readonly unknown[]): boolean
 			continue;
 		}
 		const name = row.data?.name ?? row.data?.tool ?? row.data?.toolName;
-		if (typeof name === "string" && name.trim() === "memory_write") {
+		if (typeof name === "string" && name.trim() === "evolve_write") {
 			return true;
 		}
 	}

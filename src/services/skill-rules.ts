@@ -2,7 +2,7 @@
  * The mechanical write gates every skill passes before the store accepts it
  * — the same "模型提议，代码保证" boundary as memories, minus the
  * taxonomy: skills carry no type enum and no feedback body contract. Both
- * entry points (the explicit `skill_write` tool and the manual move to the
+ * entry points (the explicit `evolve_write` tool and the manual move to the
  * global scope) funnel through these checks; nothing reaches the database or
  * the materialized files without them.
  *

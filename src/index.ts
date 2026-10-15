@@ -10,9 +10,8 @@
  * - the session-start section (`memory-section.ts`): a store query rendered
  *   as the injected index, frozen per session for the prompt cache;
  * - the model tools (`evolve-tools.ts`): `evolve_write` for every
- *   explicit "记住/忘掉/沉淀" instruction (`kind` selects memory vs skill)
- *   and `evolve_read` for bodies and search, plus the one-version shims
- *   (`memory-tools.ts`, `skill-tools.ts`) keeping the old four names;
+ *   explicit "记住/忘掉/沉淀" instruction (`kind` selects memory vs skill
+ *   vs prompt) and `evolve_read` for bodies and search;
  * - the extraction scheduler (`extraction.ts`): turn-level, per-session
  *   slots, single-flight per session; proposals land only through the
  *   store's gates;
@@ -29,7 +28,7 @@
  * production across every prior release.
  */
 import z from "@deepseek-ai/schemastery";
-import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
+import { mountCardRoutes, type CardWebServer } from "./surfaces/card-routes.js";
 import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./extraction.js";
 import { resolveCallRoute, type RouteResolver } from "./llm-call.js";
 import {
@@ -47,10 +46,8 @@ import type { SurfaceReader } from "./extraction-surface.js";import {
 	DEFAULT_MEMORY_SECTION_ORDER,
 	MEMORY_SECTION_NAME,
 	memorySectionText,
-} from "./memory-section.js";
-import { registerEvolveTools } from "./evolve-tools.js";
-import { registerMemoryTools } from "./memory-tools.js";
-import { registerSkillTools } from "./skill-tools.js";
+} from "./surfaces/memory-section.js";
+import { registerEvolveTools } from "./surfaces/evolve-tools.js";
 import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
 import { createPluginLog, type PluginLog } from "./plugin-log.js";
@@ -176,7 +173,7 @@ function registerSchedulerDisposer(scoped: unknown, dispose: () => void): void {
 	}
 }
 
-/** Register the memory tools through a nested inject (see memory-tools.ts). */
+/** Register the unified tools through a nested inject (see evolve-tools.ts). */
 function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: StoreState, log: PluginLog): void {
 	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
@@ -195,12 +192,8 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
 			);
 			return;
 		}
-		registerMemoryTools(tools as Parameters<typeof registerMemoryTools>[0], store);
-		registerSkillTools(tools as Parameters<typeof registerSkillTools>[0], store);
 		registerEvolveTools(tools as Parameters<typeof registerEvolveTools>[0], store);
 		state.toolsAvailable = true;
-		log.info("memory-tools-registered", "memory_write and memory_read registered (shims over evolve_*)");
-		log.info("skill-tools-registered", "skill_write and skill_read registered (shims over evolve_*)");
 		log.info("evolve-tools-registered", "evolve_write and evolve_read registered");
 	});
 }
@@ -214,7 +207,7 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
  */
 function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig, log: PluginLog): void {
 	if (config.memoryIndex?.extraction === false) {
-		log.info("extraction-disabled", "extraction disabled by config — injection and memory_write remain active");
+		log.info("extraction-disabled", "extraction disabled by config — injection and evolve_write remain active");
 		return;
 	}
 	const nested = host as HostContext & Partial<NestedInjectHost>;
@@ -343,6 +336,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			if (config.memoryCard?.enabled !== false) {
 				mountCardWhenAvailable(host, store, log);
 			}
+			log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 		},
 		(_error: unknown) => {
 			// node:sqlite missing (old runtime) or the database unusable: degrade
@@ -386,5 +380,4 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			);
 		},
 	});
-	log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 }

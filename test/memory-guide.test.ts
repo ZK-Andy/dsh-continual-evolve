@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { MEMORY_GUIDE_RULES, memoryGuideIntro } from "../src/memory-guide.js";
+import { MEMORY_GUIDE_RULES, memoryGuideIntro } from "../src/surfaces/memory-guide.js";
 
 describe("memoryGuideIntro", () => {
 	it("hands out the central store path, the workspace partition, and the read/write split", () => {
 		const intro = memoryGuideIntro("/home/u/.dsh/evolve/memory.db", "/ws", true);
 		expect(intro).toContain("`/home/u/.dsh/evolve/memory.db`");
 		expect(intro).toContain("当前工作区：`/ws`");
-		expect(intro).toContain("memory_read");
-		expect(intro).toContain("memory_write");
+		expect(intro).toContain("evolve_read");
+		expect(intro).toContain("evolve_write");
 		expect(intro).toContain("feedback");
 	});
 
@@ -20,7 +20,7 @@ describe("memoryGuideIntro", () => {
 
 	it("degrades to tell-the-user phrasing when the tools are not available", () => {
 		const intro = memoryGuideIntro("/db", "/ws", false);
-		expect(intro).not.toContain("memory_write");
+		expect(intro).not.toContain("evolve_write");
 		expect(intro).toContain("告诉用户");
 	});
 });

@@ -5,8 +5,8 @@
  * six {@link MemoryStore} methods, so the store assembly stays a thin
  * spread.
  */
-import type { StatementSync } from "node:sqlite";
-import { secretLeakReason } from "../memory-rules.js";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { secretLeakReason } from "../services/memory-rules.js";
 import type { DailyDelta, DailyStats, MemoryStore, PatrolResult, ReviewLogEntry } from "../store-types.js";
 import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
 import type { Repository } from "./repository.js";
@@ -26,10 +26,44 @@ export interface ReviewAccountStmts {
 	reviewLog: StatementSync;
 	reviewLast: StatementSync;
 	reviewEvolved: StatementSync;
+	reviewPrune: StatementSync;
 	dailyGet: StatementSync;
 	dailyUpsert: StatementSync;
 	dailyConsume: StatementSync;
 	dailyMerge: StatementSync;
+}
+
+/**
+ * Prepare every review-account statement up front.
+ * @param database - The open database handle.
+ * @returns The prepared review statement bundle.
+ */
+export function prepareReviewStmts(database: DatabaseSync): ReviewAccountStmts {
+	return {
+		reviewLog: database.prepare(
+			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, model, cheap_usage, evolve_usage, applied, evolve_count) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		),
+		reviewLast: database.prepare(
+			`SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND NOT ${INCOMPLETE_REVIEW_SQL} ORDER BY rowid DESC LIMIT 1`,
+		),
+		reviewEvolved: database.prepare(
+			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND applied = 1",
+		),
+		reviewPrune: database.prepare("DELETE FROM review_log WHERE ts < ?"),
+		dailyGet: database.prepare("SELECT * FROM review_daily WHERE day = ?"),
+		dailyUpsert: database.prepare(
+			"INSERT INTO review_daily (day, budget, reviewed, new_items, requeued, approved, applied, cheap_token, evolve_token, backlog, dropped, skip_top, skip_counts) " +
+				"VALUES (?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL) " +
+				"ON CONFLICT (day) DO UPDATE SET budget = excluded.budget",
+		),
+		dailyConsume: database.prepare("UPDATE review_daily SET reviewed = reviewed + 1 WHERE day = ? AND reviewed < budget"),
+		dailyMerge: database.prepare(
+			"UPDATE review_daily SET new_items = new_items + ?, requeued = requeued + ?, " +
+				"approved = approved + ?, applied = applied + ?, cheap_token = cheap_token + ?, evolve_token = evolve_token + ?, " +
+				"backlog = ?, dropped = dropped + ?, skip_top = ?, skip_counts = ? WHERE day = ?",
+		),
+	};
 }
 
 type ReviewAccountMethods = Pick<

@@ -2,9 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { registerEvolveTools, executeEvolveRead, executeEvolveWrite, type ToolDefinition } from "../src/evolve-tools.js";
-import { registerMemoryTools } from "../src/memory-tools.js";
-import { registerSkillTools } from "../src/skill-tools.js";
+import { registerEvolveTools, executeEvolveRead, executeEvolveWrite, type ToolDefinition } from "../src/surfaces/evolve-tools.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;
@@ -26,8 +24,6 @@ beforeEach(async () => {
 		},
 	};
 	registerEvolveTools(service, store);
-	registerMemoryTools(service, store);
-	registerSkillTools(service, store);
 });
 
 afterEach(() => {
@@ -67,15 +63,8 @@ describe("registration shape", () => {
 		expect(tools.get("evolve_read")?.parameters.required).toEqual(["kind"]);
 	});
 
-	it("registers six tools alongside the shims", () => {
-		expect([...tools.keys()].sort()).toEqual([
-			"evolve_read",
-			"evolve_write",
-			"memory_read",
-			"memory_write",
-			"skill_read",
-			"skill_write",
-		]);
+	it("registers exactly the two unified tools", () => {
+		expect([...tools.keys()].sort()).toEqual(["evolve_read", "evolve_write"]);
 	});
 
 	it("returns a disposer that removes exactly the two unified tools", () => {
@@ -177,35 +166,5 @@ describe("kind dispatch", () => {
 		expect(await run("evolve_write", { kind: "prompt", action: "create" }, noWs)).toContain("无法写入提示词补充");
 		expect(await run("evolve_read", { kind: "prompt" }, noWs)).toContain("无法读取提示词补充");
 		expect(await run("evolve_write", { kind: "thread", action: "create" }, noWs)).toContain("kind 必须是");
-	});
-});
-
-describe("shim equivalence", () => {
-	it("memory shims and unified tools read and write the same rows", async () => {
-		expect(
-			await run("memory_write", { action: "create", id: "shim-mem", type: "user", title: "t", description: "d", body: "via-shim" }),
-		).toContain("已写入记忆 `shim-mem`");
-		expect(await run("evolve_read", { kind: "memory", id: "shim-mem" })).toContain("via-shim");
-		expect(
-			await run("evolve_write", { kind: "memory", action: "create", id: "uni-mem", type: "user", title: "t", description: "d", body: "via-uni" }),
-		).toContain("已写入记忆 `uni-mem`");
-		expect(await run("memory_read", { id: "uni-mem" })).toContain("via-uni");
-	});
-
-	it("skill shims and unified tools read and write the same rows", async () => {
-		const SHIM_FIELDS = { title: "Deploy checklist", description: "pre-release steps", body: "1. build via shim\n2. verify" };
-		const UNI_FIELDS = { title: "Rollback checklist", description: "rollback steps", body: "1. build via uni\n2. verify" };
-		await run("skill_write", { action: "create", id: "shim-skill", ...SHIM_FIELDS });
-		expect(await run("evolve_read", { kind: "skill", id: "shim-skill" })).toContain("Deploy checklist");
-		await run("evolve_write", { kind: "skill", action: "create", id: "uni-skill", ...UNI_FIELDS });
-		expect(await run("skill_read", { id: "uni-skill" })).toContain("Rollback checklist");
-	});
-
-	it("gate rejections match word for word between shim and core", async () => {
-		const bad = { type: "feedback", title: "缺两行", description: "d", body: "没有 Why 和 How" };
-		const viaShim = await run("memory_write", { action: "create", id: "shim-bad", ...bad });
-		const viaUni = await run("evolve_write", { kind: "memory", action: "create", id: "uni-bad", ...bad });
-		expect(viaShim).toContain("写入被门禁拒绝");
-		expect(viaUni).toBe(viaShim);
 	});
 });

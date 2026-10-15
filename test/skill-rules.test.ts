@@ -10,8 +10,8 @@ import {
 	SKILL_SCOPES,
 	skillUsagePartition,
 	validateRenderedSkill,
-} from "../src/skill-rules.js";
-import { isValidMemoryId, slugifyId } from "../src/memory-rules.js";
+} from "../src/services/skill-rules.js";
+import { isValidMemoryId, slugifyId } from "../src/services/memory-rules.js";
 
 const FIELDS = { title: "Deploy checklist", description: "pre-release steps", body: "1. build\n2. verify\n3. publish" };
 

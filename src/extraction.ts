@@ -11,7 +11,7 @@
  * Per-session slots mean one workspace's turns can never delay or displace
  * another's extraction. Everything the pipeline decides mechanically
  * (internal agent, empty increment, no real user prose, an explicit
- * `memory_write` this turn) is skipped AND ledgered — the extraction_log is
+ * `evolve_write` this turn) is skipped AND ledgered — the extraction_log is
  * the account the economics are audited against. Consecutive repeats of one
  * session's quiet-turn skip share a single row there, counted in
  * `occurrences` (see `store.ts`), so the account stays readable at volume.
@@ -24,7 +24,7 @@
 import { ERROR_REASON_MAX, errorText, runExtractionInner } from "./extraction-ring.js";
 import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
-import { cwdOf } from "./memory-section.js";
+import { cwdOf } from "./surfaces/memory-section.js";
 import { resolveCallRoute, type LlmRuntime, type RouteResolver } from "./llm-call.js";
 import type { PluginLog } from "./plugin-log.js";
 

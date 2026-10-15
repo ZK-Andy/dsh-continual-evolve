@@ -4,8 +4,9 @@
  * redesign, ADR `2026-10-06-sqlite-single-store`).
  *
  * The store is a central database only the plugin's code can write; the
- * model reads the injected index, fetches bodies with `memory_read`, and
- * lands explicit writes through `memory_write`. Automatic sedimentation is
+ * model reads the injected index, fetches bodies with `evolve_read`
+ * (kind=memory), and lands explicit writes through `evolve_write`
+ * (kind=memory). Automatic sedimentation is
  * the extraction pipeline's job and the main session must not spend tokens
  * maintaining memory. The write-quality taxonomy (what deserves a memory,
  * type bodies, the ADR boundary) moved to the extraction prompt, which is
@@ -22,9 +23,9 @@ export function memoryGuideIntro(storePath: string, workspaceId: string, toolsAv
 	if (toolsAvailable) {
 		return `# 持久记忆
 
-你的持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`）。下方注入的是本工作区的记忆索引（feedback > user > reference，只有钩子不含正文）；需要某条正文或想按关键词检索，用 \`memory_read\`。
+你的持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`）。下方注入的是本工作区的记忆索引（feedback > user > reference，只有钩子不含正文）；需要某条正文或想按关键词检索，用 \`evolve_read\`（kind=memory）。
 
-用户明确要求记住时，用 \`memory_write\`（action: create）落库——feedback 类的正文必带 **Why:** 与 **How to apply:** 两行；要求忘记时用 action: delete；情况变了用 action: update 改原条目，不另起新条目。
+用户明确要求记住时，用 \`evolve_write\`（kind=memory，action: create）落库——feedback 类的正文必带 **Why:** 与 **How to apply:** 两行；要求忘记时用 action: delete；情况变了用 action: update 改原条目，不另起新条目。
 
 除此之外的沉淀由会话结束后的专职提取流程负责——不要在执行任务途中分心维护记忆。`;
 	}

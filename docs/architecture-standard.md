@@ -1,11 +1,11 @@
 # TS 架构规范
 
-> 适用 `src/` 全部模块（v0.15 SQLite 单库改造后：`store.ts` / `index.ts` / `memory-section.ts` / `memory-guide.ts` / `memory-write.ts` / `extraction.ts` 等，`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
+> 适用 `src/` 全部模块（经典分层后：`store.ts`（存储装配）/ `index.ts`（插件组装根）/ `surfaces/`（工具、卡片、注入、投影）/ `services/`（写门禁执行）/ `data/`（连接、通用仓储、迁移、账本），`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
 
 ## 1. 组装根唯一性
 
 - `index.ts` 是唯一组装根：唯一读 Config、唯一调用 host 注册 API、唯一声明 `inject`。
-- 宿主 API 形状在 `index.ts` 本地声明（不 import DSH 类型包）；section 渲染在 `memory-section.ts`；提示词文案在 `memory-guide.ts`；存储与门禁在 `store.ts`；写工具在 `memory-write.ts`；提取轨在 `extraction.ts`。
+- 宿主 API 形状在 `index.ts` 本地声明（不 import DSH 类型包）；section 渲染与提示词文案在 `surfaces/`；存储装配在 `store.ts`（类型在 `store-types.ts`）；统一读写工具在 `surfaces/evolve-tools.ts`；提取轨在 `extraction.ts`。
 - 一个 system-prompt section 一个注册点；section 名与 order 集中管理。
 
 ## 2. 模块规模预算

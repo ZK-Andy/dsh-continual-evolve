@@ -6,22 +6,16 @@
  * database without the mechanical gates in `prompt-rules.ts`.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import { isValidMemoryId } from "../memory-rules.js";
-import { promptFieldGateReasons, slugifyPromptId, type PromptFields, type PromptProposal } from "../prompt-rules.js";
-import type { ProposalContext } from "../store-apply.js";
-import type { PromptRecord, PromptProposalOutcome } from "../store-types.js";
+import { isValidMemoryId } from "./memory-rules.js";
+import { promptFieldGateReasons, slugifyPromptId, type PromptFields, type PromptProposal } from "./prompt-rules.js";
+import type { ProposalContext } from "./memory-apply.js";
+import type { LedgerFile, PromptRecord, PromptProposalOutcome } from "../store-types.js";
 import { writePromptLedger } from "../data/ledger.js";
 import { promptRecordOf, type PromptRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";
 
-/** A ledger file payload entry (before/after snapshots for undo). */
-export interface PromptLedgerFile {
-	id: string;
-	action: PromptProposal["action"];
-	before?: PromptRecord;
-	after?: PromptRecord;
-	sourceSeqs?: string | undefined;
-}
+/** A prompt mutation's audit payload (action/record pinned, shape shared). */
+export type PromptLedgerFile = LedgerFile<PromptProposal["action"], PromptRecord>;
 
 /** The proposal id, derived from the title (slug, CJK-hash fallback) on create. */
 function promptIdFor(proposal: PromptProposal): string {

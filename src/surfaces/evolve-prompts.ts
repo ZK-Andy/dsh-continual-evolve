@@ -4,7 +4,8 @@
  * unified dispatcher (`./evolve-tools.js`); prompts have no legacy tool
  * names, so there are no shims — `kind: "prompt"` is the only path.
  */
-import type { MemoryStore, PromptRecord } from "./store.js";
+import { clampLimit, stringField } from "./evolve-fields.js";
+import type { MemoryStore, PromptRecord } from "../store.js";
 
 /** Write fields the prompt executor accepts (narrowed from the dispatcher). */
 export interface PromptWriteFields {
@@ -20,10 +21,6 @@ export interface PromptReadFields {
 	id?: string | undefined;
 	query?: string | undefined;
 	limit?: unknown;
-}
-
-function stringField(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -86,13 +83,6 @@ export function readPromptRecords(store: MemoryStore, workspaceId: string, args:
 		return query.length > 0 ? `没有匹配 "${query}" 的提示词补充。` : "本工作区还没有提示词补充。";
 	}
 	return records.map(formatPromptRecord).join("\n\n---\n\n");
-}
-
-function clampLimit(value: unknown): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		return 3;
-	}
-	return Math.min(10, Math.max(1, Math.floor(value)));
 }
 
 /** Full prompt record text: header line, then the body the index omitted. */

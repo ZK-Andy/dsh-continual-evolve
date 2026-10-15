@@ -18,7 +18,7 @@ import { extractionGate, extractionMain } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentAnswer, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import type { LedgerEntry, MemoryStore } from "./store.js";
 import type { ExtractionDeps, ExtractionResult, ExtractionTarget, RunOptions } from "./extraction.js";
-import type { MemoryProposal } from "./memory-rules.js";
+import type { MemoryProposal } from "./services/memory-rules.js";
 
 /** Head length of a failed run's raw answer kept in the ledger `files` column. */
 const FAILURE_RAW_MAX = 2048;

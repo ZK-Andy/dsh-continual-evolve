@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { importWorkspaceMd } from "../src/import-md.js";
-import { listCardWorkspaces, memoryEntryContent, memorySnapshot } from "../src/memory-snapshot.js";
+import { listCardWorkspaces, memoryEntryContent, memorySnapshot } from "../src/surfaces/memory-snapshot.js";
 import { openMemoryStore, MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;

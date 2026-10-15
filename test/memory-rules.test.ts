@@ -8,7 +8,7 @@ import {
 	MEMORY_TITLE_LIMIT,
 	secretLeakReason,
 	slugifyId,
-} from "../src/memory-rules.js";
+} from "../src/services/memory-rules.js";
 
 describe("isValidMemoryId", () => {
 	it("accepts kebab slugs", () => {

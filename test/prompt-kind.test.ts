@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mountCardRoutes, type CardResponse } from "../src/card-routes.js";
-import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/prompt-routes.js";
-import { registerEvolveTools, type ToolDefinition } from "../src/evolve-tools.js";
+import { mountCardRoutes, type CardResponse } from "../src/surfaces/card-routes.js";
+import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/surfaces/prompt-routes.js";
+import { registerEvolveTools, type ToolDefinition } from "../src/surfaces/evolve-tools.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;

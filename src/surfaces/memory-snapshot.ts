@@ -8,8 +8,8 @@
  */
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "./store.js";
-import { skillUsagePartition } from "./skill-rules.js";
+import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "../store.js";
+import { skillUsagePartition } from "../services/skill-rules.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
 

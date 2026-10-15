@@ -13,8 +13,20 @@
  */
 import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
 import { mountPromptRoutes } from "./prompt-routes.js";
-import type { MemoryStore } from "./store.js";
-import { canonicalPath } from "./workspace-hint.js";
+import {
+	idParamOf,
+	isGet,
+	rootParamOf,
+	sendJson,
+	type CardRequest,
+	type CardResponse,
+	type CardRoute,
+	type CardWebServer,
+} from "./card-http.js";
+import type { MemoryStore } from "../store.js";
+import { canonicalPath } from "../workspace-hint.js";
+
+export type { CardRequest, CardResponse, CardRoute, CardWebServer };
 
 /** URL prefix of the card API (kind-exact routes registered under it). */
 export const CARD_API_WORKSPACES_PATH = "/dsh-continual-evolve/api/v1/workspaces";
@@ -22,30 +34,6 @@ export const CARD_API_MEMORY_PATH = "/dsh-continual-evolve/api/v1/memory";
 export const CARD_API_MEMORY_FILE_PATH = "/dsh-continual-evolve/api/v1/memory/file";
 export const CARD_API_SKILLS_PATH = "/dsh-continual-evolve/api/v1/skills";
 export const CARD_API_SKILL_FILE_PATH = "/dsh-continual-evolve/api/v1/skills/file";
-
-/** Minimal request shape the handlers touch (Node IncomingMessage subset). */
-export interface CardRequest {
-	method?: string;
-	url?: string;
-}
-
-/** Minimal response shape the handlers touch (Node ServerResponse subset). */
-export interface CardResponse {
-	writeHead(status: number, headers?: Record<string, string>): unknown;
-	end(body?: string): unknown;
-}
-
-/** One `kind: "exact"` route registration on the host web server. */
-export interface CardRoute {
-	kind: "exact";
-	path: string;
-	handler(request: CardRequest, response: CardResponse): void;
-}
-
-/** Minimal webServer surface the card mounts on. */
-export interface CardWebServer {
-	register(route: CardRoute): unknown;
-}
 
 /**
  * Per-request hints the mount takes from the host. Both are optional: a host
@@ -58,15 +46,6 @@ export interface CardRouteOptions {
 	 * workspace attached while the card is open is picked up on refresh.
 	 */
 	currentWorkspace?: (() => string | undefined) | undefined;
-}
-
-function sendJson(response: CardResponse, status: number, body: unknown): void {
-	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-	response.end(JSON.stringify(body));
-}
-
-function isGet(request: CardRequest): boolean {
-	return (request.method ?? "GET") === "GET";
 }
 
 /** The card's read fence: a root only resolves when the store has rows for it. */
@@ -230,7 +209,7 @@ export function mountCardRoutes(
 				}
 				// Human previews are display-only: people never audit skills by
 				// reading them, so previews leave no count. Only model-side
-				// consultation (skill_read by id) feeds the heartbeat.
+				// consultation (`evolve_read` by id) feeds the heartbeat.
 				sendJson(response, 200, {
 					id: content.id,
 					scope: content.scope,
@@ -248,37 +227,6 @@ export function mountCardRoutes(
 			}
 		}
 	};
-}
-
-/** The decoded `root` query parameter, or null when absent/relative. */
-function rootParamOf(request: CardRequest): string | null {
-	try {
-		const url = new URL(request.url ?? "/", "http://dsh-card.invalid");
-		const root = url.searchParams.get("root");
-		if (root === null || root.trim().length === 0) {
-			return null;
-		}
-		return root;
-	} catch (error) {
-		// A malformed URL is a bad request, not a crash: null maps to 400.
-		void error;
-		return null;
-	}
-}
-
-/** The decoded `id` query parameter, or null when absent. */
-function idParamOf(request: CardRequest): string | null {
-	try {
-		const url = new URL(request.url ?? "/", "http://dsh-card.invalid");
-		const id = url.searchParams.get("id");
-		if (id === null || id.trim().length === 0) {
-			return null;
-		}
-		return id;
-	} catch (error) {
-		void error;
-		return null;
-	}
 }
 
 /**

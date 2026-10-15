@@ -1,11 +1,9 @@
 /**
  * The unified model-facing tools: `evolve_write` (one write path for every
  * managed object, `kind` selects the object) and `evolve_read` (one read
- * path). The old four tools (`memory_write` / `memory_read` / `skill_write` /
- * `skill_read`) are thin shims over the two core executors below — the
- * shims keep their names, schemas, and reply texts, and forward every call.
- * Kind-specific logic lives once in `./evolve-memory.js` and
- * `./evolve-skills.js`; this file only dispatches on `kind`.
+ * path). Kind-specific logic lives once in `./evolve-memory.js`,
+ * `./evolve-skills.js`, and `./evolve-prompts.js`; this file only
+ * dispatches on `kind`.
  *
  * Definitions are hand-built to the shape `ctx.tools.register` consumes
  * (standard JSON Schema with a root-level `required` array — the
@@ -17,8 +15,9 @@
 import { readMemoryRecords, writeMemoryRecord } from "./evolve-memory.js";
 import { readPromptRecords, writePromptRecord } from "./evolve-prompts.js";
 import { readSkillRecords, writeSkillRecord } from "./evolve-skills.js";
+import { stringField } from "./evolve-fields.js";
 import { cwdOf } from "./memory-section.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 
 /** Minimal slice of the host tools service. */
 export interface ToolsService {
@@ -160,10 +159,6 @@ export interface EvolveReadArgs {
 	id?: string | undefined;
 	query?: string | undefined;
 	limit?: unknown;
-}
-
-function stringField(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
 }
 
 /**

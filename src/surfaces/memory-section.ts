@@ -6,7 +6,7 @@
  * The injected index is a query result, not a file: one line per active
  * memory of the assembling agent's workspace, feedback > user > reference,
  * hooks only (title + description). Bodies live in the database and are
- * fetched on demand with `memory_read`; there is no MEMORY.md to maintain
+ * fetched on demand with `evolve_read`; there is no MEMORY.md to maintain
  * and nothing for the model to write directly.
  *
  * Session-freeze contract (the prompt-cache guard): the section is computed
@@ -16,7 +16,7 @@
  */
 import { isAbsolute, join, resolve } from "node:path";
 import { memoryGuideIntro, MEMORY_GUIDE_RULES } from "./memory-guide.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 
 /** Name of the injected section (unique — duplicate names throw upstream). */
 export const MEMORY_SECTION_NAME = "evolve:memory-index";
@@ -93,7 +93,7 @@ export function fitIndex(index: string, maxChars: number): IndexFit {
 	return { text, dropped: index.length - text.length };
 }
 
-/** One index line: hook only — bodies are a `memory_read` call away. */
+/** One index line: hook only — bodies are an `evolve_read` call away. */
 export function indexLineOf(record: {
 	id: string;
 	title: string;
@@ -111,7 +111,7 @@ export interface MemorySectionOptions {
 	maxChars?: number;
 	/** Include the when-to-save guide (default true). */
 	guide?: boolean;
-	/** Whether `memory_write`/`memory_read` are actually registered on this host. */
+	/** Whether `evolve_write`/`evolve_read` are actually registered on this host. */
 	toolsAvailable?: boolean;
 }
 
@@ -143,10 +143,10 @@ export function memorySectionText(agent: unknown, opts: MemorySectionOptions): s
 	} else if (text.length > 0) {
 		parts.push(`<memories>\n${text}\n</memories>`);
 		if (dropped > 0) {
-			parts.push(`（索引超出 ${maxChars} 字符预算，已截断——其余记忆用 \`memory_read\` 关键词检索）`);
+			parts.push(`（索引超出 ${maxChars} 字符预算，已截断——其余记忆用 \`evolve_read\` 关键词检索）`);
 		}
 	} else {
-		parts.push(`（索引超出 ${maxChars} 字符预算，一行都放不下——记忆用 \`memory_read\` 关键词检索）`);
+		parts.push(`（索引超出 ${maxChars} 字符预算，一行都放不下——记忆用 \`evolve_read\` 关键词检索）`);
 	}
 	if (!guide) {
 		return records.length === 0 ? "" : parts.join("\n\n");

@@ -8,7 +8,7 @@ import {
 	fitIndex,
 	memoryDirFor,
 	memorySectionText,
-} from "../src/memory-section.js";
+} from "../src/surfaces/memory-section.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let workspace = "";
@@ -112,8 +112,8 @@ describe("memorySectionText", () => {
 		expect(text).toContain("# 持久记忆");
 		expect(text).toContain(store.path);
 		expect(text).toContain(`<memories>\n- [fedora-env] Fedora 环境 — Fedora 环境 的钩子（user）\n</memories>`);
-		expect(text).toContain("memory_read");
-		expect(text).toContain("memory_write");
+		expect(text).toContain("evolve_read");
+		expect(text).toContain("evolve_write");
 	});
 
 	it("orders the index feedback > user > reference and shows hooks, not bodies", () => {
@@ -145,7 +145,7 @@ describe("memorySectionText", () => {
 		seed("c", "user", "丙");
 		const text = memorySectionText(agentAt(workspace), { store, maxChars: 40, guide: false });
 		expect(text).toContain("已截断");
-		expect(text).toContain("memory_read");
+		expect(text).toContain("evolve_read");
 		const shown = text.split("\n").filter((line) => line.startsWith("- ["));
 		expect(shown.length).toBeLessThan(3);
 	});
@@ -175,7 +175,7 @@ describe("memorySectionText", () => {
 	it("swaps to the no-tools phrasing when tool registration failed", () => {
 		seed("fedora-env", "user", "Fedora 环境");
 		const text = memorySectionText(agentAt(workspace), { store, toolsAvailable: false });
-		expect(text).not.toContain("memory_write");
+		expect(text).not.toContain("evolve_write");
 		expect(text).toContain("告诉用户");
 	});
 });

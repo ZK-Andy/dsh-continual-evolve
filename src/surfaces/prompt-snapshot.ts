@@ -5,7 +5,7 @@
  * over the workspace's `prompts` partition. Prompts project to no files,
  * so the snapshot lists store rows directly; usage decorates each row.
  */
-import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type PromptRecord } from "./store.js";
+import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type PromptRecord } from "../store.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
 

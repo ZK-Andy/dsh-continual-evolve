@@ -1,7 +1,7 @@
 /**
  * The mechanical write gates every memory passes before the store accepts it
  * — the "模型提议，代码保证" boundary made literal. Both write paths (the
- * explicit `memory_write` tool and the proposal-based extraction) funnel
+ * explicit `evolve_write` tool and the proposal-based extraction) funnel
  * through these checks; nothing reaches the database without them.
  *
  * Type taxonomy and the boundary judgment (what deserves a memory at all)

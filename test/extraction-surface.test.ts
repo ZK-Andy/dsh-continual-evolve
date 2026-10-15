@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	boundaryCursorOf,
-	containsExplicitMemoryWrite,
+	containsExplicitEvolveWrite,
 	countWords,
 	evaluateSlice,
 	eventsAfterCursor,
@@ -30,12 +30,12 @@ describe("evaluateSlice", () => {
 		expect(slice.skipReason).toBe("no-new-events");
 	});
 
-	it("skips increments whose only tool calls are explicit memory writes", () => {
+	it("skips increments whose only tool calls are explicit evolve writes", () => {
 		const events = [
 			userMessage(1, "记住我在用 Fedora"),
-			{ seq: 2, type: "tool/call", data: { name: "memory_write" } },
+			{ seq: 2, type: "tool/call", data: { name: "evolve_write" } },
 		];
-		expect(containsExplicitMemoryWrite(events)).toBe(true);
+		expect(containsExplicitEvolveWrite(events)).toBe(true);
 		expect(evaluateSlice({ events, internalAgent: false }).skipReason).toBe("direct-memory-write");
 	});
 

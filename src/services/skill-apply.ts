@@ -2,26 +2,19 @@
  * The skill write gate: validate one skill proposal and land it. The batch
  * (transaction, file intents, ledger) stays with the store assembly; this
  * module owns per-proposal validation and row mutation, mirroring
- * `store-apply.ts` for memories. Nothing reaches the database without the
+ * `memory-apply.ts` for memories. Nothing reaches the database without the
  * mechanical gates in `skill-rules.ts`.
  */
-import type { ProposalContext } from "../store-apply.js";
-import type { SkillFields, SkillProposal } from "../skill-rules.js";
-import { isValidMemoryId } from "../memory-rules.js";
-import { skillFieldGateReasons, slugifySkillId } from "../skill-rules.js";
-import type { SkillRecord, SkillProposalOutcome } from "../store-types.js";
+import type { ProposalContext } from "./memory-apply.js";
+import type { SkillFields, SkillProposal } from "./skill-rules.js";
+import { isValidMemoryId } from "./memory-rules.js";
+import { skillFieldGateReasons, slugifySkillId } from "./skill-rules.js";
+import type { LedgerFile, SkillRecord, SkillProposalOutcome } from "../store-types.js";
 import { skillRecordOf, type SkillRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";
 
-/** A ledger file payload entry (before/after snapshots for undo). */
-export interface SkillLedgerFile {
-	id: string;
-	action: SkillProposal["action"];
-	scope: string;
-	before?: SkillRecord;
-	after?: SkillRecord;
-	sourceSeqs?: string | undefined;
-}
+/** A skill mutation's audit payload (action/record pinned, shape shared). */
+export type SkillLedgerFile = LedgerFile<SkillProposal["action"], SkillRecord>;
 
 /** A post-commit file operation (files sync after COMMIT, never fail the batch). */
 export interface SkillFileIntent {

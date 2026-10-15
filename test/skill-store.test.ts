@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openMemoryStore, type MemoryStore, type SkillProposalOutcome } from "../src/store.js";
-import { renderSkillMarkdown, SKILL_GENERATED_MARKER } from "../src/skill-rules.js";
+import { renderSkillMarkdown, SKILL_GENERATED_MARKER } from "../src/services/skill-rules.js";
 
 let dbPath = "";
 let store: MemoryStore;

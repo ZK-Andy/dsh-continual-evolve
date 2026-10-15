@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apply, type EvolveConfig } from "../src/index.js";
-import { MEMORY_SECTION_NAME } from "../src/memory-section.js";
+import { MEMORY_SECTION_NAME } from "../src/surfaces/memory-section.js";
 
 interface RecordedSection {
 	name: string;
@@ -139,26 +140,37 @@ describe("apply tool wiring", () => {
 		return { sections: base.sections, host, tools };
 	}
 
-	it("registers the unified tools and the four shims once the store is open", async () => {
+	it("registers the two unified tools once the store is open", async () => {
 		const { sections, host, tools } = makeCtxWithServices();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (tools.size !== 6) {
+			if (tools.size !== 2) {
 				throw new Error("tools not registered yet");
 			}
 		});
-		expect([...tools.keys()].sort()).toEqual([
-			"evolve_read",
-			"evolve_write",
-			"memory_read",
-			"memory_write",
-			"skill_read",
-			"skill_write",
-		]);
+		expect([...tools.keys()].sort()).toEqual(["evolve_read", "evolve_write"]);
 		// The rendered guide names the tools now that they exist.
 		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-tools-"));
 		const text = await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
-		expect(text).toContain("memory_write");
+		expect(text).toContain("evolve_write");
+	});
+
+	it("lands section-registered in plugin_log once the store is open", async () => {
+		const { host } = makeCtxWithServices();
+		apply(host, fullConfig);
+		await vi.waitFor(() => {
+			const db = new DatabaseSync(join(dshHome, "evolve", "memory.db"));
+			try {
+				const row = db.prepare("SELECT COUNT(*) AS n FROM plugin_log WHERE event = 'section-registered'").get() as {
+					n: number;
+				};
+				if (row.n === 0) {
+					throw new Error("section-registered not ledgered yet");
+				}
+			} finally {
+				db.close();
+			}
+		});
 	});
 
 	it("keeps injection alive on a host without the tools service", async () => {
@@ -167,8 +179,8 @@ describe("apply tool wiring", () => {
 		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-notools-"));
 		const text = await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
 		expect(text).toContain("# 持久记忆");
-		expect(text).not.toContain("memory_write");
-		expect(text).not.toContain("memory_read");
+		expect(text).not.toContain("evolve_write");
+		expect(text).not.toContain("evolve_read");
 		expect(text).toContain("告诉用户");
 	});
 });

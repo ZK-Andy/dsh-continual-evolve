@@ -15,7 +15,7 @@ import {
 	SKILL_GENERATED_MARKER,
 	skillDir,
 	validateRenderedSkill,
-} from "../skill-rules.js";
+} from "../services/skill-rules.js";
 import type { PatrolResult, SkillFileWarning, SkillRecord } from "../store-types.js";
 import { skillRecordOf, type SkillRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";

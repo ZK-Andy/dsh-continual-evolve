@@ -5,10 +5,10 @@
  * `./store.js` (assembly), `./data/*` ( SQL and accounts), and
  * `./services/skill-apply.js` (skill writes); this file carries no SQL.
  */
-import type { MemoryProposal } from "./memory-rules.js";
-import type { PromptProposal } from "./prompt-rules.js";
-import type { SkillProposal } from "./skill-rules.js";
-import type { ProposalContext, ProposalOutcome } from "./store-apply.js";
+import type { MemoryProposal } from "./services/memory-rules.js";
+import type { PromptProposal } from "./services/prompt-rules.js";
+import type { SkillProposal } from "./services/skill-rules.js";
+import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
 
@@ -96,6 +96,22 @@ export interface PromptProposalOutcome {
 	ok: boolean;
 	/** Blocking reason when `ok` is false. */
 	reason?: string;
+}
+
+/**
+ * One mutation's audit payload, embedded in a ledger row's `files` JSON
+ * (before/after snapshots for undo). Single definition — the three write
+ * paths alias it with their own action/record types instead of redeclaring
+ * the shape.
+ */
+export interface LedgerFile<Action extends string = string, Snapshot = unknown> {
+	id: string;
+	action: Action;
+	/** Skill scope for skill rows; absent for memories and prompts. */
+	scope?: string | undefined;
+	before?: Snapshot | undefined;
+	after?: Snapshot | undefined;
+	sourceSeqs?: string | undefined;
 }
 
 /** One per-item content-review verdict (the `item-review` account's row). */

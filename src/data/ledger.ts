@@ -4,7 +4,8 @@
  * stays with the store assembly, JSON encoding and skip coalescing live
  * here exactly once.
  */
-import type { StatementSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { LEDGER_OCCURRENCES } from "./migrate.js";
 import { COALESCED_SKIP_REASONS, type LedgerEntry } from "../store-types.js";
 
 /**
@@ -113,6 +114,75 @@ export function latestWorkspaceId(rows: readonly ({ workspace_id?: unknown; ts?:
 	}
 	return best?.workspaceId;
 }
+/**
+ * The prepared ledger and log statements (extraction/skill/prompt ledgers,
+ * recency probes, prune deletes, plugin log). Preparation lives here with
+ * the writers; the store assembly only composes the bundle.
+ */
+export interface LedgerStmts {
+	ledger: StatementSync;
+	latestSkip: StatementSync;
+	bumpSkip: StatementSync;
+	prune: StatementSync;
+	skillLog: StatementSync;
+	skillPrune: StatementSync;
+	promptLog: StatementSync;
+	promptPrune: StatementSync;
+	recentLedger: StatementSync;
+	recentSkill: StatementSync;
+	recentPrompt: StatementSync;
+	pluginLog: StatementSync;
+	pluginLogPrune: StatementSync;
+}
+
+/**
+ * Prepare every ledger and log statement up front.
+ * @param database - The open database handle.
+ * @returns The prepared ledger statement bundle.
+ */
+export function prepareLedgerStmts(database: DatabaseSync): LedgerStmts {
+	return {
+		ledger: database.prepare(
+			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		),
+		latestSkip: database.prepare(
+			"SELECT rowid AS rid, skip_reason AS reason, status FROM extraction_log " +
+				"WHERE workspace_id IS ? AND session_id IS ? ORDER BY ts DESC, rowid DESC LIMIT 1",
+		),
+		bumpSkip: database.prepare(
+			`UPDATE extraction_log SET ts = ?, ${LEDGER_OCCURRENCES} = ${LEDGER_OCCURRENCES} + 1 WHERE rowid = ?`,
+		),
+		prune: database.prepare("DELETE FROM extraction_log WHERE ts < ?"),
+		skillLog: database.prepare(
+			"INSERT INTO skill_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files, warnings) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		),
+		skillPrune: database.prepare("DELETE FROM skill_log WHERE ts < ?"),
+		promptLog: database.prepare(
+			"INSERT INTO prompt_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		),
+		promptPrune: database.prepare("DELETE FROM prompt_log WHERE ts < ?"),
+		recentLedger: database.prepare(
+			"SELECT workspace_id, MAX(ts) AS ts FROM extraction_log " +
+				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+		),
+		recentSkill: database.prepare(
+			"SELECT workspace_id, MAX(ts) AS ts FROM skill_log " +
+				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+		),
+		recentPrompt: database.prepare(
+			"SELECT workspace_id, MAX(ts) AS ts FROM prompt_log " +
+				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+		),
+		pluginLog: database.prepare(
+			"INSERT INTO plugin_log (ts, level, event, message, workspace_id, session_id) VALUES (?, ?, ?, ?, ?, ?)",
+		),
+		pluginLogPrune: database.prepare("DELETE FROM plugin_log WHERE ts < ?"),
+	};
+}
+
 /**
  * Fold a repeat of the previous row's mechanical skip into that row: the
  * quiet turns of one session are one cursor position, so they are one

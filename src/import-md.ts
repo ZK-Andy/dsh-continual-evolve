@@ -13,7 +13,7 @@
  */
 import { existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { slugifyId, type MemoryType } from "./memory-rules.js";
+import { slugifyId, type MemoryType } from "./services/memory-rules.js";
 import { MD_IMPORT_STATE_KEY, type MemoryStore } from "./store.js";
 
 /** The MD-era index file (imported rows come from the other .md files). */

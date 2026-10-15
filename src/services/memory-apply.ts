@@ -5,7 +5,7 @@
  * fails. Explicit tool writes and extraction runs land through this same
  * gate — there is no other writer.
  */
-import type { DatabaseSync, StatementSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import {
 	fieldGateReasons,
 	isValidMemoryId,
@@ -13,8 +13,10 @@ import {
 	type MemoryType,
 	slugifyId,
 } from "./memory-rules.js";
-import type { LedgerEntry, MemoryRecord } from "./store-types.js";
-import { type Repository } from "./data/repository.js";
+import type { LedgerEntry, LedgerFile, MemoryRecord } from "../store-types.js";
+import { writeMemoryLedger } from "../data/ledger.js";
+import { recordOf, type MemoryRow } from "../data/records.js";
+import { type Repository } from "../data/repository.js";
 
 /** What a single proposal produced. */
 export interface ProposalOutcome {
@@ -43,14 +45,8 @@ export interface ProposalContext {
 	decision?: string | undefined;
 }
 
-/** One mutation's audit payload (embedded in the ledger row's `files` JSON). */
-interface LedgerFile {
-	id: string;
-	action: MemoryProposal["action"];
-	before?: MemoryRecord;
-	after?: MemoryRecord;
-	sourceSeqs?: string | undefined;
-}
+/** One memory mutation's audit payload (action/record pinned, shape shared). */
+type MemoryLedgerFile = LedgerFile<MemoryProposal["action"], MemoryRecord>;
 
 /** Minimal database face `applyProposals` needs (store.ts hands the real one). */
 export interface ApplyDatabase {
@@ -58,40 +54,6 @@ export interface ApplyDatabase {
 	now(): string;
 	/** The memories repository: all memories-table access goes through it. */
 	memories: Repository<MemoryRow>;
-}
-
-interface MemoryRow {
-	workspace_id: string;
-	id: string;
-	type: string;
-	title: string;
-	description: string;
-	body: string;
-	status: string;
-	source_session: string | null;
-	source_seqs: string | null;
-	source_run: string | null;
-	corrects: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-function recordOf(row: MemoryRow): MemoryRecord {
-	return {
-		workspaceId: row.workspace_id,
-		id: row.id,
-		type: row.type as MemoryRecord["type"],
-		title: row.title,
-		description: row.description,
-		body: row.body,
-		status: row.status as MemoryRecord["status"],
-		sourceSession: row.source_session,
-		sourceSeqs: row.source_seqs,
-		sourceRun: row.source_run,
-		corrects: row.corrects ?? null,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at,
-	};
 }
 
 /**
@@ -106,7 +68,7 @@ export function applyProposals(
 ): { outcomes: ProposalOutcome[]; applied: boolean } {
 	const started = Date.now();
 	const outcomes: ProposalOutcome[] = [];
-	const files: LedgerFile[] = [];
+	const files: MemoryLedgerFile[] = [];
 	const runId = ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : undefined);
 
 	db.database.exec("BEGIN");
@@ -137,7 +99,7 @@ export function applyProposals(
 	if (!applied) {
 		ledger.decision = `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
 	}
-	writeLedger(db.database.prepare(LEDGER_SQL), ledger);
+	writeMemoryLedger(db.database.prepare(LEDGER_SQL), ledger);
 	return { outcomes, applied };
 }
 
@@ -145,31 +107,12 @@ const LEDGER_SQL =
 	"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files) " +
 	"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-function writeLedger(stmt: StatementSync, entry: LedgerEntry): void {
-	stmt.run(
-		entry.runId ?? null,
-		new Date().toISOString(),
-		entry.sessionId ?? null,
-		entry.workspaceId ?? null,
-		entry.trigger,
-		entry.decision ?? null,
-		entry.skipReason ?? null,
-		entry.status ?? null,
-		entry.durationMs ?? null,
-		entry.model ?? null,
-		entry.usage === undefined ? null : JSON.stringify(entry.usage),
-		entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
-		entry.cheapError ?? null,
-		entry.files === undefined ? null : JSON.stringify(entry.files),
-	);
-}
-
 /** Validate one proposal and land it; appends the audit payload on success. */
 function applyOne(
 	db: ApplyDatabase,
 	ctx: ProposalContext,
 	proposal: MemoryProposal,
-	files: LedgerFile[],
+	files: MemoryLedgerFile[],
 ): ProposalOutcome {
 	const action = proposal.action;
 	if (action !== "create" && action !== "update" && action !== "delete") {

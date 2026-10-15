@@ -2,12 +2,11 @@
  * The skill half of the unified tools: write and read over the `skills`
  * table (project partition plus the global `""` partition, project
  * shadowing global). Called only from the unified dispatcher
- * (`./evolve-tools.js`); the `skill_*` shims reach it through the same
- * dispatcher, never directly. Reply wording matches the old `skill_write` /
- * `skill_read` tools verbatim so shim callers observe no change.
+ * (`./evolve-tools.js`). Reply wording preserves the long-standing tool texts.
  */
-import { skillUsagePartition } from "./skill-rules.js";
-import type { MemoryStore, SkillRecord } from "./store.js";
+import { skillUsagePartition } from "../services/skill-rules.js";
+import { clampLimit, stringField } from "./evolve-fields.js";
+import type { MemoryStore, SkillRecord } from "../store.js";
 
 /** Write fields the skill executor accepts (narrowed from the dispatcher). */
 export interface SkillWriteFields {
@@ -24,10 +23,6 @@ export interface SkillReadFields {
 	id?: string | undefined;
 	query?: string | undefined;
 	limit?: unknown;
-}
-
-function stringField(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -90,13 +85,6 @@ export function readSkillRecords(store: MemoryStore, workspaceId: string, args: 
 		return query.length > 0 ? `没有匹配 "${query}" 的技能。` : "本项目和全局都还没有技能。";
 	}
 	return merged.map((entry) => formatSkill(entry.record, entry.scope)).join("\n\n---\n\n");
-}
-
-function clampLimit(value: unknown): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		return 3;
-	}
-	return Math.min(10, Math.max(1, Math.floor(value)));
 }
 
 /** Full skill text: header line with scope, then the body. */

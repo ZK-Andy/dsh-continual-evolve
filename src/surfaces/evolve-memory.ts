@@ -1,11 +1,10 @@
 /**
  * The memory half of the unified tools: write and read over the `memories`
- * table. Called only from the unified dispatcher (`./evolve-tools.js`);
- * the `memory_*` shims reach it through the same dispatcher, never
- * directly. Reply wording matches the old `memory_write` / `memory_read`
- * tools verbatim so shim callers observe no change.
+ * table. Called only from the unified dispatcher (`./evolve-tools.js`).
+ * Reply wording preserves the long-standing tool texts.
  */
-import type { MemoryRecord, MemoryStore } from "./store.js";
+import { clampLimit, stringField } from "./evolve-fields.js";
+import type { MemoryRecord, MemoryStore } from "../store.js";
 
 /** Write fields the memory executor accepts (narrowed from the dispatcher). */
 export interface MemoryWriteFields {
@@ -22,10 +21,6 @@ export interface MemoryReadFields {
 	id?: string | undefined;
 	query?: string | undefined;
 	limit?: unknown;
-}
-
-function stringField(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
 }
 
 function fieldsOf(args: MemoryWriteFields): {
@@ -103,13 +98,6 @@ export function readMemoryRecords(store: MemoryStore, workspaceId: string, args:
 		return query.length > 0 ? `没有匹配 "${query}" 的记忆。` : "本工作区还没有记忆。";
 	}
 	return records.map(formatMemoryRecord).join("\n\n---\n\n");
-}
-
-function clampLimit(value: unknown): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		return 3;
-	}
-	return Math.min(10, Math.max(1, Math.floor(value)));
 }
 
 /** Full memory record text: header line, then the body the index omitted. */

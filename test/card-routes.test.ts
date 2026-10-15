@@ -12,8 +12,8 @@ import {
 	type CardRequest,
 	type CardRoute,
 	type CardWebServer,
-} from "../src/card-routes.js";
-import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/prompt-routes.js";
+} from "../src/surfaces/card-routes.js";
+import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/surfaces/prompt-routes.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;

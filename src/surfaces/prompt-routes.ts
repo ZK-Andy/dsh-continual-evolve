@@ -4,53 +4,13 @@
  * fence (the store answers 404 for unknown roots — no filesystem oracle),
  * same GET-only contract, same never-throw-past-the-response discipline.
  */
-import type { CardRequest, CardResponse, CardRoute, CardWebServer } from "./card-routes.js";
+import { idParamOf, isGet, rootParamOf, sendJson, type CardRoute, type CardWebServer } from "./card-http.js";
 import { promptEntryContent, promptSnapshot } from "./prompt-snapshot.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 
 /** URL paths of the prompt API (kind-exact routes under the card prefix). */
 export const CARD_API_PROMPTS_PATH = "/dsh-continual-evolve/api/v1/prompts";
 export const CARD_API_PROMPT_FILE_PATH = "/dsh-continual-evolve/api/v1/prompts/file";
-
-function sendJson(response: CardResponse, status: number, body: unknown): void {
-	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-	response.end(JSON.stringify(body));
-}
-
-function isGet(request: CardRequest): boolean {
-	return (request.method ?? "GET") === "GET";
-}
-
-/** The decoded `root` query parameter, or null when absent/relative. */
-function rootParamOf(request: CardRequest): string | null {
-	try {
-		const url = new URL(request.url ?? "/", "http://dsh-card.invalid");
-		const root = url.searchParams.get("root");
-		if (root === null || root.trim().length === 0) {
-			return null;
-		}
-		return root;
-	} catch (error) {
-		// A malformed URL is a bad request, not a crash: null maps to 400.
-		void error;
-		return null;
-	}
-}
-
-/** The decoded `id` query parameter, or null when absent. */
-function idParamOf(request: CardRequest): string | null {
-	try {
-		const url = new URL(request.url ?? "/", "http://dsh-card.invalid");
-		const id = url.searchParams.get("id");
-		if (id === null || id.trim().length === 0) {
-			return null;
-		}
-		return id;
-	} catch (error) {
-		void error;
-		return null;
-	}
-}
 
 /**
  * Register the two prompt routes and return a disposer that removes them.

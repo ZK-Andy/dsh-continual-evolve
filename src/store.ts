@@ -20,16 +20,16 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { openDatabase } from "./data/database.js";
-import { LEDGER_OCCURRENCES, migrateDatabase } from "./data/migrate.js";
-import { coalesceSkipRun, latestWorkspaceId, writeMemoryLedger, writeSkillLedger } from "./data/ledger.js";
+import { migrateDatabase } from "./data/migrate.js";
+import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, writeMemoryLedger, writeSkillLedger } from "./data/ledger.js";
 import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
 import { MEMORIES, PROMPTS, SKILLS } from "./data/resource-kinds.js";
 import { Repository } from "./data/repository.js";
-import { createReviewAccounts, createUsageCounters, INCOMPLETE_REVIEW_SQL, quarantineSecrets } from "./data/review-accounts.js";
+import { createReviewAccounts, createUsageCounters, prepareReviewStmts, quarantineSecrets } from "./data/review-accounts.js";
 import { applySkillOne, type SkillFileIntent, type SkillLedgerFile } from "./services/skill-apply.js";
 import { applyPromptBatch } from "./services/prompt-apply.js";
 import { reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "./surfaces/skill-projection.js";
-import { applyProposals } from "./store-apply.js";
+import { applyProposals } from "./services/memory-apply.js";
 import {
 	CURSOR_KEY_PREFIX,
 	GLOBAL_WORKSPACE,
@@ -92,65 +92,8 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"ON CONFLICT (workspace_id, key) DO UPDATE SET value = excluded.value",
 		),
 		cursorGet: database.prepare("SELECT CAST(value AS INTEGER) AS seq FROM state WHERE workspace_id = ? AND key = ?"),
-		recentLedger: database.prepare(
-			"SELECT workspace_id, MAX(ts) AS ts FROM extraction_log " +
-				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
-		),
-		recentSkill: database.prepare(
-			"SELECT workspace_id, MAX(ts) AS ts FROM skill_log " +
-				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
-		),
-		recentPrompt: database.prepare(
-			"SELECT workspace_id, MAX(ts) AS ts FROM prompt_log " +
-				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
-		),
-		ledger: database.prepare(
-			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		),
-		latestSkip: database.prepare(
-			"SELECT rowid AS rid, skip_reason AS reason, status FROM extraction_log " +
-				"WHERE workspace_id IS ? AND session_id IS ? ORDER BY ts DESC, rowid DESC LIMIT 1",
-		),
-		bumpSkip: database.prepare(`UPDATE extraction_log SET ts = ?, ${LEDGER_OCCURRENCES} = ${LEDGER_OCCURRENCES} + 1 WHERE rowid = ?`),
-		prune: database.prepare("DELETE FROM extraction_log WHERE ts < ?"),
-		skillLog: database.prepare(
-			"INSERT INTO skill_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files, warnings) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		),
-		skillPrune: database.prepare("DELETE FROM skill_log WHERE ts < ?"),
-		promptLog: database.prepare(
-			"INSERT INTO prompt_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		),
-		promptPrune: database.prepare("DELETE FROM prompt_log WHERE ts < ?"),
-		reviewLog: database.prepare(
-			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, model, cheap_usage, evolve_usage, applied, evolve_count) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		),
-		reviewLast: database.prepare(
-			`SELECT ts, applied FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND NOT ${INCOMPLETE_REVIEW_SQL} ORDER BY rowid DESC LIMIT 1`,
-		),
-		reviewEvolved: database.prepare(
-			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND applied = 1",
-		),
-		reviewPrune: database.prepare("DELETE FROM review_log WHERE ts < ?"),
-		pluginLog: database.prepare(
-			"INSERT INTO plugin_log (ts, level, event, message, workspace_id, session_id) VALUES (?, ?, ?, ?, ?, ?)",
-		),
-		pluginLogPrune: database.prepare("DELETE FROM plugin_log WHERE ts < ?"),
-		dailyGet: database.prepare("SELECT * FROM review_daily WHERE day = ?"),
-		dailyUpsert: database.prepare(
-			"INSERT INTO review_daily (day, budget, reviewed, new_items, requeued, approved, applied, cheap_token, evolve_token, backlog, dropped, skip_top, skip_counts) " +
-				"VALUES (?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL) " +
-				"ON CONFLICT (day) DO UPDATE SET budget = excluded.budget",
-		),
-		dailyConsume: database.prepare("UPDATE review_daily SET reviewed = reviewed + 1 WHERE day = ? AND reviewed < budget"),
-		dailyMerge: database.prepare(
-			"UPDATE review_daily SET new_items = new_items + ?, requeued = requeued + ?, " +
-				"approved = approved + ?, applied = applied + ?, cheap_token = cheap_token + ?, evolve_token = evolve_token + ?, " +
-				"backlog = ?, dropped = dropped + ?, skip_top = ?, skip_counts = ? WHERE day = ?",
-		),
+		...prepareLedgerStmts(database),
+		...prepareReviewStmts(database),
 	};
 
 	const store: MemoryStore = {

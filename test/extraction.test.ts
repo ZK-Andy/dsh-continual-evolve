@@ -101,9 +101,9 @@ describe("runExtraction — mechanical skips (each ledgered, cursor untouched)",
 		expect(result.skipReason).toBe("no-user-prose");
 	});
 
-	it("skips when the turn already carried an explicit memory_write", async () => {
+	it("skips when the turn already carried an explicit evolve_write", async () => {
 		const result = await runExtraction(
-			deps({ surface: surfaceOf(USER_EVENT, { seq: 11, type: "tool/call", data: { name: "memory_write" } }) }),
+			deps({ surface: surfaceOf(USER_EVENT, { seq: 11, type: "tool/call", data: { name: "evolve_write" } }) }),
 			target,
 			{ trigger: "turn-debounce" },
 		);

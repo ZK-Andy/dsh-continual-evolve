@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { importWorkspaceMd } from "../src/import-md.js";
-import { slugifyId } from "../src/memory-rules.js";
+import { slugifyId } from "../src/services/memory-rules.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let workspace = "";
