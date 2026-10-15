@@ -133,106 +133,23 @@ export interface SchedulerHost {
  * automation the plugin runs, and it is bounded by design: one boundary and
  * one in-flight run per session.
  */
+/** The scheduler's wiring: per-session slots plus the host and deps its drains run on. */
+interface SchedulerState {
+	slots: Map<string, SessionSlot>;
+	host: SchedulerHost;
+	deps: ExtractionDeps;
+}
+
 export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionDeps): () => void {
 	const listeners: unknown[] = [];
-	const slots = new Map<string, SessionSlot>();
-
-	const slotOf = (sessionId: string): SessionSlot => {
-		let slot = slots.get(sessionId);
-		if (slot === undefined) {
-			slot = { pending: null, running: false };
-			slots.set(sessionId, slot);
-		}
-		return slot;
-	};
-
-	const targetOf = (agent: unknown): PendingTarget | null => {
-		const id = (agent as { id?: unknown } | undefined)?.id;
-		if (typeof id !== "string" || id.length === 0) {
-			return null;
-		}
-		// Absent resolver (older host, tests) still reads the agent's explicit
-		// selection: the fallback is the legacy behavior, never "no route".
-		const route = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
-		return {
-			agent,
-			sessionId: id,
-			provider: route?.provider,
-			model: route?.model,
-		};
-	};
-
-	const drain = (sessionId: string, trigger: LedgerEntry["trigger"]): void => {
-		const slot = slotOf(sessionId);
-		if (slot.running || slot.pending === null) {
-			return;
-		}
-		const target = slot.pending;
-		slot.pending = null;
-		slot.running = true;
-		void runExtraction(
-			deps,
-			{
-				workspaceId: cwdOf(target.agent),
-				sessionId: target.sessionId,
-				internalAgent: isInternalAgent(target.agent),
-				provider: target.provider,
-				model: target.model,
-			},
-			{ trigger },
-		).catch((error: unknown) => {
-			// Last resort: runExtraction ledgers its own unexpected failures,
-			// so this fires only when even that failed (the ledger write
-			// threw) — retry one ledger row here before the warn, so the
-			// failure still has an account trace.
-			const { message, detail } = errorText(error);
-			try {
-				deps.store.logSkipped({
-					sessionId: target.sessionId,
-					workspaceId: cwdOf(target.agent),
-					trigger,
-					skipReason: `unexpected-error: ${message.slice(0, ERROR_REASON_MAX)}`,
-					status: "failed",
-					model: target.model,
-					files: detail,
-				});
-			} catch {
-				// The ledger is down — the warn below is the last resort.
-			}
-			host.log.warn("extraction-unexpected", `run failed unexpectedly: ${message}`, { sessionId });
-		}).finally(() => {
-			slot.running = false;
-			if (slot.pending !== null) {
-				// A turn landed mid-run: the newest boundary is the one to run.
-				drain(sessionId, "turn-debounce");
-			}
-		});
-	};
-
-	/**
-	 * Schedule one session's boundary. Internal agents (subagents and DSH
-	 * internal agents) are filtered at this entry rather than inside the run:
-	 * they are not memory sources, so they never occupy a slot, never drain
-	 * another session's boundary, and leave no ledger rows behind.
-	 */
-	const schedule = (agent: unknown): void => {
-		if (isInternalAgent(agent)) {
-			return;
-		}
-		const target = targetOf(agent);
-		if (target === null) {
-			return;
-		}
-		slotOf(target.sessionId).pending = target;
-		drain(target.sessionId, "turn-debounce");
-	};
+	const state: SchedulerState = { slots: new Map<string, SessionSlot>(), host, deps };
 
 	listeners.push(
 		host.on("agent/turn-stopping", (payload: { agent?: unknown }) => {
 			if (payload.agent === undefined) {
 				return;
 			}
-			schedule(payload.agent);
+			scheduleBoundary(state, payload.agent);
 		}),
 	);
 	listeners.push(
@@ -241,11 +158,7 @@ export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionD
 			if (event?.type !== "compaction/start" || typeof id !== "string") {
 				return;
 			}
-			const slot = slots.get(id);
-			if (slot === undefined || slot.pending === null) {
-				return;
-			}
-			drain(id, "compaction");
+			drainIfPending(state, id, "compaction");
 		}),
 	);
 	listeners.push(
@@ -254,25 +167,133 @@ export function createExtractionScheduler(host: SchedulerHost, deps: ExtractionD
 			if (typeof id !== "string") {
 				return;
 			}
-			const slot = slots.get(id);
-			if (slot === undefined) {
-				return;
-			}
-			if (slot.pending !== null) {
-				drain(id, "close-drain");
-			}
-			// The session is gone: drop its slot. A run already in flight holds
-			// its own reference and simply finds nothing left to drain.
-			slots.delete(id);
+			closeSessionSlot(state, id);
 		}),
 	);
 	host.log.info("extraction-armed", "scheduler armed (per-session slots, turn-level, single-flight per session)");
 	return () => {
-		slots.clear();
+		state.slots.clear();
 		for (const listener of listeners) {
 			if (typeof listener === "function") {
 				listener();
 			}
 		}
 	};
+}
+
+/** One session's slot, creating it on first touch. */
+function slotOf(slots: Map<string, SessionSlot>, sessionId: string): SessionSlot {
+	let slot = slots.get(sessionId);
+	if (slot === undefined) {
+		slot = { pending: null, running: false };
+		slots.set(sessionId, slot);
+	}
+	return slot;
+}
+
+/** Resolve a boundary target from an agent (null when the agent carries no session). */
+function targetOf(deps: ExtractionDeps, agent: unknown): PendingTarget | null {
+	const id = (agent as { id?: unknown } | undefined)?.id;
+	if (typeof id !== "string" || id.length === 0) {
+		return null;
+	}
+	// Absent resolver (older host, tests) still reads the agent's explicit
+	// selection: the fallback is the legacy behavior, never "no route".
+	const route = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
+	return {
+		agent,
+		sessionId: id,
+		provider: route?.provider,
+		model: route?.model,
+	};
+}
+
+/** Drain one session's pending boundary, single-flight with newest-wins coalescing. */
+function drainScheduler(state: SchedulerState, sessionId: string, trigger: LedgerEntry["trigger"]): void {
+	const { slots, host, deps } = state;
+	const slot = slotOf(slots, sessionId);
+	if (slot.running || slot.pending === null) {
+		return;
+	}
+	const target = slot.pending;
+	slot.pending = null;
+	slot.running = true;
+	void runExtraction(
+		deps,
+		{
+			workspaceId: cwdOf(target.agent),
+			sessionId: target.sessionId,
+			internalAgent: isInternalAgent(target.agent),
+			provider: target.provider,
+			model: target.model,
+		},
+		{ trigger },
+	).catch((error: unknown) => {
+		// Last resort: runExtraction ledgers its own unexpected failures,
+		// so this fires only when even that failed (the ledger write
+		// threw) — retry one ledger row here before the warn, so the
+		// failure still has an account trace.
+		const { message, detail } = errorText(error);
+		try {
+			deps.store.logSkipped({
+				sessionId: target.sessionId,
+				workspaceId: cwdOf(target.agent),
+				trigger,
+				skipReason: `unexpected-error: ${message.slice(0, ERROR_REASON_MAX)}`,
+				status: "failed",
+				model: target.model,
+				files: detail,
+			});
+		} catch {
+			// The ledger is down — the warn below is the last resort.
+		}
+		host.log.warn("extraction-unexpected", `run failed unexpectedly: ${message}`, { sessionId });
+	}).finally(() => {
+		slot.running = false;
+		if (slot.pending !== null) {
+			// A turn landed mid-run: the newest boundary is the one to run.
+			drainScheduler(state, sessionId, "turn-debounce");
+		}
+	});
+}
+
+/**
+ * Schedule one session's boundary. Internal agents (subagents and DSH
+ * internal agents) are filtered at this entry rather than inside the run:
+ * they are not memory sources, so they never occupy a slot, never drain
+ * another session's boundary, and leave no ledger rows behind.
+ */
+function scheduleBoundary(state: SchedulerState, agent: unknown): void {
+	if (isInternalAgent(agent)) {
+		return;
+	}
+	const target = targetOf(state.deps, agent);
+	if (target === null) {
+		return;
+	}
+	slotOf(state.slots, target.sessionId).pending = target;
+	drainScheduler(state, target.sessionId, "turn-debounce");
+}
+
+/** Drain a session only when it has a pending boundary (never creates slots). */
+function drainIfPending(state: SchedulerState, sessionId: string, trigger: LedgerEntry["trigger"]): void {
+	const slot = state.slots.get(sessionId);
+	if (slot === undefined || slot.pending === null) {
+		return;
+	}
+	drainScheduler(state, sessionId, trigger);
+}
+
+/** Drain a closing session, then drop its slot. */
+function closeSessionSlot(state: SchedulerState, id: string): void {
+	const slot = state.slots.get(id);
+	if (slot === undefined) {
+		return;
+	}
+	if (slot.pending !== null) {
+		drainScheduler(state, id, "close-drain");
+	}
+	// The session is gone: drop its slot. A run already in flight holds
+	// its own reference and simply finds nothing left to drain.
+	state.slots.delete(id);
 }

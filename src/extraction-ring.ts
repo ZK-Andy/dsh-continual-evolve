@@ -201,121 +201,148 @@ function gateLink(): ChainLink<ExtractionItem> {
 	};
 }
 
+/** Assemble the proposal prompt: manifest plus similar-record candidates. */
+function buildExtractionPrompt(item: ExtractionItem): string {
+	const { store } = item.deps;
+	const workspaceId = item.ledgerBase.workspaceId;
+	const manifest = store.list(workspaceId).slice(0, 50).map(manifestLineOf);
+	const candidates = candidateRecords(store, workspaceId, item.userText);
+	return extractionPrompt({
+		increment: item.increment,
+		manifest,
+		candidates: candidates.map(formatCandidate),
+		userSeqs: item.userSeqs,
+	});
+}
+
 /** The proposal call: the run's one expensive call, then the store's gates. */
 function proposeLink(): ChainLink<ExtractionItem> {
 	return {
 		name: "extraction-propose",
 		async handle(item: ExtractionItem): Promise<ChainOutcome> {
-			const { store } = item.deps;
-			const workspaceId = item.ledgerBase.workspaceId;
-			const manifest = store.list(workspaceId).slice(0, 50).map(manifestLineOf);
-			const candidates = candidateRecords(store, workspaceId, item.userText);
-			const prompt = extractionPrompt({
-				increment: item.increment,
-				manifest,
-				candidates: candidates.map(formatCandidate),
-				userSeqs: item.userSeqs,
-			});
-
+			const prompt = buildExtractionPrompt(item);
 			const started = Date.now();
-			let answer: SubagentAnswer<ParsedAnswer>;
-			try {
-				answer = await item.loader.run(extractionMain, prompt);
-				// The full call carries the proposal payload: a cut stream is a failure.
-				if (answer.finish !== undefined && answer.finish !== "stop") {
-					throw cutFailureOf(answer, item.route);
-				}
-			} catch (error) {
-				const { message, detail } = errorText(error);
-				try {
-					store.logSkipped({
-						...item.ledgerBase,
-						skipReason: "llm-failed",
-						status: "failed",
-						model: item.route.model,
-						usage: observedUsageOf(error),
-						durationMs: Date.now() - started,
-						cheapUsage: item.cheapUsage,
-						cheapError: item.cheapError,
-						files: detail,
-					});
-				} catch (ledgerError) {
-					throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
-				}
-				item.result = { status: "failed", skipReason: `llm call failed: ${message}` };
+			const answer = await runProposalCall(item, prompt, started);
+			if (answer === undefined) {
 				return "handled";
 			}
-			const text = answer.text;
-			const usage = answer.usage;
-			const parsed = answer.answer;
-			if (parsed.decision === "error") {
-				// A malformed answer is a failed run: the increment stays unconsumed
-				// and the next trigger retries it. The answer's head rides in the
-				// ledger row — the stream is gone after this, so without it the
-				// failure is undiagnosable after the fact.
-				store.logSkipped({
-					...item.ledgerBase,
-					skipReason: parsed.reason,
-					status: "failed",
-					model: item.route.model,
-					usage,
-					cheapUsage: item.cheapUsage,
-					cheapError: item.cheapError,
-					durationMs: Date.now() - started,
-					files: text.slice(0, FAILURE_RAW_MAX),
-				});
-				item.result = { status: "failed", skipReason: parsed.reason };
-				return "handled";
-			}
-			if (parsed.decision === "skip") {
-				// A real model decision (even "nothing worth keeping") consumed the
-				// increment — advancing the cursor here is what keeps retries honest.
-				item.advanceCursor();
-				store.logSkipped({
-					...item.ledgerBase,
-					skipReason: `model-skip: ${parsed.reason}`,
-					status: "skipped",
-					model: item.route.model,
-					usage,
-					cheapUsage: item.cheapUsage,
-					cheapError: item.cheapError,
-					durationMs: Date.now() - started,
-				});
-				item.result = { status: "skipped", skipReason: parsed.reason, cursor: item.boundarySeq };
-				return "handled";
-			}
-
-			const outcomes = store.applyProposals(
-				{
-					workspaceId,
-					trigger: item.opts.trigger,
-					sessionId: item.target.sessionId,
-					runId: `extract:${item.target.sessionId}:${item.boundarySeq ?? "tail"}`,
-					model: item.route.model,
-					usage,
-					cheapUsage: item.cheapUsage,
-					cheapError: item.cheapError,
-					decision: parsed.reason,
-				},
-				parsed.proposals as MemoryProposal[],
-			);
-			if (!outcomes.every((outcome) => outcome.ok)) {
-				item.result = { status: "rejected", skipReason: outcomes.find((outcome) => !outcome.ok)?.reason };
-				return "handled";
-			}
-			item.advanceCursor();
-			// Hygiene rides on every applied run: orphan FTS rows dropped, secret
-			// leakage quarantined — never a separate scheduler.
-			const patrol = store.patrol();
-			void patrol;
-			// Retention rides the same run: the ledgers only grow, and an
-			// applied extraction is what writes most of their rows. Day-throttled
-			// inside, so this is one state read on all but the day's first run.
-			pruneIfDue(store);
-			item.result = { status: "applied", applied: outcomes.filter((outcome) => outcome.ok).length, cursor: item.boundarySeq };
-			return "handled";
+			return settleProposalAnswer(item, answer, started);
 		},
 	};
+}
+
+/** Run the one expensive call; an llm failure is ledgered here and reads as handled. */
+async function runProposalCall(
+	item: ExtractionItem,
+	prompt: string,
+	started: number,
+): Promise<SubagentAnswer<ParsedAnswer> | undefined> {
+	const { store } = item.deps;
+	try {
+		const answer = await item.loader.run(extractionMain, prompt);
+		// The full call carries the proposal payload: a cut stream is a failure.
+		if (answer.finish !== undefined && answer.finish !== "stop") {
+			throw cutFailureOf(answer, item.route);
+		}
+		return answer;
+	} catch (error) {
+		const { message, detail } = errorText(error);
+		try {
+			store.logSkipped({
+				...item.ledgerBase,
+				skipReason: "llm-failed",
+				status: "failed",
+				model: item.route.model,
+				usage: observedUsageOf(error),
+				durationMs: Date.now() - started,
+				cheapUsage: item.cheapUsage,
+				cheapError: item.cheapError,
+				files: detail,
+			});
+		} catch (ledgerError) {
+			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
+		}
+		item.result = { status: "failed", skipReason: `llm call failed: ${message}` };
+		return undefined;
+	}
+}
+/** Settle a completed call: error answers fail, skips advance the cursor, proposals apply. */
+function settleProposalAnswer(item: ExtractionItem, answer: SubagentAnswer<ParsedAnswer>, started: number): ChainOutcome {
+	const { store } = item.deps;
+	const text = answer.text;
+	const usage = answer.usage;
+	const parsed = answer.answer;
+	if (parsed.decision === "error") {
+		// A malformed answer is a failed run: the increment stays unconsumed
+		// and the next trigger retries it. The answer's head rides in the
+		// ledger row — the stream is gone after this, so without it the
+		// failure is undiagnosable after the fact.
+		store.logSkipped({
+			...item.ledgerBase,
+			skipReason: parsed.reason,
+			status: "failed",
+			model: item.route.model,
+			usage,
+			cheapUsage: item.cheapUsage,
+			cheapError: item.cheapError,
+			durationMs: Date.now() - started,
+			files: text.slice(0, FAILURE_RAW_MAX),
+		});
+		item.result = { status: "failed", skipReason: parsed.reason };
+		return "handled";
+	}
+	if (parsed.decision === "skip") {
+		// A real model decision (even "nothing worth keeping") consumed the
+		// increment — advancing the cursor here is what keeps retries honest.
+		item.advanceCursor();
+		store.logSkipped({
+			...item.ledgerBase,
+			skipReason: `model-skip: ${parsed.reason}`,
+			status: "skipped",
+			model: item.route.model,
+			usage,
+			cheapUsage: item.cheapUsage,
+			cheapError: item.cheapError,
+			durationMs: Date.now() - started,
+		});
+		item.result = { status: "skipped", skipReason: parsed.reason, cursor: item.boundarySeq };
+		return "handled";
+	}
+	return applyProposalAnswer(item, parsed, usage);
+}
+
+/** Apply an apply-decision answer through the store gates, with hygiene riding along. */
+function applyProposalAnswer(item: ExtractionItem, parsed: ParsedAnswer, usage: unknown): ChainOutcome {
+	const { store } = item.deps;
+	const outcomes = store.applyProposals(
+		{
+			workspaceId: item.ledgerBase.workspaceId,
+			trigger: item.opts.trigger,
+			sessionId: item.target.sessionId,
+			runId: `extract:${item.target.sessionId}:${item.boundarySeq ?? "tail"}`,
+			model: item.route.model,
+			usage,
+			cheapUsage: item.cheapUsage,
+			cheapError: item.cheapError,
+			decision: parsed.reason,
+		},
+		parsed.proposals as MemoryProposal[],
+	);
+	if (!outcomes.every((outcome) => outcome.ok)) {
+		item.result = { status: "rejected", skipReason: outcomes.find((outcome) => !outcome.ok)?.reason };
+		return "handled";
+	}
+	item.advanceCursor();
+	// Hygiene rides on every applied run: orphan FTS rows dropped, secret
+	// leakage quarantined — never a separate scheduler.
+	const patrol = store.patrol();
+	void patrol;
+	// Retention rides the same run: the ledgers only grow, and an
+	// applied extraction is what writes most of their rows. Day-throttled
+	// inside, so this is one state read on all but the day's first run.
+	pruneIfDue(store);
+	item.result = { status: "applied", applied: outcomes.filter((outcome) => outcome.ok).length, cursor: item.boundarySeq };
+	return "handled";
 }
 
 /** Similar existing memories (full bodies) for the model to update against. */
