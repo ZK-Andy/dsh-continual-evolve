@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mountCardRoutes, type CardResponse } from "../src/surfaces/card-routes.js";
 import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/surfaces/prompt-routes.js";
+import { promptEntryContent, promptSnapshot } from "../src/surfaces/prompt-snapshot.js";
 import { registerEvolveTools, type ToolDefinition } from "../src/surfaces/evolve-tools.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
@@ -164,6 +165,22 @@ describe("evolve tools", () => {
 		);
 	});
 
+	it("rejects empty titles and duplicate bodies", async () => {
+		expect(await run("evolve_write", { kind: "prompt", action: "create", id: "x", title: "", description: "d", body: "b" })).toContain(
+			"must not be empty",
+		);
+		await run("evolve_write", { kind: "prompt", action: "create", id: "a", ...FIELDS });
+		expect(await run("evolve_write", { kind: "prompt", action: "create", id: "b", ...FIELDS })).toContain("identical prompt");
+		expect(await run("evolve_write", { kind: "prompt", action: "update", id: "a", body: "v2" })).toContain("已更新提示词补充");
+		expect(await run("evolve_read", { kind: "prompt" })).toContain("id: a");
+		expect(await run("evolve_read", { kind: "prompt", query: "不存在" })).toContain("没有匹配");
+	});
+
+	it("answers empty workspaces", async () => {
+		expect(await run("evolve_read", { kind: "prompt" })).toContain("还没有提示词补充");
+		expect(await run("evolve_read", { kind: "prompt", query: "x" })).toContain("没有匹配");
+	});
+
 	it("hearts a body served by id", async () => {
 		await run("evolve_write", { kind: "prompt", action: "create", id: "checklist", ...FIELDS });
 		expect(store.getPromptUse(workspace, "checklist")).toBeUndefined();
@@ -211,5 +228,117 @@ describe("card", () => {
 		expect(file.status).toBe(200);
 		expect(JSON.stringify(file.body)).toContain("1. tests green");
 		expect(get(`${CARD_API_PROMPTS_PATH}?root=${encodeURIComponent("/nonexistent-root")}`).status).toBe(404);
+	});
+
+	it("answers the route error paths", async () => {
+		await run("evolve_write", { kind: "prompt", action: "create", id: "checklist", ...FIELDS });
+		function raw(path: string, method = "GET", url?: string): number {
+			const routes = new Map<string, (req: unknown, res: CardResponse) => void>();
+			const dispose = mountCardRoutes({ register: (route: { path: string; handler: (req: unknown, res: CardResponse) => void }) => {
+				routes.set(route.path, route.handler);
+				return () => routes.delete(route.path);
+			} }, store);
+			try {
+				let status = 0;
+				routes.get(path.split("?")[0] ?? path)?.({ method, url: url ?? path }, {
+					writeHead: (code: number) => {
+						status = code;
+					},
+					end: () => {},
+				});
+				return status;
+			} finally {
+				dispose();
+			}
+		}
+		expect(raw(CARD_API_PROMPTS_PATH, "POST")).toBe(405);
+		expect(raw(CARD_API_PROMPT_FILE_PATH, "POST")).toBe(405);
+		expect(raw(CARD_API_PROMPTS_PATH)).toBe(400);
+		expect(raw(`${CARD_API_PROMPTS_PATH}?root=${encodeURIComponent(workspace)}&id=x`)).toBe(200);
+		expect(raw(`${CARD_API_PROMPT_FILE_PATH}?root=${encodeURIComponent(workspace)}`)).toBe(400);
+		expect(raw(`${CARD_API_PROMPT_FILE_PATH}?root=${encodeURIComponent(workspace)}&id=ghost`)).toBe(404);
+		expect(raw(CARD_API_PROMPTS_PATH, "GET", "http://[")).toBe(400);
+		expect(raw(CARD_API_PROMPT_FILE_PATH, "GET", "http://[")).toBe(400);
+	});
+
+	it("snapshots empty, quarantined, and failing stores", async () => {
+		expect(promptSnapshot(store, workspace)).toMatchObject({ exists: false, fileCount: 0 });
+		expect(promptEntryContent(store, workspace, "")).toEqual({ ok: false, reason: "absent" });
+		expect(promptEntryContent(store, workspace, "ghost")).toEqual({ ok: false, reason: "absent" });
+		await run("evolve_write", { kind: "prompt", action: "create", id: "checklist", ...FIELDS });
+		await run("evolve_read", { kind: "prompt", id: "checklist" });
+		const snap = promptSnapshot(store, workspace);
+		expect(snap).toMatchObject({ exists: true, fileCount: 1 });
+		expect(snap.files[0]).toMatchObject({ id: "checklist", useCount: 1 });
+		const hostile = new Proxy(store, {
+			get(target, prop) {
+				if (prop === "listAllPrompts") {
+					throw new Error("boom");
+				}
+				const value = (target as unknown as Record<string | symbol, unknown>)[prop];
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as MemoryStore;
+		expect(promptSnapshot(hostile, workspace).readError).toContain("boom");
+		expect(promptSnapshot(hostile, workspace)).toMatchObject({ exists: true });
+	});
+
+	it("lists quarantined prompts with their patrol reasons", async () => {
+		const db = new DatabaseSync(dbPath);
+		try {
+			const now = new Date().toISOString();
+			db.prepare(
+				"INSERT INTO prompts (workspace_id, id, title, description, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+			).run(workspace, "leaky", "t", "d", "token ghp_12345678901234567890", now, now);
+		} finally {
+			db.close();
+		}
+		store.patrol();
+		const snap = promptSnapshot(store, workspace);
+		expect(snap.fileCount).toBe(0);
+		expect(snap.quarantined.map((row) => row.id)).toContain("leaky");
+		expect(snap.quarantined.find((row) => row.id === "leaky")?.reason).toContain("GitHub token");
+	});
+
+	it("falls back to the generic reason when the patrol row is missing or corrupt", async () => {
+		const db = new DatabaseSync(dbPath);
+		try {
+			const now = new Date().toISOString();
+			db.prepare(
+				"INSERT INTO prompts (workspace_id, id, title, description, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'quarantined', ?, ?)",
+			).run(workspace, "odd", "t", "d", "b", now, now);
+		} finally {
+			db.close();
+		}
+		store.setState("", "patrol:last", "not-json");
+		expect(promptSnapshot(store, workspace).quarantined.find((row) => row.id === "odd")?.reason).toContain("巡检异常");
+		store.setState("", "patrol:last", JSON.stringify({ promptQuarantined: [{ id: "elsewhere", reason: "x" }] }));
+		expect(promptSnapshot(store, workspace).quarantined.find((row) => row.id === "odd")?.reason).toContain("巡检异常");
+		store.setState("", "patrol:last", JSON.stringify({ promptQuarantined: "nope" }));
+		expect(promptSnapshot(store, workspace).quarantined.find((row) => row.id === "odd")?.reason).toContain("巡检异常");
+	});
+
+	it("reads hostile stores and odd usage rows without throwing", async () => {
+		const hostileGet = new Proxy(store, {
+			get(target, prop) {
+				if (prop === "getPrompt") {
+					throw new Error("boom");
+				}
+				const value = (target as unknown as Record<string | symbol, unknown>)[prop];
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as MemoryStore;
+		expect(promptEntryContent(hostileGet, workspace, "x")).toEqual({ ok: false, reason: "absent" });
+		await run("evolve_write", { kind: "prompt", action: "create", id: "checklist", ...FIELDS });
+		await run("evolve_read", { kind: "prompt", id: "checklist" });
+		const nullDb = new DatabaseSync(dbPath);
+		try {
+			nullDb.prepare("UPDATE prompt_usage SET last_used_at = NULL WHERE workspace_id = ? AND prompt_id = ?").run(workspace, "checklist");
+			nullDb.prepare("UPDATE prompt_usage SET last_used_at = 'not-a-date' WHERE workspace_id = ? AND prompt_id = ?").run(workspace, "checklist");
+		} finally {
+			nullDb.close();
+		}
+		const snap = promptSnapshot(store, workspace);
+		expect(snap.files.find((row) => row.id === "checklist")).toMatchObject({ useCount: 1, lastUsedAt: 0 });
 	});
 });

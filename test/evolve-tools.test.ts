@@ -123,6 +123,21 @@ describe("evolve_write / evolve_read over memories", () => {
 			"move-to-global 仅支持技能",
 		);
 	});
+
+	it("deletes memories and answers empty workspaces", async () => {
+		await run("evolve_write", { kind: "memory", action: "create", id: "temp", type: "user", title: "t", description: "d", body: "b" });
+		expect(await run("evolve_write", { kind: "memory", action: "delete", id: "temp" })).toContain("已删除记忆 `temp`");
+		expect(await run("evolve_read", { kind: "memory" })).toContain("还没有记忆");
+		expect(await run("evolve_read", { kind: "memory", query: "不存在" })).toContain("没有匹配");
+	});
+
+	it("clamps wild limits instead of failing", async () => {
+		await run("evolve_write", { kind: "memory", action: "create", id: "a", type: "user", title: "t", description: "d", body: "b" });
+		expect(await run("evolve_read", { kind: "memory", limit: "many" })).toContain("id: a");
+		expect(await run("evolve_read", { kind: "memory", limit: -5 })).toContain("id: a");
+		expect(await run("evolve_read", { kind: "memory", limit: 2.7 })).toContain("id: a");
+		expect(await run("evolve_read", { kind: "skill", limit: Number.NaN })).toContain("还没有技能");
+	});
 });
 
 describe("evolve_write / evolve_read over skills", () => {
@@ -145,6 +160,136 @@ describe("evolve_write / evolve_read over skills", () => {
 		);
 		expect(await run("evolve_write", { kind: "skill", action: "delete", id: "deploy" })).toContain("已删除技能 `deploy`");
 		expect(store.getSkill(workspace, "deploy")).toBeUndefined();
+	});
+
+	it("deletes in the global scope and reports misses", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "deploy", ...FIELDS });
+		await run("evolve_write", { kind: "skill", action: "move-to-global", id: "deploy" });
+		expect(await run("evolve_write", { kind: "skill", action: "delete", id: "deploy", scope: "global" })).toContain(
+			"已删除技能 `deploy`",
+		);
+		expect(store.getSkill("", "deploy")).toBeUndefined();
+		expect(await run("evolve_read", { kind: "skill", id: "deploy" })).toContain("没有找到");
+		expect(await run("evolve_read", { kind: "skill", query: "Deploy" })).toContain("没有匹配");
+		expect(await run("evolve_read", { kind: "skill" })).toContain("还没有技能");
+	});
+
+	it("surfaces skill gate rejections", async () => {
+		expect(await run("evolve_write", { kind: "skill", action: "create", id: "deploy", ...FIELDS, body: "x" })).toContain(
+			"已写入技能",
+		);
+		expect(
+			await run("evolve_write", { kind: "skill", action: "create", id: "other", ...FIELDS, body: "key ghp_12345678901234567890" }),
+		).toContain("写入被门禁拒绝");
+		expect(await run("evolve_write", { kind: "skill", action: "update", id: "ghost", body: "b" })).toContain("no project");
+		expect(await run("evolve_write", { kind: "skill", action: "delete", id: "ghost" })).toContain("no project");
+		expect(await run("evolve_write", { kind: "skill", action: "move-to-global", id: "ghost" })).toContain("no project skill");
+	});
+
+	it("hearts a skill body served by id", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "deploy", ...FIELDS });
+		expect(store.getSkillUse(workspace, "deploy", "project")).toBeUndefined();
+		expect(await run("evolve_read", { kind: "skill", id: "deploy" })).toContain("Deploy checklist");
+		expect(store.getSkillUse(workspace, "deploy", "project")).toMatchObject({ useCount: 1 });
+	});
+
+	it("derives ids and rejects malformed ones", async () => {
+		expect(await run("evolve_write", { kind: "skill", action: "create", title: "Deploy checklist", description: "d", body: "b" })).toContain(
+			"已写入技能 `deploy-checklist`",
+		);
+		expect(await run("evolve_write", { kind: "skill", action: "create", id: "BAD ID", ...FIELDS })).toContain("malformed id");
+		expect(await run("evolve_write", { kind: "skill", action: "create", title: "Only title" })).toContain("create requires");
+	});
+
+	it("refuses creation in the global partition", () => {
+		const { outcomes } = store.applySkillProposals({ workspaceId: "", trigger: "explicit" }, [
+			{ action: "create", id: "x", title: "t", description: "d", body: "b" },
+		]);
+		const outcome = outcomes[0];
+		expect(outcome?.ok).toBe(false);
+		expect(outcome?.reason).toContain("created in a project");
+	});
+
+	it("rejects duplicates by body across scopes", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "a", ...FIELDS });
+		await run("evolve_write", { kind: "skill", action: "move-to-global", id: "a" });
+		expect(await run("evolve_write", { kind: "skill", action: "create", id: "b", ...FIELDS })).toContain("identical global skill");
+	});
+
+	it("refuses to move non-active skills", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "leaky", title: "t", description: "d", body: "clean body" });
+		const { DatabaseSync } = await import("node:sqlite");
+		const direct = new DatabaseSync((store as { path: string }).path);
+		try {
+			direct.prepare("UPDATE skills SET body = ? WHERE workspace_id = ? AND id = ?").run("token ghp_12345678901234567890", workspace, "leaky");
+		} finally {
+			direct.close();
+		}
+		store.patrol();
+		expect(await run("evolve_write", { kind: "skill", action: "move-to-global", id: "leaky" })).toContain("only active skills move");
+	});
+
+	it("reads through the global scope on search and list", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "alpha", title: "Alpha", description: "hook a", body: "body alpha" });
+		await run("evolve_write", { kind: "skill", action: "create", id: "beta", title: "Beta", description: "hook b", body: "body beta" });
+		await run("evolve_write", { kind: "skill", action: "move-to-global", id: "alpha" });
+		await run("evolve_write", { kind: "skill", action: "move-to-global", id: "beta" });
+		expect(await run("evolve_read", { kind: "skill", id: "" })).toContain("全局");
+		expect(await run("evolve_read", { kind: "skill", query: "Alpha" })).toContain("全局");
+		expect(await run("evolve_read", { kind: "skill", limit: 1 })).toContain("全局");
+	});
+
+	it("rejects updates that break the gates", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "deploy", ...FIELDS });
+		expect(await run("evolve_write", { kind: "skill", action: "update", id: "deploy", title: "" })).toContain("must not be empty");
+	});
+
+	it("searches project skills before falling to global", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "deploy", ...FIELDS });
+		const hits = await run("evolve_read", { kind: "skill", query: "Deploy" });
+		expect(hits).toContain("本项目");
+		expect(await run("evolve_read", { kind: "skill", limit: 10 })).toContain("本项目");
+	});
+
+	it("dedupes a same-id collision in favor of the project row", async () => {
+		await run("evolve_write", { kind: "skill", action: "create", id: "shared", ...FIELDS });
+		const { DatabaseSync } = await import("node:sqlite");
+		const now = new Date().toISOString();
+		const direct = new DatabaseSync((store as { path: string }).path);
+		try {
+			direct
+				.prepare("INSERT INTO skills (workspace_id, id, title, description, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)")
+				.run("", "shared", "Global twin", "other hook", "other body", now, now);
+		} finally {
+			direct.close();
+		}
+		for (const text of [
+			await run("evolve_read", { kind: "skill", id: "shared" }),
+			await run("evolve_read", { kind: "skill", query: "shared" }),
+			await run("evolve_read", { kind: "skill" }),
+		]) {
+			expect(text).toContain("本项目");
+			expect(text).not.toContain("Global twin");
+		}
+	});
+
+	it("rejects moving a row that fails the gates", async () => {
+		const { DatabaseSync } = await import("node:sqlite");
+		const now = new Date().toISOString();
+		const direct = new DatabaseSync((store as { path: string }).path);
+		try {
+			direct
+				.prepare("INSERT INTO skills (workspace_id, id, title, description, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)")
+				.run(workspace, "broken", "", "d", "b", now, now);
+		} finally {
+			direct.close();
+		}
+		const { outcomes } = store.applySkillProposals({ workspaceId: workspace, trigger: "explicit" }, [
+			{ action: "move-to-global", id: "broken" },
+		]);
+		const outcome = outcomes[0];
+		expect(outcome?.ok).toBe(false);
+		expect(outcome?.reason).toContain("must not be empty");
 	});
 });
 

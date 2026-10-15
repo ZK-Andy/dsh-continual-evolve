@@ -69,6 +69,7 @@ function mergedSkillFields(
 		}
 		return { fields: { title: proposal.title, description: proposal.description, body: proposal.body } };
 	}
+	/* v8 ignore next 3 — applySkillOne checks existence before merging, so update never arrives without a row. */
 	if (existing === undefined) {
 		return { reason: "no skill to merge into" };
 	}
@@ -230,6 +231,7 @@ export function applySkillOne(
 		return skillFail(proposal, `no ${scope} skill "${id}" to update — create it in the project instead`);
 	}
 	const merged = mergedSkillFields(proposal, existing, "update");
+	/* v8 ignore next 3 — existing is defined here (checked above), so the merge cannot fail this way. */
 	if ("reason" in merged) {
 		return skillFail(proposal, merged.reason);
 	}
