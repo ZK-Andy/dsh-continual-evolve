@@ -12,6 +12,7 @@
  * never a path. Handlers are synchronous and never throw past the response.
  */
 import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
+import { mountPromptRoutes } from "./prompt-routes.js";
 import type { MemoryStore } from "./store.js";
 import { canonicalPath } from "./workspace-hint.js";
 
@@ -69,7 +70,7 @@ function isGet(request: CardRequest): boolean {
 }
 
 /** The card's read fence: a root only resolves when the store has rows for it. */
-function isKnownRoot(store: MemoryStore, root: string): boolean {
+export function isKnownRoot(store: MemoryStore, root: string): boolean {
 	return listCardWorkspaces(store).some((workspace) => workspace.root === root);
 }
 
@@ -239,6 +240,7 @@ export function mountCardRoutes(
 			},
 		}),
 	);
+	disposers.push(mountPromptRoutes(webServer, store, isKnownRoot));
 	return () => {
 		for (const disposer of disposers) {
 			if (typeof disposer === "function") {

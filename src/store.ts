@@ -21,15 +21,15 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { openDatabase } from "./data/database.js";
 import { LEDGER_OCCURRENCES, migrateDatabase } from "./data/migrate.js";
-import { coalesceSkipRun, writeMemoryLedger, writeSkillLedger } from "./data/ledger.js";
-import { recordOf, skillRecordOf, type MemoryRow, type SkillRow } from "./data/records.js";
-import { MEMORIES, SKILLS } from "./data/resource-kinds.js";
+import { coalesceSkipRun, latestWorkspaceId, writeMemoryLedger, writeSkillLedger } from "./data/ledger.js";
+import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
+import { MEMORIES, PROMPTS, SKILLS } from "./data/resource-kinds.js";
 import { Repository } from "./data/repository.js";
-import { createReviewAccounts, INCOMPLETE_REVIEW_SQL } from "./data/review-accounts.js";
+import { createReviewAccounts, createUsageCounters, INCOMPLETE_REVIEW_SQL, quarantineSecrets } from "./data/review-accounts.js";
 import { applySkillOne, type SkillFileIntent, type SkillLedgerFile } from "./services/skill-apply.js";
+import { applyPromptBatch } from "./services/prompt-apply.js";
 import { reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "./surfaces/skill-projection.js";
 import { applyProposals } from "./store-apply.js";
-import { secretLeakReason } from "./memory-rules.js";
 import {
 	CURSOR_KEY_PREFIX,
 	GLOBAL_WORKSPACE,
@@ -51,6 +51,8 @@ export type {
 	PluginLogEntry,
 	ProposalContext,
 	ProposalOutcome,
+	PromptProposalOutcome,
+	PromptRecord,
 	ReviewLogEntry,
 	SkillFileWarning,
 	SkillProposalOutcome,
@@ -81,6 +83,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	migrateDatabase(database);
 	const memories = new Repository<MemoryRow>(database, MEMORIES);
 	const skills = new Repository<SkillRow>(database, SKILLS);
+	const prompts = new Repository<PromptRow>(database, PROMPTS);
 
 	const stmts = {
 		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
@@ -95,6 +98,10 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		),
 		recentSkill: database.prepare(
 			"SELECT workspace_id, MAX(ts) AS ts FROM skill_log " +
+				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+		),
+		recentPrompt: database.prepare(
+			"SELECT workspace_id, MAX(ts) AS ts FROM prompt_log " +
 				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
 		),
 		ledger: database.prepare(
@@ -112,6 +119,11 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		skillPrune: database.prepare("DELETE FROM skill_log WHERE ts < ?"),
+		promptLog: database.prepare(
+			"INSERT INTO prompt_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		),
+		promptPrune: database.prepare("DELETE FROM prompt_log WHERE ts < ?"),
 		reviewLog: database.prepare(
 			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, model, cheap_usage, evolve_usage, applied, evolve_count) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -183,24 +195,13 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			return memories.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
 		},
 		mostRecentlyActiveWorkspace() {
-			// All instants are ISO-8601 UTC, so the newer one is the greater
-			// string; comparing them keeps the three sources one ordering.
-			const rows = [stmts.recentLedger.get(), memories.recentInstant(), stmts.recentSkill.get()] as (
-				| { workspace_id?: unknown; ts?: unknown }
-				| undefined
-			)[];
-			let best: { workspaceId: string; ts: string } | undefined;
-			for (const row of rows) {
-				const workspaceId = row?.workspace_id;
-				const ts = row?.ts;
-				if (typeof workspaceId !== "string" || workspaceId.length === 0 || typeof ts !== "string") {
-					continue;
-				}
-				if (best === undefined || ts > best.ts) {
-					best = { workspaceId, ts };
-				}
-			}
-			return best?.workspaceId;
+			return latestWorkspaceId([
+				stmts.recentLedger.get() as { workspace_id?: unknown; ts?: unknown } | undefined,
+				memories.recentInstant(),
+				stmts.recentSkill.get() as { workspace_id?: unknown; ts?: unknown } | undefined,
+				stmts.recentPrompt.get() as { workspace_id?: unknown; ts?: unknown } | undefined,
+				prompts.recentInstant(),
+			]);
 		},
 		patrol() {
 			const result = {
@@ -212,36 +213,30 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				skillFilesReconciled: 0,
 				skillOrphanFilesRemoved: 0,
 				skillFileErrors: 0,
+				promptOrphanFtsRows: 0,
+				promptQuarantined: [] as { workspaceId: string; id: string; reason: string }[],
 			};
 			for (const rid of memories.ftsOrphanIds()) {
 				memories.dropFtsRow(rid);
 				result.orphanFtsRows += 1;
 			}
-			for (const row of memories.activeRowList()) {
-				const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
-				if (reason !== undefined) {
-					memories.quarantineRow(row.workspace_id, row.id);
-					result.quarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
-				}
-			}
 			for (const rid of skills.ftsOrphanIds()) {
 				skills.dropFtsRow(rid);
 				result.skillOrphanFtsRows += 1;
 			}
-			for (const row of skills.activeRowList()) {
-				const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
-				if (reason !== undefined) {
-					skills.quarantineRow(row.workspace_id, row.id);
-					result.skillQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
-					// A quarantined skill must stop loading immediately: drop
-					// its managed file (hand-written files stay, with an error
-					// counted so the residue stays visible).
-					for (const warning of removeSkillFile(skillRootOf(row.workspace_id), row.id)) {
-						void warning;
-						result.skillFileErrors += 1;
-					}
-				}
+			for (const rid of prompts.ftsOrphanIds()) {
+				prompts.dropFtsRow(rid);
+				result.promptOrphanFtsRows += 1;
 			}
+			quarantineSecrets(memories, skills, prompts, result, (workspaceId, id) => {
+				// A quarantined skill must stop loading immediately: drop
+				// its managed file (hand-written files stay, with an error
+				// counted so the residue stays visible).
+				for (const warning of removeSkillFile(skillRootOf(workspaceId), id)) {
+					void warning;
+					result.skillFileErrors += 1;
+				}
+			});
 			reconcileSkillFiles(skills, result);
 			stmts.stateSet.run(GLOBAL_WORKSPACE, PATROL_STATE_KEY, JSON.stringify(result));
 			return result;
@@ -259,9 +254,10 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		pruneLedger(beforeIso) {
 			const memory = Number(stmts.prune.run(beforeIso).changes);
 			const skillRows = Number(stmts.skillPrune.run(beforeIso).changes);
+			const promptRows = Number(stmts.promptPrune.run(beforeIso).changes);
 			const reviews = Number(stmts.reviewPrune.run(beforeIso).changes);
 			const logs = Number(stmts.pluginLogPrune.run(beforeIso).changes);
-			return memory + skillRows + reviews + logs;
+			return memory + skillRows + promptRows + reviews + logs;
 		},
 		close() {
 			database.close();
@@ -328,42 +324,26 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		listSkillWorkspaces() {
 			return skills.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
 		},
-		recordSkillUse(workspaceId: string, skillId: string, scope: string) {
-			try {
-				skills.recordUsage(workspaceId, [skillId, scope], new Date().toISOString());
-			} catch {
-				// Accounting never fails the read it rides on.
-			}
+		getPrompt(workspaceId, id) {
+			const row = prompts.getRow(workspaceId, id);
+			return row === undefined ? undefined : promptRecordOf(row);
 		},
-		getSkillUse(workspaceId: string, skillId: string, scope: string) {
-			try {
-				const row = skills.getUsage(workspaceId, [skillId, scope]);
-				if (row === undefined) {
-					return undefined;
-				}
-				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
-			} catch {
-				return undefined;
-			}
+		listPrompts(workspaceId) {
+			return prompts.listRows(workspaceId).map(promptRecordOf);
 		},
-		recordMemoryUse(workspaceId: string, memoryId: string) {
-			try {
-				memories.recordUsage(workspaceId, [memoryId], new Date().toISOString());
-			} catch {
-				// Accounting never fails the read it rides on.
-			}
+		listAllPrompts(workspaceId) {
+			return prompts.listVisibleRows(workspaceId).map(promptRecordOf);
 		},
-		getMemoryUse(workspaceId: string, memoryId: string) {
-			try {
-				const row = memories.getUsage(workspaceId, [memoryId]);
-				if (row === undefined) {
-					return undefined;
-				}
-				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
-			} catch {
-				return undefined;
-			}
+		searchPrompts(workspaceId, query, limit = 20) {
+			return prompts.searchRows(workspaceId, query, limit).map(promptRecordOf);
 		},
+		applyPromptProposals(ctx, proposals) {
+			return applyPromptBatch(prompts, database, stmts.promptLog, ctx, proposals);
+		},
+		listPromptWorkspaces() {
+			return prompts.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
+		},
+		...createUsageCounters(memories, skills, prompts),
 		...createReviewAccounts(stmts, memories, skills),
 	};
 	return store;

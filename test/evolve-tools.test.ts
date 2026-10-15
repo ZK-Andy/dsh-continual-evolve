@@ -162,10 +162,10 @@ describe("evolve_write / evolve_read over skills", () => {
 describe("kind dispatch", () => {
 	it("rejects unknown kinds", async () => {
 		// Tool面先拦一层（kind-aware 用法提示），核心执行器另有守卫：
-		expect(await run("evolve_write", { kind: "prompt", action: "create" })).toContain("kind 必须是");
-		expect(await run("evolve_read", { kind: "prompt" })).toContain("kind 必须是");
-		expect(executeEvolveWrite(store, workspace, "sess-1", { kind: "prompt", action: "create" })).toContain("不支持的 kind");
-		expect(executeEvolveRead(store, workspace, { kind: "prompt" })).toContain("不支持的 kind");
+		expect(await run("evolve_write", { kind: "thread", action: "create" })).toContain("kind 必须是");
+		expect(await run("evolve_read", { kind: "thread" })).toContain("kind 必须是");
+		expect(executeEvolveWrite(store, workspace, "sess-1", { kind: "thread", action: "create" })).toContain("不支持的 kind");
+		expect(executeEvolveRead(store, workspace, { kind: "thread" })).toContain("不支持的 kind");
 	});
 
 	it("answers without a workspace in kind-aware wording", async () => {
@@ -174,7 +174,9 @@ describe("kind dispatch", () => {
 		expect(await run("evolve_write", { kind: "skill", action: "create" }, noWs)).toContain("无法写入技能");
 		expect(await run("evolve_read", { kind: "memory" }, noWs)).toContain("无法读取记忆");
 		expect(await run("evolve_read", { kind: "skill" }, noWs)).toContain("无法读取技能");
-		expect(await run("evolve_write", { kind: "prompt", action: "create" }, noWs)).toContain("kind 必须是");
+		expect(await run("evolve_write", { kind: "prompt", action: "create" }, noWs)).toContain("无法写入提示词补充");
+		expect(await run("evolve_read", { kind: "prompt" }, noWs)).toContain("无法读取提示词补充");
+		expect(await run("evolve_write", { kind: "thread", action: "create" }, noWs)).toContain("kind 必须是");
 	});
 });
 

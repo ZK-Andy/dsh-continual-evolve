@@ -13,6 +13,7 @@ import {
 	type CardRoute,
 	type CardWebServer,
 } from "../src/card-routes.js";
+import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/prompt-routes.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;
@@ -79,11 +80,19 @@ function seed(id = "fedora-env", body = "Fedora 44"): boolean {
 }
 
 describe("mountCardRoutes", () => {
-	it("registers all five routes and the disposer unregisters them", () => {
+	it("registers all seven routes and the disposer unregisters them", () => {
 		const { routes, webServer } = makeWebServer();
 		const disposer = mountCardRoutes(webServer, store);
 		expect([...routes.keys()].sort()).toEqual(
-			[CARD_API_WORKSPACES_PATH, CARD_API_MEMORY_PATH, CARD_API_MEMORY_FILE_PATH, CARD_API_SKILLS_PATH, CARD_API_SKILL_FILE_PATH].sort(),
+			[
+				CARD_API_WORKSPACES_PATH,
+				CARD_API_MEMORY_PATH,
+				CARD_API_MEMORY_FILE_PATH,
+				CARD_API_SKILLS_PATH,
+				CARD_API_SKILL_FILE_PATH,
+				CARD_API_PROMPTS_PATH,
+				CARD_API_PROMPT_FILE_PATH,
+			].sort(),
 		);
 		disposer();
 		expect(routes.size).toBe(0);

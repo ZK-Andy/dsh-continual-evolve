@@ -6,8 +6,9 @@
  * spread.
  */
 import type { StatementSync } from "node:sqlite";
-import type { DailyDelta, DailyStats, MemoryStore, ReviewLogEntry } from "../store-types.js";
-import type { MemoryRow, SkillRow } from "./records.js";
+import { secretLeakReason } from "../memory-rules.js";
+import type { DailyDelta, DailyStats, MemoryStore, PatrolResult, ReviewLogEntry } from "../store-types.js";
+import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
 import type { Repository } from "./repository.js";
 
 /**
@@ -183,5 +184,125 @@ function parseCounts(raw: string | null): Record<string, number> {
 		return counts;
 	} catch {
 		return {};
+	}
+}
+
+type UsageMethods = Pick<
+	MemoryStore,
+	"recordSkillUse" | "getSkillUse" | "recordMemoryUse" | "getMemoryUse" | "recordPromptUse" | "getPromptUse"
+>;
+
+/**
+ * Build the six usage-counter methods over the three repositories.
+ * Presence heartbeat: a body served by id counts; accounting never fails
+ * the read it rides on.
+ * @param memories - The memories repository.
+ * @param skills - The skills repository.
+ * @param prompts - The prompts repository.
+ * @returns The six store methods, spread into the assembled store.
+ */
+export function createUsageCounters(
+	memories: Repository<MemoryRow>,
+	skills: Repository<SkillRow>,
+	prompts: Repository<PromptRow>,
+): UsageMethods {
+	return {
+		recordSkillUse(workspaceId: string, skillId: string, scope: string) {
+			try {
+				skills.recordUsage(workspaceId, [skillId, scope], new Date().toISOString());
+			} catch {
+				// Accounting never fails the read it rides on.
+			}
+		},
+		getSkillUse(workspaceId: string, skillId: string, scope: string) {
+			try {
+				const row = skills.getUsage(workspaceId, [skillId, scope]);
+				if (row === undefined) {
+					return undefined;
+				}
+				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
+			} catch {
+				return undefined;
+			}
+		},
+		recordMemoryUse(workspaceId: string, memoryId: string) {
+			try {
+				memories.recordUsage(workspaceId, [memoryId], new Date().toISOString());
+			} catch {
+				// Accounting never fails the read it rides on.
+			}
+		},
+		getMemoryUse(workspaceId: string, memoryId: string) {
+			try {
+				const row = memories.getUsage(workspaceId, [memoryId]);
+				if (row === undefined) {
+					return undefined;
+				}
+				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
+			} catch {
+				return undefined;
+			}
+		},
+		recordPromptUse(workspaceId: string, promptId: string) {
+			try {
+				prompts.recordUsage(workspaceId, [promptId], new Date().toISOString());
+			} catch {
+				// Accounting never fails the read it rides on.
+			}
+		},
+		getPromptUse(workspaceId: string, promptId: string) {
+			try {
+				const row = prompts.getUsage(workspaceId, [promptId]);
+				if (row === undefined) {
+					return undefined;
+				}
+				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
+			} catch {
+				return undefined;
+			}
+		},
+	};
+}
+
+/**
+ * Run the secret screen over every active row of the three kinds and
+ * quarantine what leaks. File side-effects stay with the caller: a
+ * quarantined skill must stop loading immediately, so the caller drops
+ * its managed file through the callback (hand-written files stay, with
+ * an error counted so the residue stays visible).
+ * @param memories - The memories repository.
+ * @param skills - The skills repository.
+ * @param prompts - The prompts repository.
+ * @param result - The patrol result accumulating counts.
+ * @param onSkillQuarantined - Drops one quarantined skill's managed file.
+ */
+export function quarantineSecrets(
+	memories: Repository<MemoryRow>,
+	skills: Repository<SkillRow>,
+	prompts: Repository<PromptRow>,
+	result: PatrolResult,
+	onSkillQuarantined: (workspaceId: string, id: string) => void,
+): void {
+	for (const row of memories.activeRowList()) {
+		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
+		if (reason !== undefined) {
+			memories.quarantineRow(row.workspace_id, row.id);
+			result.quarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
+		}
+	}
+	for (const row of skills.activeRowList()) {
+		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
+		if (reason !== undefined) {
+			skills.quarantineRow(row.workspace_id, row.id);
+			result.skillQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
+			onSkillQuarantined(row.workspace_id, row.id);
+		}
+	}
+	for (const row of prompts.activeRowList()) {
+		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
+		if (reason !== undefined) {
+			prompts.quarantineRow(row.workspace_id, row.id);
+			result.promptQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
+		}
 	}
 }

@@ -139,6 +139,45 @@ CREATE TABLE IF NOT EXISTS plugin_log (
   session_id TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_plugin_log_ts ON plugin_log(ts);
+-- Prompt supplements (the third managed kind): workspace-scoped reusable
+-- prompt text, skill-shaped rows without scope or taxonomy. Same FTS and
+-- ledger discipline as skills; writes ledger to prompt_log, usage to
+-- prompt_usage. See the P5 trial (docs/plans/2026-10-15-layered-generic-repository.md).
+CREATE TABLE IF NOT EXISTS prompts (
+  workspace_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 65536),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','quarantined','archived')),
+  source_session TEXT,
+  source_seqs TEXT,
+  source_run TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_prompt_ws_status ON prompts(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_prompt_ws_updated ON prompts(workspace_id, updated_at);
+CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
+  workspace_id, id, title, description, body, tokenize='trigram');
+-- Like memories_fts, synced in code by the prompt apply path (plain DELETE +
+-- INSERT), never by triggers, for the same node:sqlite FTS5 reason.
+CREATE TABLE IF NOT EXISTS prompt_log (
+  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
+  trigger TEXT, decision TEXT, status TEXT, files TEXT
+);
+-- Prompt usage counters: one aggregate row per prompt, the same
+-- presence-heartbeat discipline as memory_usage — a body served by id
+-- counts, search/list hits stay uncounted.
+CREATE TABLE IF NOT EXISTS prompt_usage (
+  workspace_id TEXT NOT NULL,
+  prompt_id TEXT NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TEXT,
+  PRIMARY KEY (workspace_id, prompt_id)
+) STRICT;
 `;
 
 /**

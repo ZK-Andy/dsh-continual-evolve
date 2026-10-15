@@ -63,6 +63,57 @@ export function writeSkillLedger(
 }
 
 /**
+ * Insert one prompt ledger row (the prompts write account: before/after
+ * snapshots for undo, no file warnings — prompts project to no files).
+ * @param promptLog - The prepared prompt_log insert.
+ * @param entry - Run provenance, decision, and file payload.
+ */
+export function writePromptLedger(
+	promptLog: StatementSync,
+	entry: {
+		runId: string | undefined;
+		sessionId: string | undefined;
+		workspaceId: string | undefined;
+		trigger: string;
+		decision: string | undefined;
+		status: string | undefined;
+		files: unknown;
+	},
+): void {
+	promptLog.run(
+		entry.runId ?? null,
+		new Date().toISOString(),
+		entry.sessionId ?? null,
+		entry.workspaceId ?? null,
+		entry.trigger,
+		entry.decision ?? null,
+		entry.status ?? null,
+		entry.files === undefined ? null : JSON.stringify(entry.files),
+	);
+}
+
+/**
+ * Pick the newest workspace among recency probes. All instants are ISO-8601
+ * UTC, so the newer one is the greater string; comparing them keeps every
+ * source on one ordering.
+ * @param rows - One probe row per source (ledger recency, table recency).
+ * @returns The newest workspace id, undefined when every source is empty.
+ */
+export function latestWorkspaceId(rows: readonly ({ workspace_id?: unknown; ts?: unknown } | undefined)[]): string | undefined {
+	let best: { workspaceId: string; ts: string } | undefined;
+	for (const row of rows) {
+		const workspaceId = row?.workspace_id;
+		const ts = row?.ts;
+		if (typeof workspaceId !== "string" || workspaceId.length === 0 || typeof ts !== "string") {
+			continue;
+		}
+		if (best === undefined || ts > best.ts) {
+			best = { workspaceId, ts };
+		}
+	}
+	return best?.workspaceId;
+}
+/**
  * Fold a repeat of the previous row's mechanical skip into that row: the
  * quiet turns of one session are one cursor position, so they are one
  * ledger row carrying how many wake-ups it stands for. Only a

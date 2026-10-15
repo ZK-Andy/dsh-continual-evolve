@@ -165,10 +165,11 @@ export function listCardWorkspaces(store: MemoryStore): { root: string; label: s
 	try {
 		const seen = new Set<string>();
 		const rows: { root: string; label: string }[] = [];
-		// One fence for every card route: partitions holding memories or
-		// skills. A skills-only workspace lists (its memory snapshot reads
-		// empty); global skills ride along with whichever workspace is open.
-		for (const workspace of [...store.listWorkspaces(), ...store.listSkillWorkspaces()]) {
+		// One fence for every card route: partitions holding memories,
+		// skills, or prompt supplements. A skills-only or prompts-only
+		// workspace lists (its memory snapshot reads empty); global skills
+		// ride along with whichever workspace is open.
+		for (const workspace of [...store.listWorkspaces(), ...store.listSkillWorkspaces(), ...store.listPromptWorkspaces()]) {
 			if (workspace.workspaceId === "" || seen.has(workspace.workspaceId)) {
 				continue;
 			}

@@ -15,6 +15,7 @@
  * imports nothing from DSH at runtime.
  */
 import { readMemoryRecords, writeMemoryRecord } from "./evolve-memory.js";
+import { readPromptRecords, writePromptRecord } from "./evolve-prompts.js";
 import { readSkillRecords, writeSkillRecord } from "./evolve-skills.js";
 import { cwdOf } from "./memory-section.js";
 import type { MemoryStore } from "./store.js";
@@ -75,13 +76,18 @@ export function sessionIdOf(exec: ToolExec): string | undefined {
 }
 
 /** Managed object kinds the unified tools speak. */
-export const EVOLVE_KINDS = ["memory", "skill"] as const;
+export const EVOLVE_KINDS = ["memory", "skill", "prompt"] as const;
 /** A managed object kind. */
 export type EvolveKind = (typeof EVOLVE_KINDS)[number];
 
 /** Whether `kind` names a managed object. */
 function isEvolveKind(value: unknown): value is EvolveKind {
-	return value === "memory" || value === "skill";
+	return value === "memory" || value === "skill" || value === "prompt";
+}
+
+/** The user-facing noun for a kind (tool replies and errors). */
+function kindNoun(kind: EvolveKind): string {
+	return kind === "memory" ? "记忆" : kind === "skill" ? "技能" : "提示词补充";
 }
 
 const EVOLVE_WRITE_PARAMETERS = {
@@ -89,8 +95,8 @@ const EVOLVE_WRITE_PARAMETERS = {
 	properties: {
 		kind: {
 			type: "string",
-			enum: ["memory", "skill"],
-			description: "管理对象：memory 持久记忆 / skill 可复用技能。",
+			enum: ["memory", "skill", "prompt"],
+			description: "管理对象：memory 持久记忆 / skill 可复用技能 / prompt 提示词补充（本工作区）。",
 		},
 		action: {
 			type: "string",
@@ -125,8 +131,8 @@ const EVOLVE_READ_PARAMETERS = {
 	properties: {
 		kind: {
 			type: "string",
-			enum: ["memory", "skill"],
-			description: "管理对象：memory 持久记忆 / skill 可复用技能（同名时项目遮蔽全局）。",
+			enum: ["memory", "skill", "prompt"],
+			description: "管理对象：memory 持久记忆 / skill 可复用技能（同名时项目遮蔽全局）/ prompt 提示词补充（本工作区）。",
 		},
 		id: { type: "string", description: "按 id 直取一条的完整内容。" },
 		query: { type: "string", description: "关键词检索（不传 id 时生效；不传 query 则列目录）。" },
@@ -175,12 +181,15 @@ export function executeEvolveWrite(
 	args: EvolveWriteArgs,
 ): string {
 	if (!isEvolveKind(args.kind)) {
-		return `不支持的 kind ${JSON.stringify(args.kind)}：仅支持 memory / skill。`;
+		return `不支持的 kind ${JSON.stringify(args.kind)}：仅支持 memory / skill / prompt。`;
 	}
 	if (args.kind === "memory") {
 		return writeMemoryRecord(store, workspaceId, sessionId, args);
 	}
-	return writeSkillRecord(store, workspaceId, sessionId, args);
+	if (args.kind === "skill") {
+		return writeSkillRecord(store, workspaceId, sessionId, args);
+	}
+	return writePromptRecord(store, workspaceId, sessionId, args);
 }
 
 /**
@@ -192,12 +201,15 @@ export function executeEvolveWrite(
  */
 export function executeEvolveRead(store: MemoryStore, workspaceId: string, args: EvolveReadArgs): string {
 	if (!isEvolveKind(args.kind)) {
-		return `不支持的 kind ${JSON.stringify(args.kind)}：仅支持 memory / skill。`;
+		return `不支持的 kind ${JSON.stringify(args.kind)}：仅支持 memory / skill / prompt。`;
 	}
 	if (args.kind === "memory") {
 		return readMemoryRecords(store, workspaceId, args);
 	}
-	return readSkillRecords(store, workspaceId, args);
+	if (args.kind === "skill") {
+		return readSkillRecords(store, workspaceId, args);
+	}
+	return readPromptRecords(store, workspaceId, args);
 }
 
 /**
@@ -212,17 +224,15 @@ export function registerEvolveTools(tools: ToolsService, store: MemoryStore): ()
 		tools.register(
 			textTool(
 				"evolve_write",
-				"写入一条管理对象（kind=memory 持久记忆 / kind=skill 可复用技能）。用户明确要求记住、忘掉或沉淀技能时使用；记忆按当前工作区分区存储，技能只在本项目创建（move-to-global 手动搬到全局），由插件代码校验后落库。",
+				"写入一条管理对象（kind=memory 持久记忆 / kind=skill 可复用技能 / kind=prompt 提示词补充）。用户明确要求记住、忘掉、沉淀技能或补充提示时使用；记忆与提示词补充按当前工作区分区存储，技能只在本项目创建（move-to-global 手动搬到全局），由插件代码校验后落库。",
 				EVOLVE_WRITE_PARAMETERS,
 				async (args, exec) => {
 					if (!isEvolveKind(args.kind)) {
-						return `错误：kind 必须是 memory / skill 之一。`;
+						return `错误：kind 必须是 memory / skill / prompt 之一。`;
 					}
 					const cwd = cwdOf(exec.agent);
 					if (cwd === undefined) {
-						return args.kind === "memory"
-							? "错误：当前会话没有可用的工作区路径，无法写入记忆。"
-							: "错误：当前会话没有可用的工作区路径，无法写入技能。";
+						return `错误：当前会话没有可用的工作区路径，无法写入${kindNoun(args.kind)}。`;
 					}
 					return executeEvolveWrite(store, cwd, sessionIdOf(exec), {
 						kind: args.kind,
@@ -242,17 +252,15 @@ export function registerEvolveTools(tools: ToolsService, store: MemoryStore): ()
 		tools.register(
 			textTool(
 				"evolve_read",
-				"读取一条管理对象：按 id 取完整正文，或按关键词检索（kind=memory 只看本工作区；kind=skill 看本项目与全局，同名时项目遮蔽全局）。",
+				"读取一条管理对象：按 id 取完整正文，或按关键词检索（kind=memory 只看本工作区；kind=skill 看本项目与全局，同名时项目遮蔽全局；kind=prompt 只看本工作区）。",
 				EVOLVE_READ_PARAMETERS,
 				async (args, exec) => {
 					if (!isEvolveKind(args.kind)) {
-						return `错误：kind 必须是 memory / skill 之一。`;
+						return `错误：kind 必须是 memory / skill / prompt 之一。`;
 					}
 					const cwd = cwdOf(exec.agent);
 					if (cwd === undefined) {
-						return args.kind === "memory"
-							? "错误：当前会话没有可用的工作区路径，无法读取记忆。"
-							: "错误：当前会话没有可用的工作区路径，无法读取技能。";
+						return `错误：当前会话没有可用的工作区路径，无法读取${kindNoun(args.kind)}。`;
 					}
 					return executeEvolveRead(store, cwd, {
 						kind: args.kind,

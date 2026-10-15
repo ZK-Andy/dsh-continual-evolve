@@ -6,6 +6,7 @@
  * `./services/skill-apply.js` (skill writes); this file carries no SQL.
  */
 import type { MemoryProposal } from "./memory-rules.js";
+import type { PromptProposal } from "./prompt-rules.js";
 import type { SkillProposal } from "./skill-rules.js";
 import type { ProposalContext, ProposalOutcome } from "./store-apply.js";
 
@@ -68,6 +69,33 @@ export interface SkillUse {
 	useCount: number;
 	/** ISO instant of the last counted use, `null` when never consumed. */
 	lastUsedAt: string | null;
+}
+
+/** One stored prompt supplement (workspace-scoped reusable prompt text). Prompts carry no type and no scope. */
+export interface PromptRecord {
+	workspaceId: string;
+	id: string;
+	title: string;
+	description: string;
+	body: string;
+	status: "active" | "quarantined" | "archived";
+	/** Origin session id, `null` for imports. */
+	sourceSession: string | null;
+	/** Trajectory seq range the supplement came from ("820-831"), `null` when unknown. */
+	sourceSeqs: string | null;
+	/** The run that wrote it; `'explicit'` for tool writes. */
+	sourceRun: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+
+/** What a single prompt proposal produced. */
+export interface PromptProposalOutcome {
+	id: string;
+	action: "create" | "update" | "delete";
+	ok: boolean;
+	/** Blocking reason when `ok` is false. */
+	reason?: string;
 }
 
 /** One per-item content-review verdict (the `item-review` account's row). */
@@ -217,6 +245,10 @@ export interface PatrolResult {
 	skillOrphanFilesRemoved: number;
 	/** Managed file operations that failed (retried by the next patrol). */
 	skillFileErrors: number;
+	/** Orphan prompt FTS rows (no matching prompt) removed. */
+	promptOrphanFtsRows: number;
+	/** Prompts quarantined by the secret screen, with the redacted reasons. */
+	promptQuarantined: { workspaceId: string; id: string; reason: string }[];
 }
 
 /** The store surface every consumer (tool, extraction, card, injection) uses. */
@@ -261,6 +293,24 @@ export interface MemoryStore {
 	/** Ledger and log rows older than the cutoff, removed (the unbounded tables). */
 	pruneLedger(beforeIso: string): number;
 	close(): void;
+	/** One active prompt supplement from a partition, undefined when absent. */
+	getPrompt(workspaceId: string, id: string): PromptRecord | undefined;
+	/** Active prompt supplements of one partition, newest first. */
+	listPrompts(workspaceId: string): PromptRecord[];
+	/** Every non-archived prompt supplement of one partition, newest first. */
+	listAllPrompts(workspaceId: string): PromptRecord[];
+	/**
+	 * Keyword search over prompt supplements, workspace-scoped: same
+	 * AND-combined trigram/LIKE discipline as memory search.
+	 */
+	searchPrompts(workspaceId: string, query: string, limit?: number): PromptRecord[];
+	/**
+	 * The sole prompt write gate: validate all proposals, apply atomically,
+	 * ledger with before/after snapshots. Prompts project to no files.
+	 */
+	applyPromptProposals(ctx: ProposalContext, proposals: readonly PromptProposal[]): PromptProposalOutcome[];
+	/** Partitions holding active prompt supplements. */
+	listPromptWorkspaces(): WorkspaceSummary[];
 	/** One active skill row from a partition, undefined when absent. */
 	getSkill(workspaceId: string, id: string): SkillRecord | undefined;
 	/** Active skills of one partition, newest first. */
@@ -300,6 +350,14 @@ export interface MemoryStore {
 	recordMemoryUse(workspaceId: string, memoryId: string): void;
 	/** Aggregate usage for one memory, undefined when never consumed. */
 	getMemoryUse(workspaceId: string, memoryId: string): SkillUse | undefined;
+	/**
+	 * Record one real prompt consumption (a body served by id, never a list
+	 * or search hit). Same heartbeat discipline as skill usage: accounting
+	 * never fails the read it rides on.
+	 */
+	recordPromptUse(workspaceId: string, promptId: string): void;
+	/** Aggregate usage for one prompt supplement, undefined when never consumed. */
+	getPromptUse(workspaceId: string, promptId: string): SkillUse | undefined;
 	/** Append one per-item content-review verdict (the `item-review` account). */
 	logReview(entry: ReviewLogEntry): void;
 	/**
