@@ -105,6 +105,18 @@ export function applyProposals(
 	return { outcomes, applied };
 }
 
+/** Everything one memory proposal needs once gates have passed. */
+interface MemoryApplyJob {
+	db: ApplyDatabase;
+	ctx: ProposalContext;
+	proposal: MemoryProposal;
+	id: string;
+	existing: MemoryRecord | undefined;
+	fields: { type: MemoryType; title: string; description: string; body: string };
+	link: string | null;
+	files: MemoryLedgerFile[];
+}
+
 /** Validate one proposal and land it; appends the audit payload on success. */
 function applyOne(
 	db: ApplyDatabase,
@@ -124,13 +136,7 @@ function applyOne(
 	const existing = existingRow === undefined ? undefined : recordOf(existingRow);
 
 	if (action === "delete") {
-		if (existing === undefined) {
-			return fail(proposal, `no memory "${id}" to delete`);
-		}
-		db.memories.deleteRow(ctx.workspaceId, id);
-		db.memories.syncFts(ctx.workspaceId, id);
-		files.push({ id, action, before: existing });
-		return { id, action, ok: true };
+		return deleteMemory({ db, ctx, proposal, id, existing, files });
 	}
 
 	const fields = mergedFields(proposal, existing, action);
@@ -145,44 +151,73 @@ function applyOne(
 	if (reasons.length > 0) {
 		return fail(proposal, reasons[0] ?? "invalid record");
 	}
+	const job: MemoryApplyJob = { db, ctx, proposal, id, existing, fields: fields.fields, link: link.value, files };
 	if (action === "create") {
-		if (existing !== undefined) {
-			return fail(proposal, `memory "${id}" already exists — update it instead of creating a duplicate`);
-		}
-		const now = db.now();
-		db.memories.insertRow([
-			ctx.workspaceId,
-			id,
-			fields.fields.type,
-			fields.fields.title,
-			fields.fields.description,
-			fields.fields.body,
-			ctx.sessionId ?? null,
-			proposal.sourceSeqs ?? null,
-			ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
-			link.value,
-			now,
-			now,
-		]);
-		db.memories.syncFts(ctx.workspaceId, id);
-		files.push({
-			id,
-			action,
-			after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow),
-			sourceSeqs: proposal.sourceSeqs,
-		});
-		return { id, action, ok: true };
+		return createMemory(job);
 	}
+	// action === "update"
+	return updateMemory(job);
+}
+
+/** Land a delete proposal (no gates beyond existence). */
+function deleteMemory(job: Pick<MemoryApplyJob, "db" | "ctx" | "proposal" | "id" | "existing" | "files">): ProposalOutcome {
+	const { db, ctx, proposal, id, existing, files } = job;
+	const action = proposal.action;
+	if (existing === undefined) {
+		return fail(proposal, `no memory "${id}" to delete`);
+	}
+	db.memories.deleteRow(ctx.workspaceId, id);
+	db.memories.syncFts(ctx.workspaceId, id);
+	files.push({ id, action, before: existing });
+	return { id, action, ok: true };
+}
+
+/** Land a create proposal with its validated fields and correction link. */
+function createMemory(job: MemoryApplyJob): ProposalOutcome {
+	const { db, ctx, proposal, id, existing, fields, link, files } = job;
+	const action = proposal.action;
+	if (existing !== undefined) {
+		return fail(proposal, `memory "${id}" already exists — update it instead of creating a duplicate`);
+	}
+	const now = db.now();
+	db.memories.insertRow([
+		ctx.workspaceId,
+		id,
+		fields.type,
+		fields.title,
+		fields.description,
+		fields.body,
+		ctx.sessionId ?? null,
+		proposal.sourceSeqs ?? null,
+		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
+		link,
+		now,
+		now,
+	]);
+	db.memories.syncFts(ctx.workspaceId, id);
+	files.push({
+		id,
+		action,
+		after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow),
+		sourceSeqs: proposal.sourceSeqs,
+	});
+	return { id, action, ok: true };
+}
+
+/** Land an update proposal over its stored row. */
+function updateMemory(job: MemoryApplyJob): ProposalOutcome {
+	const { db, ctx, proposal, id, existing, fields, link, files } = job;
+	const action = proposal.action;
 	// action === "update"
 	if (existing === undefined) {
 		return fail(proposal, `no memory "${id}" to update — create it instead`);
 	}
 	db.memories.updateRow([
-		fields.fields.type,
-		fields.fields.title,
-		fields.fields.description,
-		fields.fields.body,
-		link.value,
+		fields.type,
+		fields.title,
+		fields.description,
+		fields.body,
+		link,
 		db.now(),
 		ctx.workspaceId,
 		id,

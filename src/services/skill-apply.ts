@@ -86,6 +86,24 @@ function identicalSkill(a: SkillRecord, fields: SkillFields): boolean {
 	return a.title === fields.title && a.description === fields.description && a.body === fields.body;
 }
 
+/** Everything one skill proposal needs once its id is validated. */
+interface SkillApplyJob {
+	skills: Repository<SkillRow>;
+	ctx: ProposalContext;
+	proposal: SkillProposal;
+	id: string;
+	now: string;
+	files: SkillLedgerFile[];
+	intents: SkillFileIntent[];
+}
+
+/** The resolved update/delete target: scope name, partition, and stored row. */
+interface SkillTarget {
+	scope: string;
+	partition: string;
+	existing: SkillRecord | undefined;
+}
+
 /**
  * Validate one skill proposal and land it; file work happens post-commit via intents.
  * @param skills - The skills repository (inside the caller's transaction).
@@ -112,102 +130,13 @@ export function applySkillOne(
 	if (!isValidMemoryId(id)) {
 		return skillFail(proposal, id.length === 0 ? "id missing and cannot be derived from the title" : `malformed id "${id}"`);
 	}
-
+	const job: SkillApplyJob = { skills, ctx, proposal, id, now, files, intents };
 	if (action === "create") {
-		if (ctx.workspaceId === "") {
-			return skillFail(proposal, "skills are created in a project — move one to global explicitly afterwards");
-		}
-		const merged = mergedSkillFields(proposal, undefined, "create");
-		if ("reason" in merged) {
-			return skillFail(proposal, merged.reason);
-		}
-		const reasons = skillFieldGateReasons(merged.fields);
-		if (reasons.length > 0) {
-			return skillFail(proposal, reasons[0] ?? "invalid skill");
-		}
-		const projectRow = skills.getRow(ctx.workspaceId, id);
-		if (projectRow !== undefined && projectRow.status !== "archived") {
-			return skillFail(proposal, `skill "${id}" already exists in this project — update it instead of creating a duplicate`);
-		}
-		const globalRow = skills.getRow("", id);
-		if (globalRow !== undefined && globalRow.status !== "archived") {
-			const global = skillRecordOf(globalRow);
-			if (identicalSkill(global, merged.fields)) {
-				return skillFail(proposal, `identical global skill "${id}" already exists — call it directly, nothing to create`);
-			}
-			return skillFail(proposal, `global skill "${id}" exists with different content — rename yours, or delete the global row first`);
-		}
-		const sameBody = skills.findBodyOwner(ctx.workspaceId, merged.fields.body);
-		if (sameBody !== undefined && sameBody !== id) {
-			return skillFail(proposal, `identical skill "${sameBody}" already exists in this project — reuse it instead of duplicating`);
-		}
-		const sameGlobalBody = skills.findBodyOwner("", merged.fields.body);
-		if (sameGlobalBody !== undefined) {
-			return skillFail(proposal, `identical global skill "${sameGlobalBody}" already exists — call it directly instead of duplicating`);
-		}
-		skills.insertRow([
-			ctx.workspaceId,
-			id,
-			merged.fields.title,
-			merged.fields.description,
-			merged.fields.body,
-			ctx.sessionId ?? null,
-			proposal.sourceSeqs ?? null,
-			ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
-			now,
-			now,
-		]);
-		skills.syncFts(ctx.workspaceId, id);
-		files.push({
-			id,
-			action,
-			scope: "project",
-			after: skillRecordOf(skills.getRow(ctx.workspaceId, id) as SkillRow),
-			sourceSeqs: proposal.sourceSeqs,
-		});
-		intents.push({ partition: ctx.workspaceId, id, op: "write" });
-		return { id, action, ok: true };
+		return createSkill(job);
 	}
-
 	if (action === "move-to-global") {
-		const projectRow = skills.getRow(ctx.workspaceId, id);
-		if (projectRow === undefined || projectRow.status === "archived") {
-			return skillFail(proposal, `no project skill "${id}" to move — create it in the project first`);
-		}
-		const project = skillRecordOf(projectRow);
-		if (project.status !== "active") {
-			return skillFail(proposal, `project skill "${id}" is ${project.status} — only active skills move to global`);
-		}
-		const globalRow = skills.getRow("", id);
-		if (globalRow !== undefined && globalRow.status !== "archived") {
-			return skillFail(proposal, `global skill "${id}" already exists — delete it first, or keep the project copy shadowing it`);
-		}
-		const reasons = skillFieldGateReasons({ title: project.title, description: project.description, body: project.body });
-		if (reasons.length > 0) {
-			return skillFail(proposal, reasons[0] ?? "invalid skill");
-		}
-		skills.insertRow([
-			"",
-			id,
-			project.title,
-			project.description,
-			project.body,
-			project.sourceSession,
-			project.sourceSeqs,
-			ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
-			now,
-			now,
-		]);
-		skills.syncFts("", id);
-		skills.archiveRow(ctx.workspaceId, id, now);
-		skills.syncFts(ctx.workspaceId, id);
-		files.push({ id, action, scope: "project", before: project });
-		files.push({ id, action, scope: "global", after: skillRecordOf(skills.getRow("", id) as SkillRow) });
-		intents.push({ partition: "", id, op: "write" });
-		intents.push({ partition: ctx.workspaceId, id, op: "remove" });
-		return { id, action, ok: true };
+		return moveSkillToGlobal(job);
 	}
-
 	const scope = skillScopeOf(proposal);
 	if (typeof scope !== "string") {
 		return skillFail(proposal, scope.reason);
@@ -215,17 +144,135 @@ export function applySkillOne(
 	const partition = skillPartitionOf(ctx, scope);
 	const existingRow = skills.getRow(partition, id);
 	const existing = existingRow === undefined || existingRow.status === "archived" ? undefined : skillRecordOf(existingRow);
-
+	const target: SkillTarget = { scope, partition, existing };
 	if (action === "delete") {
-		if (existing === undefined) {
-			return skillFail(proposal, `no ${scope} skill "${id}" to delete`);
-		}
-		skills.deleteRow(partition, id);
-		skills.syncFts(partition, id);
-		files.push({ id, action, scope, before: existing });
-		intents.push({ partition, id, op: "remove" });
-		return { id, action, ok: true };
+		return deleteSkill(job, target);
 	}
+	// action === "update"
+	return updateSkill(job, target);
+}
+
+/** Land a create proposal: project-only, with duplicate guards on both partitions. */
+function createSkill(job: SkillApplyJob): SkillProposalOutcome {
+	const { skills, ctx, proposal, id, now, files, intents } = job;
+	const action = proposal.action;
+	if (ctx.workspaceId === "") {
+		return skillFail(proposal, "skills are created in a project — move one to global explicitly afterwards");
+	}
+	const merged = mergedSkillFields(proposal, undefined, "create");
+	if ("reason" in merged) {
+		return skillFail(proposal, merged.reason);
+	}
+	const reasons = skillFieldGateReasons(merged.fields);
+	if (reasons.length > 0) {
+		return skillFail(proposal, reasons[0] ?? "invalid skill");
+	}
+	const projectRow = skills.getRow(ctx.workspaceId, id);
+	if (projectRow !== undefined && projectRow.status !== "archived") {
+		return skillFail(proposal, `skill "${id}" already exists in this project — update it instead of creating a duplicate`);
+	}
+	const globalRow = skills.getRow("", id);
+	if (globalRow !== undefined && globalRow.status !== "archived") {
+		const global = skillRecordOf(globalRow);
+		if (identicalSkill(global, merged.fields)) {
+			return skillFail(proposal, `identical global skill "${id}" already exists — call it directly, nothing to create`);
+		}
+		return skillFail(proposal, `global skill "${id}" exists with different content — rename yours, or delete the global row first`);
+	}
+	const sameBody = skills.findBodyOwner(ctx.workspaceId, merged.fields.body);
+	if (sameBody !== undefined && sameBody !== id) {
+		return skillFail(proposal, `identical skill "${sameBody}" already exists in this project — reuse it instead of duplicating`);
+	}
+	const sameGlobalBody = skills.findBodyOwner("", merged.fields.body);
+	if (sameGlobalBody !== undefined) {
+		return skillFail(proposal, `identical global skill "${sameGlobalBody}" already exists — call it directly instead of duplicating`);
+	}
+	skills.insertRow([
+		ctx.workspaceId,
+		id,
+		merged.fields.title,
+		merged.fields.description,
+		merged.fields.body,
+		ctx.sessionId ?? null,
+		proposal.sourceSeqs ?? null,
+		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
+		now,
+		now,
+	]);
+	skills.syncFts(ctx.workspaceId, id);
+	files.push({
+		id,
+		action,
+		scope: "project",
+		after: skillRecordOf(skills.getRow(ctx.workspaceId, id) as SkillRow),
+		sourceSeqs: proposal.sourceSeqs,
+	});
+	intents.push({ partition: ctx.workspaceId, id, op: "write" });
+	return { id, action, ok: true };
+}
+
+/** Land a move-to-global proposal: copy to global, archive the project row. */
+function moveSkillToGlobal(job: SkillApplyJob): SkillProposalOutcome {
+	const { skills, ctx, proposal, id, now, files, intents } = job;
+	const action = proposal.action;
+	const projectRow = skills.getRow(ctx.workspaceId, id);
+	if (projectRow === undefined || projectRow.status === "archived") {
+		return skillFail(proposal, `no project skill "${id}" to move — create it in the project first`);
+	}
+	const project = skillRecordOf(projectRow);
+	if (project.status !== "active") {
+		return skillFail(proposal, `project skill "${id}" is ${project.status} — only active skills move to global`);
+	}
+	const globalRow = skills.getRow("", id);
+	if (globalRow !== undefined && globalRow.status !== "archived") {
+		return skillFail(proposal, `global skill "${id}" already exists — delete it first, or keep the project copy shadowing it`);
+	}
+	const reasons = skillFieldGateReasons({ title: project.title, description: project.description, body: project.body });
+	if (reasons.length > 0) {
+		return skillFail(proposal, reasons[0] ?? "invalid skill");
+	}
+	skills.insertRow([
+		"",
+		id,
+		project.title,
+		project.description,
+		project.body,
+		project.sourceSession,
+		project.sourceSeqs,
+		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
+		now,
+		now,
+	]);
+	skills.syncFts("", id);
+	skills.archiveRow(ctx.workspaceId, id, now);
+	skills.syncFts(ctx.workspaceId, id);
+	files.push({ id, action, scope: "project", before: project });
+	files.push({ id, action, scope: "global", after: skillRecordOf(skills.getRow("", id) as SkillRow) });
+	intents.push({ partition: "", id, op: "write" });
+	intents.push({ partition: ctx.workspaceId, id, op: "remove" });
+	return { id, action, ok: true };
+}
+
+/** Land a delete proposal against its resolved target. */
+function deleteSkill(job: SkillApplyJob, target: SkillTarget): SkillProposalOutcome {
+	const { skills, proposal, id, files, intents } = job;
+	const { scope, partition, existing } = target;
+	const action = proposal.action;
+	if (existing === undefined) {
+		return skillFail(proposal, `no ${scope} skill "${id}" to delete`);
+	}
+	skills.deleteRow(partition, id);
+	skills.syncFts(partition, id);
+	files.push({ id, action, scope, before: existing });
+	intents.push({ partition, id, op: "remove" });
+	return { id, action, ok: true };
+}
+
+/** Land an update proposal against its resolved target. */
+function updateSkill(job: SkillApplyJob, target: SkillTarget): SkillProposalOutcome {
+	const { skills, proposal, id, now, files, intents } = job;
+	const { scope, partition, existing } = target;
+	const action = proposal.action;
 	// action === "update"
 	if (existing === undefined) {
 		return skillFail(proposal, `no ${scope} skill "${id}" to update — create it in the project instead`);

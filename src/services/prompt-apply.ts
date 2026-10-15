@@ -62,6 +62,17 @@ function mergedPromptFields(
 	};
 }
 
+/** Everything one prompt proposal needs once its id is validated. */
+interface PromptApplyJob {
+	prompts: Repository<PromptRow>;
+	ctx: ProposalContext;
+	proposal: PromptProposal;
+	id: string;
+	existing: PromptRecord | undefined;
+	now: string;
+	files: PromptLedgerFile[];
+}
+
 /**
  * Validate one prompt proposal and land it (inside the caller's transaction).
  * @param prompts - The prompts repository.
@@ -88,54 +99,75 @@ export function applyPromptOne(
 	}
 	const existingRow = prompts.getRow(ctx.workspaceId, id);
 	const existing = existingRow === undefined || existingRow.status === "archived" ? undefined : promptRecordOf(existingRow);
-
+	const job: PromptApplyJob = { prompts, ctx, proposal, id, existing, now, files };
 	if (action === "create") {
-		const merged = mergedPromptFields(proposal, undefined, "create");
-		if ("reason" in merged) {
-			return promptFail(proposal, merged.reason);
-		}
-		const reasons = promptFieldGateReasons(merged.fields);
-		if (reasons.length > 0) {
-			return promptFail(proposal, reasons[0] ?? "invalid prompt");
-		}
-		if (existing !== undefined) {
-			return promptFail(proposal, `prompt "${id}" already exists in this workspace — update it instead of creating a duplicate`);
-		}
-		const sameBody = prompts.findBodyOwner(ctx.workspaceId, merged.fields.body);
-		if (sameBody !== undefined && sameBody !== id) {
-			return promptFail(proposal, `identical prompt "${sameBody}" already exists in this workspace — reuse it instead of duplicating`);
-		}
-		prompts.insertRow([
-			ctx.workspaceId,
-			id,
-			merged.fields.title,
-			merged.fields.description,
-			merged.fields.body,
-			ctx.sessionId ?? null,
-			proposal.sourceSeqs ?? null,
-			ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
-			now,
-			now,
-		]);
-		prompts.syncFts(ctx.workspaceId, id);
-		files.push({
-			id,
-			action,
-			after: promptRecordOf(prompts.getRow(ctx.workspaceId, id) as PromptRow),
-			sourceSeqs: proposal.sourceSeqs,
-		});
-		return { id, action, ok: true };
+		return createPrompt(job);
 	}
-
 	if (action === "delete") {
-		if (existing === undefined) {
-			return promptFail(proposal, `no prompt "${id}" to delete`);
-		}
-		prompts.deleteRow(ctx.workspaceId, id);
-		prompts.syncFts(ctx.workspaceId, id);
-		files.push({ id, action, before: existing });
-		return { id, action, ok: true };
+		return deletePrompt(job);
 	}
+	// action === "update"
+	return updatePrompt(job);
+}
+
+/** Land a create proposal, with same-body deduplication. */
+function createPrompt(job: PromptApplyJob): PromptProposalOutcome {
+	const { prompts, ctx, proposal, id, existing, now, files } = job;
+	const action = proposal.action;
+	const merged = mergedPromptFields(proposal, undefined, "create");
+	if ("reason" in merged) {
+		return promptFail(proposal, merged.reason);
+	}
+	const reasons = promptFieldGateReasons(merged.fields);
+	if (reasons.length > 0) {
+		return promptFail(proposal, reasons[0] ?? "invalid prompt");
+	}
+	if (existing !== undefined) {
+		return promptFail(proposal, `prompt "${id}" already exists in this workspace — update it instead of creating a duplicate`);
+	}
+	const sameBody = prompts.findBodyOwner(ctx.workspaceId, merged.fields.body);
+	if (sameBody !== undefined && sameBody !== id) {
+		return promptFail(proposal, `identical prompt "${sameBody}" already exists in this workspace — reuse it instead of duplicating`);
+	}
+	prompts.insertRow([
+		ctx.workspaceId,
+		id,
+		merged.fields.title,
+		merged.fields.description,
+		merged.fields.body,
+		ctx.sessionId ?? null,
+		proposal.sourceSeqs ?? null,
+		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
+		now,
+		now,
+	]);
+	prompts.syncFts(ctx.workspaceId, id);
+	files.push({
+		id,
+		action,
+		after: promptRecordOf(prompts.getRow(ctx.workspaceId, id) as PromptRow),
+		sourceSeqs: proposal.sourceSeqs,
+	});
+	return { id, action, ok: true };
+}
+
+/** Land a delete proposal (no gates beyond existence). */
+function deletePrompt(job: PromptApplyJob): PromptProposalOutcome {
+	const { prompts, ctx, proposal, id, existing, files } = job;
+	const action = proposal.action;
+	if (existing === undefined) {
+		return promptFail(proposal, `no prompt "${id}" to delete`);
+	}
+	prompts.deleteRow(ctx.workspaceId, id);
+	prompts.syncFts(ctx.workspaceId, id);
+	files.push({ id, action, before: existing });
+	return { id, action, ok: true };
+}
+
+/** Land an update proposal over its stored row. */
+function updatePrompt(job: PromptApplyJob): PromptProposalOutcome {
+	const { prompts, ctx, proposal, id, existing, now, files } = job;
+	const action = proposal.action;
 	// action === "update"
 	if (existing === undefined) {
 		return promptFail(proposal, `no prompt "${id}" to update — create it instead`);
