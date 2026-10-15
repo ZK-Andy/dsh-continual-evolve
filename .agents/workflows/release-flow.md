@@ -7,7 +7,7 @@
 3. **提交 + tag**：`chore(release): vX.Y.Z` 提交 → 写 notes 并提交（下一步 4 的 `docs(release)`）→ **annotated tag `vX.Y.Z` 打在 notes 提交上**，再推送 origin。tag 落点以 v0.7.3–v0.7.6 为准：notes 文件必须随 tag 一起可审计；先打 tag 再补 notes 会让 tag 指向 bump 提交，需删远端 tag 重推（无 Release 时方可）。
 4. **GitHub Release**（DSH 版式，见 `implemented/process/2026-09-24-github-release-notes`）：
    ```sh
-   scripts/draft-release-notes.sh <prev-tag> <new-version>   # 输出 releases/vX.Y.Z.md 草稿（prev-tag..HEAD 按 feat/fix 分组）
+   tsx scripts/draft-release-notes.ts <prev-tag> <new-version>   # 输出 releases/vX.Y.Z.md 草稿（prev-tag..HEAD 按 feat/fix 分组）
    # polish：英文区润色、作者名换 @handle，确认 compare 链接两端 tag 正确
    gh release create vX.Y.Z --title "vX.Y.Z" --notes-file releases/vX.Y.Z.md
    ```

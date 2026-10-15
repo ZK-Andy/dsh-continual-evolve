@@ -59,8 +59,8 @@ fi
 
 # 变更范围（供人确认）；已知本次 push 范围时按 change-scope 的"显式 ref"原则传下去，
 # 免得它用 fork-point 自动推导（本地 main 已推到 origin 时推不出东西）
-if [[ -x scripts/change-scope.sh ]]; then
-  scripts/change-scope.sh ${SCOPE_ARGS[@]+"${SCOPE_ARGS[@]}"} || true
+if [[ -f scripts/change-scope.ts ]]; then
+  ./node_modules/.bin/tsx scripts/change-scope.ts ${SCOPE_ARGS[@]+"${SCOPE_ARGS[@]}"} || true
   echo
 fi
 

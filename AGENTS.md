@@ -39,7 +39,7 @@ web 检索优先 anysearch 纵向面（zone/tag/params 富参数）；GitHub 归
 ## Git 纪律
 
 - 改写历史必须 `--force-with-lease=<branch>:<observed-oid>`；**raw `--force` 永远禁止**；改写后重新审计评审状态。
-- push 前最小证据：按 diff 面选最窄检查（先用 `scripts/change-scope.sh`）；hooks 只做快检查，CI 拥有穷尽矩阵（node 22/24）。
+- push 前最小证据：按 diff 面选最窄检查（先用 `pnpm run change-scope`）；hooks 只做快检查，CI 拥有穷尽矩阵（node 22/24）。
 
 ## 质量门（当前可执行）
 
@@ -47,7 +47,8 @@ web 检索优先 anysearch 纵向面（zone/tag/params 富参数）；GitHub 归
 pnpm typecheck && pnpm lint && pnpm test   # TS 工程链（vitest + oxlint）
 pnpm check:docs                            # 文档门禁（tsx run-gates：adr/预算/链接/治理）
 pnpm check:pack                            # 发布产物一致性（prepack 与 CI 强制）
-scripts/change-scope.sh [<base> <head>]    # 变更范围（评审/push 前置）
+pnpm run change-scope [<base> <head> | --base <ref> --head <ref>]  # 变更范围（评审/push 前置）
+git config core.hooksPath .githooks         # 新克隆一次（启用 .githooks，无脚本）
 ```
 
 ## 字数预算
