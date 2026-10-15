@@ -9,10 +9,10 @@
  *
  * - the session-start section (`memory-section.ts`): a store query rendered
  *   as the injected index, frozen per session for the prompt cache;
- * - the model tools (`memory-tools.ts`, `skill-tools.ts`): `memory_write`
- *   for explicit "记住/忘掉" instructions, `memory_read` for bodies and
- *   search, plus `skill_write` (project-only creation, manual move to
- *   global) and `skill_read` (project shadowing global);
+ * - the model tools (`evolve-tools.ts`): `evolve_write` for every
+ *   explicit "记住/忘掉/沉淀" instruction (`kind` selects memory vs skill)
+ *   and `evolve_read` for bodies and search, plus the one-version shims
+ *   (`memory-tools.ts`, `skill-tools.ts`) keeping the old four names;
  * - the extraction scheduler (`extraction.ts`): turn-level, per-session
  *   slots, single-flight per session; proposals land only through the
  *   store's gates;
@@ -48,6 +48,7 @@ import type { SurfaceReader } from "./extraction-surface.js";import {
 	MEMORY_SECTION_NAME,
 	memorySectionText,
 } from "./memory-section.js";
+import { registerEvolveTools } from "./evolve-tools.js";
 import { registerMemoryTools } from "./memory-tools.js";
 import { registerSkillTools } from "./skill-tools.js";
 import { importWorkspaceMd } from "./import-md.js";
@@ -196,9 +197,11 @@ function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, state: S
 		}
 		registerMemoryTools(tools as Parameters<typeof registerMemoryTools>[0], store);
 		registerSkillTools(tools as Parameters<typeof registerSkillTools>[0], store);
+		registerEvolveTools(tools as Parameters<typeof registerEvolveTools>[0], store);
 		state.toolsAvailable = true;
-		log.info("memory-tools-registered", "memory_write and memory_read registered");
-		log.info("skill-tools-registered", "skill_write and skill_read registered");
+		log.info("memory-tools-registered", "memory_write and memory_read registered (shims over evolve_*)");
+		log.info("skill-tools-registered", "skill_write and skill_read registered (shims over evolve_*)");
+		log.info("evolve-tools-registered", "evolve_write and evolve_read registered");
 	});
 }
 

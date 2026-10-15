@@ -66,7 +66,7 @@
 | **P0** | 新增 `scripts/verify-src-budgets.ts`（行数/出度/函数长度）纳入 `run-gates`；ADR（问题量化 + 选型 Alternatives） | 门禁在 `store.ts` 上**必须报红**（证明有效）；ADR 门禁绿 |
 | **P1** | `src/data/` 落地；记忆改走通用仓储（仍住 `memories`） | 行为等价 §4；409 测试全绿 |
 | **P2** | 技能改走通用仓储；门禁改为规则组合 | 同上；`memory-rules`/`skill-rules` 的重复消失 |
-| **P3** | 统一工具落地（新读写工具 + 旧四个垫片） | 新工具全链路；旧工具行为等价（垫片回归测试） |
+| **P3** | 统一工具落地（新读写工具 + 旧四个垫片） | 新工具全链路；旧工具行为等价（垫片回归测试） | ✅ 2026-10-15：`src/evolve-tools.ts`（kind 调度）+ `evolve-memory.ts`/`evolve-skills.ts`（各对象执行，旧文案逐字保留）+ 旧四文件薄垫片（只转调核心）+ `index.ts` 注册六工具；`test/evolve-tools.test.ts` 13 条；422 测试全绿；src 预算除 `store.ts` 外全绿（P4 收） |
 | **P4** | 表现层收敛；`store.ts` 拆解至 ≤ 400 行归位 | P0 门禁全绿（无豁免） |
 | **P5** | 第三类对象试接入（提示词补充或子代理规格） | 只加仓储实例化参数 + 描述字段；工具/卡片/投影/账本自动出现；新增回归测试锁死 |
 | **P6** | 自带技能：手写 `evolve-skill-creator` + `evolve-memory-creator` 进 repo `.agents/skills/`；修订 `.agents/AGENTS.md` 技能节（原版规则仅限 `dsh-*`，见 §9） | 宿主技能目录可见、可加载；`check:docs` 全绿 |

@@ -139,15 +139,22 @@ describe("apply tool wiring", () => {
 		return { sections: base.sections, host, tools };
 	}
 
-	it("registers memory_write and memory_read once the store is open", async () => {
+	it("registers the unified tools and the four shims once the store is open", async () => {
 		const { sections, host, tools } = makeCtxWithServices();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (tools.size !== 4) {
+			if (tools.size !== 6) {
 				throw new Error("tools not registered yet");
 			}
 		});
-		expect([...tools.keys()].sort()).toEqual(["memory_read", "memory_write", "skill_read", "skill_write"]);
+		expect([...tools.keys()].sort()).toEqual([
+			"evolve_read",
+			"evolve_write",
+			"memory_read",
+			"memory_write",
+			"skill_read",
+			"skill_write",
+		]);
 		// The rendered guide names the tools now that they exist.
 		workspace = mkdtempSync(join(tmpdir(), "evolve-plugin-tools-"));
 		const text = await renderAfterStore(sections[0], { id: "s1", session: { header: { cwd: workspace } } });
