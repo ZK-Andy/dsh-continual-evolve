@@ -14,6 +14,7 @@ import {
 	slugifyId,
 } from "./memory-rules.js";
 import type { LedgerEntry, MemoryRecord } from "./store.js";
+import { type Repository } from "./data/repository.js";
 
 /** What a single proposal produced. */
 export interface ProposalOutcome {
@@ -55,6 +56,8 @@ interface LedgerFile {
 export interface ApplyDatabase {
 	database: DatabaseSync;
 	now(): string;
+	/** The memories repository: all memories-table access goes through it. */
+	memories: Repository<MemoryRow>;
 }
 
 interface MemoryRow {
@@ -91,24 +94,6 @@ function recordOf(row: MemoryRow): MemoryRecord {
 	};
 }
 
-const INSERT_SQL =
-	"INSERT INTO memories (workspace_id, id, type, title, description, body, status, source_session, source_seqs, source_run, corrects, created_at, updated_at) " +
-	"VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)";
-const UPDATE_SQL =
-	"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, corrects = COALESCE(?, corrects), updated_at = ? WHERE workspace_id = ? AND id = ?";
-const DELETE_SQL = "DELETE FROM memories WHERE workspace_id = ? AND id = ?";
-const FTS_DROP_SQL =
-	"DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE workspace_id = ? AND id = ?)";
-const FTS_INSERT_SQL =
-	"INSERT INTO memories_fts (workspace_id, id, title, description, body) " +
-	"SELECT workspace_id, id, title, description, body FROM memories WHERE workspace_id = ? AND id = ?";
-
-/** Re-sync the FTS row for one memory id from its table row (delete + insert). */
-function syncFts(db: ApplyDatabase, workspaceId: string, id: string): void {
-	db.database.prepare(FTS_DROP_SQL).run(workspaceId, id);
-	db.database.prepare(FTS_INSERT_SQL).run(workspaceId, id);
-}
-
 /**
  * Validate and apply the whole batch atomically. A batch with any invalid
  * proposal mutates nothing and still lands a `rejected` ledger row; an
@@ -123,14 +108,10 @@ export function applyProposals(
 	const outcomes: ProposalOutcome[] = [];
 	const files: LedgerFile[] = [];
 	const runId = ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : undefined);
-	const get = db.database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?");
-	const insert = db.database.prepare(INSERT_SQL);
-	const update = db.database.prepare(UPDATE_SQL);
-	const del = db.database.prepare(DELETE_SQL);
 
 	db.database.exec("BEGIN");
 	for (const proposal of proposals) {
-		const outcome = applyOne(db, ctx, proposal, { get, insert, update, del }, files);
+		const outcome = applyOne(db, ctx, proposal, files);
 		outcomes.push(outcome);
 		if (!outcome.ok) {
 			break;
@@ -183,19 +164,11 @@ function writeLedger(stmt: StatementSync, entry: LedgerEntry): void {
 	);
 }
 
-interface PreparedStatements {
-	get: StatementSync;
-	insert: StatementSync;
-	update: StatementSync;
-	del: StatementSync;
-}
-
 /** Validate one proposal and land it; appends the audit payload on success. */
 function applyOne(
 	db: ApplyDatabase,
 	ctx: ProposalContext,
 	proposal: MemoryProposal,
-	stmts: PreparedStatements,
 	files: LedgerFile[],
 ): ProposalOutcome {
 	const action = proposal.action;
@@ -206,15 +179,15 @@ function applyOne(
 	if (!isValidMemoryId(id)) {
 		return fail(proposal, id.length === 0 ? "id missing and cannot be derived from the title" : `malformed id "${id}"`);
 	}
-	const existingRow = stmts.get.get(ctx.workspaceId, id) as MemoryRow | undefined;
+	const existingRow = db.memories.getRow(ctx.workspaceId, id);
 	const existing = existingRow === undefined ? undefined : recordOf(existingRow);
 
 	if (action === "delete") {
 		if (existing === undefined) {
 			return fail(proposal, `no memory "${id}" to delete`);
 		}
-		stmts.del.run(ctx.workspaceId, id);
-		syncFts(db, ctx.workspaceId, id);
+		db.memories.deleteRow(ctx.workspaceId, id);
+		db.memories.syncFts(ctx.workspaceId, id);
 		files.push({ id, action, before: existing });
 		return { id, action, ok: true };
 	}
@@ -223,7 +196,7 @@ function applyOne(
 	if ("reason" in fields) {
 		return fail(proposal, fields.reason);
 	}
-	const link = checkCorrects(stmts.get, ctx.workspaceId, proposal, id);
+	const link = checkCorrects(db.memories, ctx.workspaceId, proposal, id);
 	if ("reason" in link) {
 		return fail(proposal, link.reason);
 	}
@@ -236,7 +209,7 @@ function applyOne(
 			return fail(proposal, `memory "${id}" already exists — update it instead of creating a duplicate`);
 		}
 		const now = db.now();
-		stmts.insert.run(
+		db.memories.insertRow([
 			ctx.workspaceId,
 			id,
 			fields.fields.type,
@@ -249,12 +222,12 @@ function applyOne(
 			link.value,
 			now,
 			now,
-		);
-		syncFts(db, ctx.workspaceId, id);
+		]);
+		db.memories.syncFts(ctx.workspaceId, id);
 		files.push({
 			id,
 			action,
-			after: recordOf(stmts.get.get(ctx.workspaceId, id) as unknown as MemoryRow),
+			after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow),
 			sourceSeqs: proposal.sourceSeqs,
 		});
 		return { id, action, ok: true };
@@ -263,7 +236,7 @@ function applyOne(
 	if (existing === undefined) {
 		return fail(proposal, `no memory "${id}" to update — create it instead`);
 	}
-	stmts.update.run(
+	db.memories.updateRow([
 		fields.fields.type,
 		fields.fields.title,
 		fields.fields.description,
@@ -272,9 +245,9 @@ function applyOne(
 		db.now(),
 		ctx.workspaceId,
 		id,
-	);
-	syncFts(db, ctx.workspaceId, id);
-	files.push({ id, action, before: existing, after: recordOf(stmts.get.get(ctx.workspaceId, id) as unknown as MemoryRow) });
+	]);
+	db.memories.syncFts(ctx.workspaceId, id);
+	files.push({ id, action, before: existing, after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow) });
 	return { id, action, ok: true };
 }
 
@@ -290,7 +263,7 @@ function fail(proposal: MemoryProposal, reason: string): ProposalOutcome {
  * must exist, must be active, and must not be the row itself.
  */
 function checkCorrects(
-	get: StatementSync,
+	memories: Repository<MemoryRow>,
 	workspaceId: string,
 	proposal: MemoryProposal,
 	id: string,
@@ -309,7 +282,7 @@ function checkCorrects(
 	if (target === id) {
 		return { reason: `memory "${id}" cannot correct itself` };
 	}
-	const row = get.get(workspaceId, target) as MemoryRow | undefined;
+	const row = memories.getRow(workspaceId, target);
 	if (row === undefined) {
 		return { reason: `no memory "${target}" to correct` };
 	}

@@ -1,0 +1,237 @@
+/**
+ * The generic repository: every managed object (today memories, P2 skills)
+ * is the same operations over different SQL. Per-kind SQL lives in the
+ * {@link ResourceKind} descriptor the caller passes in; preparation, the
+ * FTS-then-LIKE search discipline, FTS sync, and usage accounting are
+ * written once here. Table names come from code constants, never user
+ * input, so interpolating them is safe.
+ */
+import type { DatabaseSync, StatementSync } from "node:sqlite";
+
+/** Bindable column value (the subset of node:sqlite's SQLInputValue we use). */
+export type SqlValue = string | number | bigint | null;
+
+/**
+ * Everything that differs between two managed objects, as SQL. Execution
+ * lives in {@link Repository}; this is only strings plus the search shape.
+ */
+export interface ResourceKind {
+	/** Base table, e.g. `memories`. */
+	readonly table: string;
+	/** ORDER BY fragment shared by the list-family queries. */
+	readonly order: string;
+	/** Columns the LIKE fallback matches (title/description/body for both kinds today). */
+	readonly likeColumns: readonly string[];
+	readonly selectById: string;
+	readonly selectActive: string;
+	readonly selectVisible: string;
+	readonly selectFts: string;
+	readonly selectWorkspaces: string;
+	readonly selectRecent: string;
+	readonly selectFtsOrphans: string;
+	readonly deleteFtsRow: string;
+	readonly selectActiveRows: string;
+	readonly updateQuarantine: string;
+	readonly insertSql: string;
+	readonly updateSql: string;
+	readonly deleteSql: string;
+	readonly ftsDropSql: string;
+	readonly ftsInsertSql: string;
+	readonly usageGetSql: string;
+	readonly usageUpsertSql: string;
+}
+
+/** Quote one token as an FTS5 phrase (trigram needs ≥3 chars to match). */
+export function ftsPhrase(token: string): string {
+	return `"${token.replaceAll('"', '""')}"`;
+}
+
+/**
+ * Split a query into keyword tokens on ASCII or full-width whitespace. Each
+ * token is matched on its own and AND-combined: trigram FTS can only match
+ * ≥3-char runs, so a keyword pair like `中文 交接` is unrepresentable as one
+ * FTS phrase and silently returns nothing under a phrase match.
+ */
+export function queryTokens(query: string): string[] {
+	return query.split(/[\s\u3000]+/).filter((token) => token.length > 0);
+}
+
+/** `%token%` with LIKE metacharacters escaped — keywords match literally. */
+export function likePattern(token: string): string {
+	return `%${token.replaceAll(/[\\%_]/g, "\\$&")}%`;
+}
+
+/**
+ * One object's full row access, prepared once per open store. Row mapping
+ * stays with the caller (it owns the record types); this class only moves
+ * rows and value arrays.
+ */
+export class Repository<Row> {
+	private readonly database: DatabaseSync;
+	private readonly kind: ResourceKind;
+	private readonly byId: StatementSync;
+	private readonly active: StatementSync;
+	private readonly visible: StatementSync;
+	private readonly fts: StatementSync;
+	private readonly workspaces: StatementSync;
+	private readonly recent: StatementSync;
+	private readonly ftsOrphans: StatementSync;
+	private readonly ftsDropOne: StatementSync;
+	private readonly activeRows: StatementSync;
+	private readonly quarantineOne: StatementSync;
+	private readonly insertOne: StatementSync;
+	private readonly updateOne: StatementSync;
+	private readonly deleteOne: StatementSync;
+	private readonly ftsDrop: StatementSync;
+	private readonly ftsInsert: StatementSync;
+	private readonly usageGet: StatementSync;
+	private readonly usageUpsert: StatementSync;
+	/** LIKE fallback: one statement per token count — the query set repeats, the counts don't grow. */
+	private readonly likeStmts = new Map<number, StatementSync>();
+
+	/**
+	 * Prepare every statement for one kind up front.
+	 * @param database - The open database handle.
+	 * @param kind - The kind's SQL bundle.
+	 */
+	constructor(database: DatabaseSync, kind: ResourceKind) {
+		this.database = database;
+		this.kind = kind;
+		this.byId = database.prepare(kind.selectById);
+		this.active = database.prepare(kind.selectActive);
+		this.visible = database.prepare(kind.selectVisible);
+		this.fts = database.prepare(kind.selectFts);
+		this.workspaces = database.prepare(kind.selectWorkspaces);
+		this.recent = database.prepare(kind.selectRecent);
+		this.ftsOrphans = database.prepare(kind.selectFtsOrphans);
+		this.ftsDropOne = database.prepare(kind.deleteFtsRow);
+		this.activeRows = database.prepare(kind.selectActiveRows);
+		this.quarantineOne = database.prepare(kind.updateQuarantine);
+		this.insertOne = database.prepare(kind.insertSql);
+		this.updateOne = database.prepare(kind.updateSql);
+		this.deleteOne = database.prepare(kind.deleteSql);
+		this.ftsDrop = database.prepare(kind.ftsDropSql);
+		this.ftsInsert = database.prepare(kind.ftsInsertSql);
+		this.usageGet = database.prepare(kind.usageGetSql);
+		this.usageUpsert = database.prepare(kind.usageUpsertSql);
+	}
+
+	/** One row by primary key, undefined when absent. */
+	getRow(workspaceId: string, id: string): Row | undefined {
+		return this.byId.get(workspaceId, id) as unknown as Row | undefined;
+	}
+
+	/** Active rows in injection order. */
+	listRows(workspaceId: string): Row[] {
+		return this.active.all(workspaceId) as unknown as Row[];
+	}
+
+	/** Every non-archived row in injection order (the card's projection). */
+	listVisibleRows(workspaceId: string): Row[] {
+		return this.visible.all(workspaceId) as unknown as Row[];
+	}
+
+	/**
+	 * Keyword search, workspace-scoped: trigram FTS when every token is ≥3
+	 * chars (with a LIKE fallback whenever FTS finds nothing), literal LIKE
+	 * substrings otherwise.
+	 */
+	searchRows(workspaceId: string, query: string, limit: number): Row[] {
+		const tokens = queryTokens(query);
+		if (tokens.length === 0) {
+			return [];
+		}
+		if (tokens.every((token) => token.length >= 3)) {
+			const hits = this.fts.all(tokens.map(ftsPhrase).join(" AND "), workspaceId, limit) as unknown as Row[];
+			if (hits.length > 0) {
+				return hits;
+			}
+		}
+		return this.likeSearch(workspaceId, tokens, limit);
+	}
+
+	private likeSearch(workspaceId: string, tokens: readonly string[], limit: number): Row[] {
+		let stmt = this.likeStmts.get(tokens.length);
+		if (stmt === undefined) {
+			const clause = tokens
+				.map(() => `(${this.kind.likeColumns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(" OR ")})`)
+				.join(" AND ");
+			stmt = this.database.prepare(
+				`SELECT * FROM ${this.kind.table} WHERE workspace_id = ? AND status = 'active' AND ${clause} ${this.kind.order} LIMIT ?`,
+			);
+			this.likeStmts.set(tokens.length, stmt);
+		}
+		const patterns = tokens.flatMap((token) => {
+			const pattern = likePattern(token);
+			return this.kind.likeColumns.map(() => pattern);
+		});
+		return stmt.all(workspaceId, ...patterns, limit) as unknown as Row[];
+	}
+
+	/** Insert one row; values follow the kind's insertSql placeholders. */
+	insertRow(values: readonly SqlValue[]): void {
+		this.insertOne.run(...values);
+	}
+
+	/** Update one row; values follow the kind's updateSql placeholders. */
+	updateRow(values: readonly SqlValue[]): void {
+		this.updateOne.run(...values);
+	}
+
+	/** Delete one row by primary key. */
+	deleteRow(workspaceId: string, id: string): void {
+		this.deleteOne.run(workspaceId, id);
+	}
+
+	/**
+	 * Soft-isolate one row. Returns true when a row changed; throws on
+	 * database errors so the caller keeps its degrade discipline.
+	 */
+	quarantineRow(workspaceId: string, id: string): boolean {
+		const result = this.quarantineOne.run(workspaceId, id) as { changes?: unknown };
+		return Number(result.changes) > 0;
+	}
+
+	/** Re-sync the FTS row for one id from its table row (delete + insert). */
+	syncFts(workspaceId: string, id: string): void {
+		this.ftsDrop.run(workspaceId, id);
+		this.ftsInsert.run(workspaceId, id);
+	}
+
+	/** FTS rowids with no matching table row. */
+	ftsOrphanIds(): number[] {
+		return (this.ftsOrphans.all() as { rid: number }[]).map((row) => row.rid);
+	}
+
+	/** Drop one orphan FTS row by rowid. */
+	dropFtsRow(rid: number): void {
+		this.ftsDropOne.run(rid);
+	}
+
+	/** Every active row (the patrol's secret screen). */
+	activeRowList(): Row[] {
+		return this.activeRows.all() as unknown as Row[];
+	}
+
+	/** Partitions holding active rows with their counts and recency. */
+	workspaceList(): { workspace_id: string; n: number; u: string }[] {
+		return this.workspaces.all() as { workspace_id: string; n: number; u: string }[];
+	}
+
+	/** The partition's newest instant, for the most-recently-active race. */
+	recentInstant(): { workspace_id?: unknown; ts?: unknown } | undefined {
+		return this.recent.get() as { workspace_id?: unknown; ts?: unknown } | undefined;
+	}
+
+	/** Aggregate usage for one item, undefined when never consumed. */
+	getUsage(workspaceId: string, keys: readonly string[]): { use_count: number; last_used_at: string | null } | undefined {
+		return this.usageGet.get(workspaceId, ...keys) as unknown as
+			| { use_count: number; last_used_at: string | null }
+			| undefined;
+	}
+
+	/** Bump one item's usage counter; throws so the caller keeps its discipline. */
+	recordUsage(workspaceId: string, keys: readonly string[], ts: string): void {
+		this.usageUpsert.run(workspaceId, ...keys, ts);
+	}
+}

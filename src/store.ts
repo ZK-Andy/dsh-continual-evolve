@@ -12,7 +12,7 @@
  */
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { MemoryProposal } from "./memory-rules.js";
 import { secretLeakReason } from "./memory-rules.js";
@@ -30,11 +30,12 @@ import {
 } from "./skill-rules.js";
 import { isValidMemoryId } from "./memory-rules.js";
 import { applyProposals, type ProposalContext, type ProposalOutcome } from "./store-apply.js";
+import { openDatabase } from "./data/database.js";
+import { LEDGER_OCCURRENCES, migrateDatabase } from "./data/migrate.js";
+import { ftsPhrase, likePattern, queryTokens, Repository, type ResourceKind } from "./data/repository.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
-
-/** Thrown when the runtime lacks `node:sqlite` — the degrade signal. */
-export class StoreUnavailableError extends Error {}
+export { StoreUnavailableError } from "./data/database.js";
 
 /** State-table keys owned by the store (partitioned per workspace, `""` = global). */
 export const CURSOR_KEY_PREFIX = "seq:";
@@ -44,8 +45,6 @@ export const MD_IMPORT_STATE_KEY = "md-imported";
 export const GLOBAL_WORKSPACE = "";
 /** Preview size cap for the card's content endpoint (ZCode's viewer uses 5 MiB). */
 export const MEMORY_FILE_PREVIEW_LIMIT = 5 * 1024 * 1024;
-/** Ledger column counting the wake-ups one coalesced row stands for. */
-const LEDGER_OCCURRENCES = "occurrences";
 /**
  * Skips a busy-but-quiet session repeats verbatim, turn after turn: the
  * ledger keeps one counted row instead of one row per wake-up. Fault-shaped
@@ -63,138 +62,6 @@ const COALESCED_SKIP_REASONS = new Set(["no-user-prose", "no-new-events"]);
 const INCOMPLETE_REVIEW_SQL =
 	"(coalesce(reason, '') LIKE 'gate-llm-failed%' OR coalesce(reason, '') LIKE 'evolve-llm-failed%' " +
 	"OR coalesce(reason, '') IN ('no-route', 'budget-exhausted', 'gate-parse-failed', 'evolve-parse-failed'))";
-
-const DDL = `
-PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
-  workspace_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  body TEXT NOT NULL CHECK (length(body) <= 65536),
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active','quarantined','archived')),
-  source_session TEXT,
-  source_seqs TEXT,
-  source_run TEXT,
-  corrects TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (workspace_id, id)
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_mem_ws_status ON memories(workspace_id, status);
-CREATE INDEX IF NOT EXISTS idx_mem_ws_updated ON memories(workspace_id, updated_at);
-CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-  workspace_id, id, title, description, body, tokenize='trigram');
--- FTS rows are synced in code by applyProposals (plain DELETE + INSERT), not
--- by triggers: node:sqlite rejects the FTS5 'delete'-command INSERT that
--- AFTER DELETE/UPDATE triggers would need (SQL logic error, verified on
--- SQLite 3.53.4). The sole-writer design makes code-side sync reliable;
--- patrol() reconciles any residue.
-CREATE TABLE IF NOT EXISTS extraction_log (
-  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
-  trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')),
-  decision TEXT, skip_reason TEXT,
-  status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
-  cheap_usage TEXT, cheap_error TEXT,
-  files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS state (
-  workspace_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
-  PRIMARY KEY (workspace_id, key)
-);
-CREATE TABLE IF NOT EXISTS skills (
-  workspace_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  body TEXT NOT NULL CHECK (length(body) <= 65536),
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active','quarantined','archived')),
-  source_session TEXT,
-  source_seqs TEXT,
-  source_run TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (workspace_id, id)
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_skill_ws_status ON skills(workspace_id, status);
-CREATE INDEX IF NOT EXISTS idx_skill_ws_updated ON skills(workspace_id, updated_at);
-CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
-  workspace_id, id, title, description, body, tokenize='trigram');
--- Like memories_fts, synced in code by the skill apply path (plain DELETE +
--- INSERT), never by triggers, for the same node:sqlite FTS5 reason.
-CREATE TABLE IF NOT EXISTS skill_log (
-  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
-  trigger TEXT, decision TEXT, status TEXT, files TEXT, warnings TEXT
-);
--- Skill usage counters (V2 usage loop): one aggregate row per skill, never a
--- per-hit ledger, so the table cannot grow without bound and needs no prune.
-CREATE TABLE IF NOT EXISTS skill_usage (
-  workspace_id TEXT NOT NULL,
-  skill_id TEXT NOT NULL,
-  scope TEXT NOT NULL CHECK (scope IN ('project','global')),
-  use_count INTEGER NOT NULL DEFAULT 0,
-  last_used_at TEXT,
-  PRIMARY KEY (workspace_id, skill_id, scope)
-) STRICT;
--- Memory usage counters (content-quality loop): one aggregate row per memory,
--- the same presence-heartbeat discipline as skill_usage — a body served by id
--- counts, search/list hits stay uncounted.
-CREATE TABLE IF NOT EXISTS memory_usage (
-  workspace_id TEXT NOT NULL,
-  memory_id TEXT NOT NULL,
-  use_count INTEGER NOT NULL DEFAULT 0,
-  last_used_at TEXT,
-  PRIMARY KEY (workspace_id, memory_id)
-) STRICT;
--- Per-item content-review verdicts (the item-review trigger's account):
--- one row per reviewed item per run, with the model it ran on so a failure
--- rate can be attributed instead of guessed at. Pruned with the ledgers.
-CREATE TABLE IF NOT EXISTS review_log (
-  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
-  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
-  item_id TEXT NOT NULL,
-  verdict TEXT NOT NULL CHECK (verdict IN ('keep','rewrite','quarantine','skip')),
-  reason TEXT,
-  proposed TEXT,
-  model TEXT,
-  cheap_usage TEXT, evolve_usage TEXT,
-  applied INTEGER NOT NULL DEFAULT 0,
-  evolve_count INTEGER NOT NULL DEFAULT 0
-);
--- One rollup row per UTC day: the hard-cap account (budget vs reviewed vs
--- backlog vs dropped) plus the token account split by cheap/evolve purpose.
-CREATE TABLE IF NOT EXISTS review_daily (
-  day TEXT NOT NULL PRIMARY KEY,
-  budget INTEGER NOT NULL,
-  reviewed INTEGER NOT NULL DEFAULT 0,
-  new_items INTEGER NOT NULL DEFAULT 0,
-  requeued INTEGER NOT NULL DEFAULT 0,
-  approved INTEGER NOT NULL DEFAULT 0,
-  applied INTEGER NOT NULL DEFAULT 0,
-  cheap_token INTEGER NOT NULL DEFAULT 0,
-  evolve_token INTEGER NOT NULL DEFAULT 0,
-  backlog INTEGER NOT NULL DEFAULT 0,
-  dropped INTEGER NOT NULL DEFAULT 0,
-  skip_top TEXT,
-  skip_counts TEXT
-) STRICT;
--- The plugin's own log. A stock host attaches no exporter to its logger, so a
--- ctx.logger call leaves no trace anywhere (docs/FAQ.md #4) — diagnostics that
--- have no domain ledger row of their own land here instead. Pruned with the
--- ledgers; the event column is a stable slug, so runs can be counted and grepped.
-CREATE TABLE IF NOT EXISTS plugin_log (
-  ts TEXT NOT NULL,
-  level TEXT NOT NULL CHECK (level IN ('info','warn','error')),
-  event TEXT NOT NULL,
-  message TEXT NOT NULL,
-  workspace_id TEXT,
-  session_id TEXT
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_plugin_log_ts ON plugin_log(ts);
-`;
 
 /** One stored skill record (snake_case columns camelCased). Skills carry no type. */
 export interface SkillRecord {
@@ -564,28 +431,51 @@ function skillRecordOf(row: SkillRow): SkillRecord {
 	};
 }
 
-const LIST_ORDER =
+const MEMORIES_ORDER =
 	"ORDER BY CASE type WHEN 'feedback' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, updated_at DESC";
 
-/** Quote one token as an FTS5 phrase (trigram needs ≥3 chars to match). */
-function ftsPhrase(token: string): string {
-	return `"${token.replaceAll('"', '""')}"`;
-}
-
 /**
- * Split a query into keyword tokens on ASCII or full-width whitespace. Each
- * token is matched on its own and AND-combined: trigram FTS can only match
- * ≥3-char runs, so a keyword pair like `中文 交接` is unrepresentable as one
- * FTS phrase and silently returns nothing under a phrase match.
+ * The memories kind descriptor: every memories SQL string in one place.
+ * Execution lives in {@link Repository}; P2 adds the skills twin without
+ * touching it.
  */
-function queryTokens(query: string): string[] {
-	return query.split(/[\s\u3000]+/).filter((token) => token.length > 0);
-}
-
-/** `%token%` with LIKE metacharacters escaped — keywords match literally. */
-function likePattern(token: string): string {
-	return `%${token.replaceAll(/[\\%_]/g, "\\$&")}%`;
-}
+const MEMORIES: ResourceKind = {
+	table: "memories",
+	order: MEMORIES_ORDER,
+	likeColumns: ["title", "description", "body"],
+	selectById: "SELECT * FROM memories WHERE workspace_id = ? AND id = ?",
+	selectActive: `SELECT * FROM memories WHERE workspace_id = ? AND status = 'active' ${MEMORIES_ORDER}`,
+	selectVisible: `SELECT * FROM memories WHERE workspace_id = ? AND status != 'archived' ${MEMORIES_ORDER}`,
+	selectFts:
+		"SELECT m.* FROM memories m WHERE (m.workspace_id, m.id) IN (" +
+		"SELECT workspace_id, id FROM memories_fts WHERE memories_fts MATCH ? AND workspace_id = ?) " +
+		`AND m.status = 'active' ${MEMORIES_ORDER} LIMIT ?`,
+	selectWorkspaces:
+		"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM memories WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
+	selectRecent:
+		"SELECT workspace_id, MAX(updated_at) AS ts FROM memories " +
+		"WHERE status = 'active' AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
+	selectFtsOrphans:
+		"SELECT f.rowid AS rid FROM memories_fts f LEFT JOIN memories m ON m.workspace_id = f.workspace_id AND m.id = f.id WHERE m.id IS NULL",
+	deleteFtsRow: "DELETE FROM memories_fts WHERE rowid = ?",
+	selectActiveRows: "SELECT * FROM memories WHERE status = 'active'",
+	updateQuarantine: "UPDATE memories SET status = 'quarantined' WHERE workspace_id = ? AND id = ?",
+	insertSql:
+		"INSERT INTO memories (workspace_id, id, type, title, description, body, status, source_session, source_seqs, source_run, corrects, created_at, updated_at) " +
+		"VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)",
+	updateSql:
+		"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, corrects = COALESCE(?, corrects), updated_at = ? WHERE workspace_id = ? AND id = ?",
+	deleteSql: "DELETE FROM memories WHERE workspace_id = ? AND id = ?",
+	ftsDropSql:
+		"DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE workspace_id = ? AND id = ?)",
+	ftsInsertSql:
+		"INSERT INTO memories_fts (workspace_id, id, title, description, body) " +
+		"SELECT workspace_id, id, title, description, body FROM memories WHERE workspace_id = ? AND id = ?",
+	usageGetSql: "SELECT use_count, last_used_at FROM memory_usage WHERE workspace_id = ? AND memory_id = ?",
+	usageUpsertSql:
+		"INSERT INTO memory_usage (workspace_id, memory_id, use_count, last_used_at) VALUES (?, ?, 1, ?) " +
+		"ON CONFLICT (workspace_id, memory_id) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
+};
 
 /** The materialized directory for one skill partition (global vs project). */
 function skillRootOf(workspaceId: string): string {
@@ -664,35 +554,11 @@ function removeSkillFile(root: string, id: string): SkillFileWarning[] {
 /** Open (creating on first use) the central store. */
 export async function openMemoryStore(explicitPath?: string): Promise<MemoryStore> {
 	const path = explicitPath === undefined ? defaultStorePath() : resolve(explicitPath);
-	let database: DatabaseSync;
-	try {
-		const { DatabaseSync } = await import("node:sqlite");
-		// The parent directory must exist before SQLite opens the file — a
-		// fresh `~/.dsh` has no `evolve/` yet.
-		mkdirSync(dirname(path), { recursive: true });
-		database = new DatabaseSync(path);
-	} catch (error) {
-		throw new StoreUnavailableError(
-			`node:sqlite unavailable (Node ≥ 22.5 required) — memory store disabled: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-	database.exec(DDL);
-	ensureLedgerOccurrences(database);
-	ensureMemoriesCorrects(database);
-	ensureExtractionCheapUsage(database);
-	ensureExtractionCheapError(database);
-	ensureReviewProposed(database);
-	ensureReviewModel(database);
+	const database = await openDatabase(path);
+	migrateDatabase(database);
+	const memories = new Repository<MemoryRow>(database, MEMORIES);
 
 	const stmts = {
-		get: database.prepare("SELECT * FROM memories WHERE workspace_id = ? AND id = ?"),
-		list: database.prepare(`SELECT * FROM memories WHERE workspace_id = ? AND status = 'active' ${LIST_ORDER}`),
-		listAll: database.prepare(`SELECT * FROM memories WHERE workspace_id = ? AND status != 'archived' ${LIST_ORDER}`),
-		fts: database.prepare(
-			`SELECT m.* FROM memories m WHERE (m.workspace_id, m.id) IN (
-				 SELECT workspace_id, id FROM memories_fts WHERE memories_fts MATCH ? AND workspace_id = ?
-				) AND m.status = 'active' ${LIST_ORDER} LIMIT ?`,
-		),
 		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
 		stateSet: database.prepare(
 			"INSERT INTO state (workspace_id, key, value) VALUES (?, ?, ?) " +
@@ -701,16 +567,9 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		cursorGet: database.prepare(
 			"SELECT CAST(value AS INTEGER) AS seq FROM state WHERE workspace_id = ? AND key = ?",
 		),
-		workspaces: database.prepare(
-			"SELECT workspace_id, COUNT(*) AS n, MAX(updated_at) AS u FROM memories WHERE status = 'active' GROUP BY workspace_id ORDER BY u DESC",
-		),
 		recentLedger: database.prepare(
 			"SELECT workspace_id, MAX(ts) AS ts FROM extraction_log " +
 				"WHERE workspace_id IS NOT NULL AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
-		),
-		recentMemory: database.prepare(
-			"SELECT workspace_id, MAX(updated_at) AS ts FROM memories " +
-				"WHERE status = 'active' AND workspace_id <> '' GROUP BY workspace_id ORDER BY ts DESC LIMIT 1",
 		),
 		recentSkill: database.prepare(
 			"SELECT workspace_id, MAX(ts) AS ts FROM skill_log " +
@@ -728,12 +587,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			`UPDATE extraction_log SET ts = ?, ${LEDGER_OCCURRENCES} = ${LEDGER_OCCURRENCES} + 1 WHERE rowid = ?`,
 		),
 		prune: database.prepare("DELETE FROM extraction_log WHERE ts < ?"),
-		ftsOrphans: database.prepare(
-			"SELECT f.rowid AS rid FROM memories_fts f LEFT JOIN memories m ON m.workspace_id = f.workspace_id AND m.id = f.id WHERE m.id IS NULL",
-		),
-		ftsDrop: database.prepare("DELETE FROM memories_fts WHERE rowid = ?"),
-		activeRows: database.prepare("SELECT * FROM memories WHERE status = 'active'"),
-		quarantine: database.prepare("UPDATE memories SET status = 'quarantined' WHERE workspace_id = ? AND id = ?"),
 		skillGet: database.prepare("SELECT * FROM skills WHERE workspace_id = ? AND id = ?"),
 		skillList: database.prepare("SELECT * FROM skills WHERE workspace_id = ? AND status = 'active' ORDER BY updated_at DESC"),
 		skillListAll: database.prepare("SELECT * FROM skills WHERE workspace_id = ? AND status != 'archived' ORDER BY updated_at DESC"),
@@ -771,13 +624,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			"INSERT INTO skill_usage (workspace_id, skill_id, scope, use_count, last_used_at) VALUES (?, ?, ?, 1, ?) " +
 				"ON CONFLICT (workspace_id, skill_id, scope) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
 		),
-		memUseGet: database.prepare(
-			"SELECT use_count, last_used_at FROM memory_usage WHERE workspace_id = ? AND memory_id = ?",
-		),
-		memUseUpsert: database.prepare(
-			"INSERT INTO memory_usage (workspace_id, memory_id, use_count, last_used_at) VALUES (?, ?, 1, ?) " +
-				"ON CONFLICT (workspace_id, memory_id) DO UPDATE SET use_count = use_count + 1, last_used_at = excluded.last_used_at",
-		),
 		reviewLog: database.prepare(
 			"INSERT INTO review_log (run_id, ts, workspace_id, item_kind, item_id, verdict, reason, proposed, model, cheap_usage, evolve_usage, applied, evolve_count) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -807,27 +653,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				"approved = approved + ?, applied = applied + ?, cheap_token = cheap_token + ?, evolve_token = evolve_token + ?, " +
 				"backlog = ?, dropped = dropped + ?, skip_top = ?, skip_counts = ? WHERE day = ?",
 		),
-	};
-
-	// LIKE fallback: one OR-triplet per token, every token required. Statements
-	// are cached by token count — the query set repeats, the counts don't grow.
-	const likeStmts = new Map<number, ReturnType<DatabaseSync["prepare"]>>();
-	const likeSearch = (workspaceId: string, tokens: readonly string[], limit: number): MemoryRecord[] => {
-		let stmt = likeStmts.get(tokens.length);
-		if (stmt === undefined) {
-			const clause = tokens
-				.map(() => "(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
-				.join(" AND ");
-			stmt = database.prepare(
-				`SELECT * FROM memories WHERE workspace_id = ? AND status = 'active' AND ${clause} ${LIST_ORDER} LIMIT ?`,
-			);
-			likeStmts.set(tokens.length, stmt);
-		}
-		const patterns = tokens.flatMap((token) => {
-			const pattern = likePattern(token);
-			return [pattern, pattern, pattern];
-		});
-		return (stmt.all(workspaceId, ...patterns, limit) as unknown as MemoryRow[]).map(recordOf);
 	};
 
 	/**
@@ -1169,30 +994,20 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	const store: MemoryStore = {
 		path,
 		get(workspaceId, id) {
-			const row = stmts.get.get(workspaceId, id) as MemoryRow | undefined;
+			const row = memories.getRow(workspaceId, id);
 			return row === undefined ? undefined : recordOf(row);
 		},
 		list(workspaceId) {
-			return (stmts.list.all(workspaceId) as unknown as MemoryRow[]).map(recordOf);
+			return memories.listRows(workspaceId).map(recordOf);
 		},
 		listAll(workspaceId) {
-			return (stmts.listAll.all(workspaceId) as unknown as MemoryRow[]).map(recordOf);
+			return memories.listVisibleRows(workspaceId).map(recordOf);
 		},
 		search(workspaceId, query, limit = 20) {
-			const tokens = queryTokens(query);
-			if (tokens.length === 0) {
-				return [];
-			}
-			if (tokens.every((token) => token.length >= 3)) {
-				const hits = stmts.fts.all(tokens.map(ftsPhrase).join(" AND "), workspaceId, limit) as unknown as MemoryRow[];
-				if (hits.length > 0) {
-					return hits.map(recordOf);
-				}
-			}
-			return likeSearch(workspaceId, tokens, limit);
+			return memories.searchRows(workspaceId, query, limit).map(recordOf);
 		},
 		applyProposals(ctx, proposals) {
-			return applyProposals({ database, now: () => new Date().toISOString() }, ctx, proposals).outcomes;
+			return applyProposals({ database, now: () => new Date().toISOString(), memories }, ctx, proposals).outcomes;
 		},
 		logSkipped(entry) {
 			if (coalesceSkip(entry)) {
@@ -1217,7 +1032,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			stmts.stateSet.run(workspaceId, key, value);
 		},
 		listWorkspaces() {
-			return (stmts.workspaces.all() as { workspace_id: string; n: number; u: string }[]).map((row) => ({
+			return memories.workspaceList().map((row) => ({
 				workspaceId: row.workspace_id,
 				activeCount: row.n,
 				updatedAt: row.u,
@@ -1226,7 +1041,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		mostRecentlyActiveWorkspace() {
 			// All instants are ISO-8601 UTC, so the newer one is the greater
 			// string; comparing them keeps the three sources one ordering.
-			const rows = [stmts.recentLedger.get(), stmts.recentMemory.get(), stmts.recentSkill.get()] as (
+			const rows = [stmts.recentLedger.get(), memories.recentInstant(), stmts.recentSkill.get()] as (
 				| { workspace_id?: unknown; ts?: unknown }
 				| undefined
 			)[];
@@ -1254,14 +1069,14 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 				skillOrphanFilesRemoved: 0,
 				skillFileErrors: 0,
 			};
-			for (const row of stmts.ftsOrphans.all() as { rid: number }[]) {
-				stmts.ftsDrop.run(row.rid);
+			for (const rid of memories.ftsOrphanIds()) {
+				memories.dropFtsRow(rid);
 				result.orphanFtsRows += 1;
 			}
-			for (const row of stmts.activeRows.all() as unknown as MemoryRow[]) {
+			for (const row of memories.activeRowList()) {
 				const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
 				if (reason !== undefined) {
-					stmts.quarantine.run(row.workspace_id, row.id);
+					memories.quarantineRow(row.workspace_id, row.id);
 					result.quarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
 				}
 			}
@@ -1400,16 +1215,14 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		},
 		recordMemoryUse(workspaceId: string, memoryId: string) {
 			try {
-				stmts.memUseUpsert.run(workspaceId, memoryId, new Date().toISOString());
+				memories.recordUsage(workspaceId, [memoryId], new Date().toISOString());
 			} catch {
 				// Accounting never fails the read it rides on.
 			}
 		},
 		getMemoryUse(workspaceId: string, memoryId: string) {
 			try {
-				const row = stmts.memUseGet.get(workspaceId, memoryId) as
-					| { use_count: number; last_used_at: string | null }
-					| undefined;
+				const row = memories.getUsage(workspaceId, [memoryId]);
 				if (row === undefined) {
 					return undefined;
 				}
@@ -1487,7 +1300,10 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		},
 		quarantine(workspaceId: string, kind: "memory" | "skill", id: string) {
 			try {
-				const result = (kind === "memory" ? stmts.quarantine : stmts.skillQuarantine).run(workspaceId, id) as {
+				if (kind === "memory") {
+					return memories.quarantineRow(workspaceId, id);
+				}
+				const result = stmts.skillQuarantine.run(workspaceId, id) as {
 					changes?: unknown;
 				};
 				return Number(result.changes) > 0;
@@ -1511,85 +1327,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		},
 	};
 	return store;
-}
-
-/**
- * Add the ledger's `occurrences` column to a store created before coalescing
- * existed. The DDL only covers fresh files, and the plugin is the sole writer
- * of an existing user database — the one migration the ledger needs.
- */
-function ensureLedgerOccurrences(database: DatabaseSync): void {
-	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
-	if (columns.some((column) => column.name === LEDGER_OCCURRENCES)) {
-		return;
-	}
-	database.exec(`ALTER TABLE extraction_log ADD COLUMN ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1`);
-}
-
-/**
- * Add the memories `corrects` link column to a store created before the
- * correction-linking field existed. Same single-migration discipline as the
- * ledger occurrences column above.
- */
-function ensureMemoriesCorrects(database: DatabaseSync): void {
-	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
-	if (columns.some((column) => column.name === "corrects")) {
-		return;
-	}
-	database.exec("ALTER TABLE memories ADD COLUMN corrects TEXT");
-}
-
-/**
- * Add the extraction ledger `cheap_usage` column to a store created before
- * the cheap pre-gate existed. Same single-migration discipline as the
- * columns above.
- */
-function ensureExtractionCheapUsage(database: DatabaseSync): void {
-	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
-	if (columns.some((column) => column.name === "cheap_usage")) {
-		return;
-	}
-	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_usage TEXT");
-}
-
-/**
- * Add the extraction ledger `cheap_error` column to a store created before
- * the failed-gate head was ledgered. Separate from the `cheap_usage`
- * migration above so a store that already carries that column still gains
- * this one. Same single-migration discipline as the columns above.
- */
-function ensureExtractionCheapError(database: DatabaseSync): void {
-	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
-	if (columns.some((column) => column.name === "cheap_error")) {
-		return;
-	}
-	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_error TEXT");
-}
-
-/**
- * Add the review ledger `proposed` column to a store created before trial
- * mode started keeping the rewrite it declined to land. Same single-migration
- * discipline as the columns above.
- */
-function ensureReviewProposed(database: DatabaseSync): void {
-	const columns = database.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
-	if (columns.some((column) => column.name === "proposed")) {
-		return;
-	}
-	database.exec("ALTER TABLE review_log ADD COLUMN proposed TEXT");
-}
-
-/**
- * Add the review ledger `model` column to a store created before verdict rows
- * recorded the model they ran on. Same single-migration discipline as the
- * columns above.
- */
-function ensureReviewModel(database: DatabaseSync): void {
-	const columns = database.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
-	if (columns.some((column) => column.name === "model")) {
-		return;
-	}
-	database.exec("ALTER TABLE review_log ADD COLUMN model TEXT");
 }
 
 /** Parse the daily skip-counts map; corrupt payloads degrade to empty. */

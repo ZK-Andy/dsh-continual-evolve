@@ -1,0 +1,235 @@
+/**
+ * Schema and migrations for the central store: the full DDL for fresh files
+ * plus one idempotent ALTER per column added later. The plugin is the sole
+ * writer of an existing user database, so each column needs exactly one
+ * migration — add the next one here, never inline elsewhere.
+ */
+import type { DatabaseSync } from "node:sqlite";
+
+/** Ledger column counting the wake-ups one coalesced row stands for. */
+export const LEDGER_OCCURRENCES = "occurrences";
+
+const SCHEMA_DDL = `
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
+  workspace_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 65536),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','quarantined','archived')),
+  source_session TEXT,
+  source_seqs TEXT,
+  source_run TEXT,
+  corrects TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_mem_ws_status ON memories(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_mem_ws_updated ON memories(workspace_id, updated_at);
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+  workspace_id, id, title, description, body, tokenize='trigram');
+-- FTS rows are synced in code by applyProposals (plain DELETE + INSERT), not
+-- by triggers: node:sqlite rejects the FTS5 'delete'-command INSERT that
+-- AFTER DELETE/UPDATE triggers would need (SQL logic error, verified on
+-- SQLite 3.53.4). The sole-writer design makes code-side sync reliable;
+-- patrol() reconciles any residue.
+CREATE TABLE IF NOT EXISTS extraction_log (
+  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
+  trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')),
+  decision TEXT, skip_reason TEXT,
+  status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
+  cheap_usage TEXT, cheap_error TEXT,
+  files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS state (
+  workspace_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, key)
+);
+CREATE TABLE IF NOT EXISTS skills (
+  workspace_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 65536),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','quarantined','archived')),
+  source_session TEXT,
+  source_seqs TEXT,
+  source_run TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_skill_ws_status ON skills(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_skill_ws_updated ON skills(workspace_id, updated_at);
+CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
+  workspace_id, id, title, description, body, tokenize='trigram');
+-- Like memories_fts, synced in code by the skill apply path (plain DELETE +
+-- INSERT), never by triggers, for the same node:sqlite FTS5 reason.
+CREATE TABLE IF NOT EXISTS skill_log (
+  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
+  trigger TEXT, decision TEXT, status TEXT, files TEXT, warnings TEXT
+);
+-- Skill usage counters (V2 usage loop): one aggregate row per skill, never a
+-- per-hit ledger, so the table cannot grow without bound and needs no prune.
+CREATE TABLE IF NOT EXISTS skill_usage (
+  workspace_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('project','global')),
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TEXT,
+  PRIMARY KEY (workspace_id, skill_id, scope)
+) STRICT;
+-- Memory usage counters (content-quality loop): one aggregate row per memory,
+-- the same presence-heartbeat discipline as skill_usage — a body served by id
+-- counts, search/list hits stay uncounted.
+CREATE TABLE IF NOT EXISTS memory_usage (
+  workspace_id TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at TEXT,
+  PRIMARY KEY (workspace_id, memory_id)
+) STRICT;
+-- Per-item content-review verdicts (the item-review trigger's account):
+-- one row per reviewed item per run, with the model it ran on so a failure
+-- rate can be attributed instead of guessed at. Pruned with the ledgers.
+CREATE TABLE IF NOT EXISTS review_log (
+  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
+  item_id TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('keep','rewrite','quarantine','skip')),
+  reason TEXT,
+  proposed TEXT,
+  model TEXT,
+  cheap_usage TEXT, evolve_usage TEXT,
+  applied INTEGER NOT NULL DEFAULT 0,
+  evolve_count INTEGER NOT NULL DEFAULT 0
+);
+-- One rollup row per UTC day: the hard-cap account (budget vs reviewed vs
+-- backlog vs dropped) plus the token account split by cheap/evolve purpose.
+CREATE TABLE IF NOT EXISTS review_daily (
+  day TEXT NOT NULL PRIMARY KEY,
+  budget INTEGER NOT NULL,
+  reviewed INTEGER NOT NULL DEFAULT 0,
+  new_items INTEGER NOT NULL DEFAULT 0,
+  requeued INTEGER NOT NULL DEFAULT 0,
+  approved INTEGER NOT NULL DEFAULT 0,
+  applied INTEGER NOT NULL DEFAULT 0,
+  cheap_token INTEGER NOT NULL DEFAULT 0,
+  evolve_token INTEGER NOT NULL DEFAULT 0,
+  backlog INTEGER NOT NULL DEFAULT 0,
+  dropped INTEGER NOT NULL DEFAULT 0,
+  skip_top TEXT,
+  skip_counts TEXT
+) STRICT;
+-- The plugin's own log. A stock host attaches no exporter to its logger, so a
+-- ctx.logger call leaves no trace anywhere (docs/FAQ.md #4) — diagnostics that
+-- have no domain ledger row of their own land here instead. Pruned with the
+-- ledgers; the event column is a stable slug, so runs can be counted and grepped.
+CREATE TABLE IF NOT EXISTS plugin_log (
+  ts TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('info','warn','error')),
+  event TEXT NOT NULL,
+  message TEXT NOT NULL,
+  workspace_id TEXT,
+  session_id TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_plugin_log_ts ON plugin_log(ts);
+`;
+
+/**
+ * Apply the full schema, then every later column migration, in order.
+ * @param database - The open database handle.
+ */
+export function migrateDatabase(database: DatabaseSync): void {
+	database.exec(SCHEMA_DDL);
+	ensureLedgerOccurrences(database);
+	ensureMemoriesCorrects(database);
+	ensureExtractionCheapUsage(database);
+	ensureExtractionCheapError(database);
+	ensureReviewProposed(database);
+	ensureReviewModel(database);
+}
+
+/**
+ * Add the ledger's `occurrences` column to a store created before coalescing
+ * existed. The DDL only covers fresh files, and the plugin is the sole writer
+ * of an existing user database — the one migration the ledger needs.
+ */
+function ensureLedgerOccurrences(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === LEDGER_OCCURRENCES)) {
+		return;
+	}
+	database.exec(`ALTER TABLE extraction_log ADD COLUMN ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1`);
+}
+
+/**
+ * Add the memories `corrects` link column to a store created before the
+ * correction-linking field existed. Same single-migration discipline as the
+ * ledger occurrences column above.
+ */
+function ensureMemoriesCorrects(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "corrects")) {
+		return;
+	}
+	database.exec("ALTER TABLE memories ADD COLUMN corrects TEXT");
+}
+
+/**
+ * Add the extraction ledger `cheap_usage` column to a store created before
+ * the cheap pre-gate existed. Same single-migration discipline as the
+ * columns above.
+ */
+function ensureExtractionCheapUsage(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "cheap_usage")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_usage TEXT");
+}
+
+/**
+ * Add the extraction ledger `cheap_error` column to a store created before
+ * the failed-gate head was ledgered. Separate from the `cheap_usage`
+ * migration above so a store that already carries that column still gains
+ * this one. Same single-migration discipline as the columns above.
+ */
+function ensureExtractionCheapError(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "cheap_error")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_error TEXT");
+}
+
+/**
+ * Add the review ledger `proposed` column to a store created before trial
+ * mode started keeping the rewrite it declined to land. Same single-migration
+ * discipline as the columns above.
+ */
+function ensureReviewProposed(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "proposed")) {
+		return;
+	}
+	database.exec("ALTER TABLE review_log ADD COLUMN proposed TEXT");
+}
+
+/**
+ * Add the review ledger `model` column to a store created before verdict rows
+ * recorded the model they ran on. Same single-migration discipline as the
+ * columns above.
+ */
+function ensureReviewModel(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('review_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "model")) {
+		return;
+	}
+	database.exec("ALTER TABLE review_log ADD COLUMN model TEXT");
+}
