@@ -12,7 +12,7 @@ import { type ChainLink, type ChainOutcome } from "./chain.js";
 import { observedUsageOf, type ModelSelection } from "./llm-call.js";
 import { evolvePrompt, gatePrompt, type EvolveVerdict } from "./review-prompt.js";
 import { REVIEW_EVOLVE_BY_KIND, REVIEW_GATE_BY_KIND } from "./subagent-defs.js";
-import { cutFailureOf, type SubagentLoader } from "./subagent.js";
+import { cutFailureOf, subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import { normalizeUsage, zeroUsage, type UsageTotals } from "./token-usage.js";
 import type { MemoryStore } from "./store.js";
 import type { ReviewCandidate, ReviewDeps, ReviewRunOptions, ReviewRunSummary } from "./review.js";
@@ -57,6 +57,18 @@ interface ReviewRowBase {
  */
 export function reviewChain(): readonly ChainLink<ReviewItem>[] {
 	return [gateLink(), evolveLink(), landLink()];
+}
+
+/** The per-run ring: the loader bound to this run, and the chain it walks. */
+export interface ReviewRing {
+	loader: SubagentLoader;
+	links: readonly ChainLink<ReviewItem>[];
+}
+
+/** Assemble one run's ring (simple factory: one context, one bound loader, one chain). */
+export function assembleRing(call: SubagentCall): ReviewRing {
+	const loader = subagentLoaderFor(call);
+	return { loader, links: reviewChain() };
 }
 
 /** Cheap gate: decide whether the item deserves the expensive pass at all. */

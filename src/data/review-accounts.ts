@@ -84,6 +84,15 @@ export function createReviewAccounts(
 	skills: Repository<SkillRow>,
 ): ReviewAccountMethods {
 	return {
+		...buildReviewLogWriter(stmts),
+		...buildDailyAccounts(stmts),
+		...buildReviewState(stmts, memories, skills),
+	};
+}
+
+/** The verdict-row writer. */
+function buildReviewLogWriter(stmts: ReviewAccountStmts): Pick<ReviewAccountMethods, "logReview"> {
+	return {
 		logReview(entry: ReviewLogEntry) {
 			stmts.reviewLog.run(
 				entry.runId ?? null,
@@ -101,6 +110,12 @@ export function createReviewAccounts(
 				entry.evolveCount ?? 0,
 			);
 		},
+	};
+}
+
+/** The daily hard-cap rollup accounts. */
+function buildDailyAccounts(stmts: ReviewAccountStmts): Pick<ReviewAccountMethods, "consumeReviewBudget" | "getDaily" | "mergeDaily"> {
+	return {
 		consumeReviewBudget(day: string, budget: number) {
 			stmts.dailyUpsert.run(day, budget);
 			const result = stmts.dailyConsume.run(day) as { changes?: unknown };
@@ -114,40 +129,11 @@ export function createReviewAccounts(
 			return row.budget - row.reviewed;
 		},
 		getDaily(day: string) {
-			const row = stmts.dailyGet.get(day) as
-				| {
-						day: string;
-						budget: number;
-						reviewed: number;
-						new_items: number;
-						requeued: number;
-						approved: number;
-						applied: number;
-						cheap_token: number;
-						evolve_token: number;
-						backlog: number;
-						dropped: number;
-						skip_top: string | null;
-				  }
-				| undefined;
+			const row = stmts.dailyGet.get(day) as DailyRow | undefined;
 			if (row === undefined) {
 				return undefined;
 			}
-			const stats: DailyStats = {
-				day: row.day,
-				budget: row.budget,
-				reviewed: row.reviewed,
-				newItems: row.new_items,
-				requeued: row.requeued,
-				approved: row.approved,
-				applied: row.applied,
-				cheapToken: row.cheap_token,
-				evolveToken: row.evolve_token,
-				backlog: row.backlog,
-				dropped: row.dropped,
-				skipTop: row.skip_top,
-			};
-			return stats;
+			return toDailyStats(row);
 		},
 		mergeDaily(day: string, budget: number, delta: DailyDelta) {
 			stmts.dailyUpsert.run(day, budget);
@@ -174,6 +160,50 @@ export function createReviewAccounts(
 				day,
 			);
 		},
+	};
+}
+
+/** One daily rollup row as stored (snake_case, nullable skip_top). */
+interface DailyRow {
+	day: string;
+	budget: number;
+	reviewed: number;
+	new_items: number;
+	requeued: number;
+	approved: number;
+	applied: number;
+	cheap_token: number;
+	evolve_token: number;
+	backlog: number;
+	dropped: number;
+	skip_top: string | null;
+}
+
+/** Map a stored daily row to its public stats shape. */
+function toDailyStats(row: DailyRow): DailyStats {
+	return {
+		day: row.day,
+		budget: row.budget,
+		reviewed: row.reviewed,
+		newItems: row.new_items,
+		requeued: row.requeued,
+		approved: row.approved,
+		applied: row.applied,
+		cheapToken: row.cheap_token,
+		evolveToken: row.evolve_token,
+		backlog: row.backlog,
+		dropped: row.dropped,
+		skipTop: row.skip_top,
+	};
+}
+
+/** Per-item review state: quarantine writes and last-review reads. */
+function buildReviewState(
+	stmts: ReviewAccountStmts,
+	memories: Repository<MemoryRow>,
+	skills: Repository<SkillRow>,
+): Pick<ReviewAccountMethods, "quarantine" | "reviewStateOf"> {
+	return {
 		quarantine(workspaceId: string, kind: "memory" | "skill", id: string) {
 			try {
 				if (kind === "memory") {

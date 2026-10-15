@@ -5,11 +5,13 @@
  * `memory-apply.ts` for memories. Nothing reaches the database without the
  * mechanical gates in `skill-rules.ts`.
  */
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type { ProposalContext } from "./memory-apply.js";
 import type { SkillFields, SkillProposal } from "./skill-rules.js";
 import { isValidMemoryId } from "./memory-rules.js";
 import { skillFieldGateReasons, slugifySkillId } from "./skill-rules.js";
-import type { LedgerFile, SkillRecord, SkillProposalOutcome } from "../store-types.js";
+import type { LedgerFile, SkillFileWarning, SkillRecord, SkillProposalOutcome } from "../store-types.js";
+import { writeSkillLedger } from "../data/ledger.js";
 import { skillRecordOf, type SkillRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";
 
@@ -291,4 +293,78 @@ function updateSkill(job: SkillApplyJob, target: SkillTarget): SkillProposalOutc
 	files.push({ id, action, scope, before: existing, after: skillRecordOf(skills.getRow(partition, id) as SkillRow) });
 	intents.push({ partition, id, op: "write" });
 	return { id, action, ok: true };
+}
+
+/** The file-projection operations a committed skill batch syncs (presentation side). */
+export interface SkillFileOps {
+	/** The materialized directory for one skill partition. */
+	rootOf(partition: string): string;
+	/** Materialize one active skill row as its SKILL.md. */
+	writeFile(root: string, record: SkillRecord): SkillFileWarning[];
+	/** Drop one skill's materialized directory (managed files only). */
+	removeFile(root: string, id: string): SkillFileWarning[];
+}
+
+/**
+ * Run one skill batch: validate all proposals, apply atomically, sync files
+ * post-commit, ledger. The database is the source of truth: files sync after
+ * the commit and never fail the batch — patrol retries whatever refuses.
+ * @param skills - The skills repository (inside this batch's transaction).
+ * @param database - The open database handle (for the transaction).
+ * @param skillLog - The prepared skill_log insert.
+ * @param ctx - The write context (provenance + accounting).
+ * @param proposals - The batch to validate and land.
+ * @param files - The file-projection operations.
+ * @returns The per-proposal outcomes plus file warnings.
+ */
+export function applySkillBatch(
+	skills: Repository<SkillRow>,
+	database: DatabaseSync,
+	skillLog: StatementSync,
+	ctx: ProposalContext,
+	proposals: readonly SkillProposal[],
+	files: SkillFileOps,
+): { outcomes: SkillProposalOutcome[]; warnings: SkillFileWarning[] } {
+	const outcomes: SkillProposalOutcome[] = [];
+	const ledgerFiles: SkillLedgerFile[] = [];
+	const intents: SkillFileIntent[] = [];
+	const runId = ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : undefined);
+	const now = new Date().toISOString();
+	database.exec("BEGIN");
+	for (const proposal of proposals) {
+		const outcome = applySkillOne(skills, ctx, proposal, now, ledgerFiles, intents);
+		outcomes.push(outcome);
+		if (!outcome.ok) {
+			break;
+		}
+	}
+	const applied = outcomes.every((outcome) => outcome.ok);
+	database.exec(applied ? "COMMIT" : "ROLLBACK");
+	const warnings: SkillFileWarning[] = [];
+	if (applied) {
+		for (const intent of intents) {
+			const root = files.rootOf(intent.partition);
+			if (intent.op === "write") {
+				const row = skills.getRow(intent.partition, intent.id);
+				if (row === undefined || row.status !== "active") {
+					continue;
+				}
+				warnings.push(...files.writeFile(root, skillRecordOf(row)));
+			} else {
+				warnings.push(...files.removeFile(root, intent.id));
+			}
+		}
+	}
+	const decision = applied ? ctx.decision : `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
+	writeSkillLedger(skillLog, {
+		runId,
+		sessionId: ctx.sessionId,
+		workspaceId: ctx.workspaceId,
+		trigger: ctx.trigger,
+		decision,
+		status: applied ? "applied" : "rejected",
+		files: applied ? ledgerFiles : [],
+		warnings,
+	});
+	return { outcomes, warnings };
 }

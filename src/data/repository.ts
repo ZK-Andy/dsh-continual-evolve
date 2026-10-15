@@ -7,6 +7,8 @@
  * input, so interpolating them is safe.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { MEMORIES, PROMPTS, SKILLS } from "./resource-kinds.js";
+import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
 
 /** Bindable column value (the subset of node:sqlite's SQLInputValue we use). */
 export type SqlValue = string | number | bigint | null;
@@ -69,6 +71,25 @@ export function queryTokens(query: string): string[] {
 /** `%token%` with LIKE metacharacters escaped — keywords match literally. */
 export function likePattern(token: string): string {
 	return `%${token.replaceAll(/[\\%_]/g, "\\$&")}%`;
+}
+
+/**
+ * Open the three kind repositories over one database handle. The descriptors
+ * stay in `resource-kinds.ts`; this factory only binds each one to a
+ * prepared repository, so the store assembly stays a thin spread.
+ * @param database - The open database handle.
+ * @returns The memories/skills/prompts repositories.
+ */
+export function openRepositories(database: DatabaseSync): {
+	memories: Repository<MemoryRow>;
+	skills: Repository<SkillRow>;
+	prompts: Repository<PromptRow>;
+} {
+	return {
+		memories: new Repository<MemoryRow>(database, MEMORIES),
+		skills: new Repository<SkillRow>(database, SKILLS),
+		prompts: new Repository<PromptRow>(database, PROMPTS),
+	};
 }
 
 /**

@@ -17,14 +17,13 @@
  * (`review_log`), no cursor, no increment. It only shares the store's write
  * gates (`applyProposals` / `applySkillProposals` / `quarantine`).
  */
-import { runChain, type ChainLink } from "./chain.js";
+import { runChain } from "./chain.js";
 import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
 import { cwdOf } from "./surfaces/memory-section.js";
 import { todayUtc } from "./prompt-date.js";
 import type { PluginLog } from "./plugin-log.js";
 import { collectCandidates } from "./review-candidates.js";
-import { failureHead, reviewChain, type ReviewItem } from "./review-ring.js";
-import { subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
+import { failureHead, assembleRing, type ReviewItem, type ReviewRing } from "./review-ring.js";
 import type { MemoryStore } from "./store.js";
 import { zeroUsage } from "./token-usage.js";
 
@@ -214,18 +213,6 @@ function exhaustBudget(run: BatchRun): void {
 		});
 	}
 	skipReasons.push("budget-exhausted");
-}
-
-/** The per-run ring: the loader bound to this run, and the chain it walks. */
-interface ReviewRing {
-	loader: SubagentLoader;
-	links: readonly ChainLink<ReviewItem>[];
-}
-
-/** Assemble one run's ring (simple factory: one context, one bound loader, one chain). */
-function assembleRing(call: SubagentCall): ReviewRing {
-	const loader = subagentLoaderFor(call);
-	return { loader, links: reviewChain() };
 }
 
 /** The event wiring surface (duck-typed cordis context, mirrors extraction). */

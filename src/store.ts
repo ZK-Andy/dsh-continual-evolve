@@ -19,25 +19,22 @@
  */
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { openDatabase } from "./data/database.js";
 import { migrateDatabase } from "./data/migrate.js";
-import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, writeMemoryLedger, writeSkillLedger } from "./data/ledger.js";
+import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, writeMemoryLedger, type LedgerStmts } from "./data/ledger.js";
 import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
-import { MEMORIES, PROMPTS, SKILLS } from "./data/resource-kinds.js";
-import { Repository } from "./data/repository.js";
-import { createReviewAccounts, createUsageCounters, prepareReviewStmts, quarantineSecrets } from "./data/review-accounts.js";
-import { applySkillOne, type SkillFileIntent, type SkillLedgerFile } from "./services/skill-apply.js";
+import { openRepositories, type Repository } from "./data/repository.js";
+import { createReviewAccounts, createUsageCounters, prepareReviewStmts, type ReviewAccountStmts } from "./data/review-accounts.js";
+import { runPatrol } from "./data/patrol.js";
+import { applySkillBatch } from "./services/skill-apply.js";
 import { applyPromptBatch } from "./services/prompt-apply.js";
 import { reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "./surfaces/skill-projection.js";
 import { applyProposals } from "./services/memory-apply.js";
 import {
 	CURSOR_KEY_PREFIX,
-	GLOBAL_WORKSPACE,
-	PATROL_STATE_KEY,
 	PLUGIN_LOG_MESSAGE_MAX,
 	type MemoryStore,
-	type SkillFileWarning,
-	type SkillProposalOutcome,
 } from "./store-types.js";
 
 export type {
@@ -76,16 +73,21 @@ export function defaultStorePath(): string {
 	return resolve(home && home.length > 0 ? home : join(homedir(), ".dsh"), "evolve", "memory.db");
 }
 
+/** The prepared statements one open store holds (state keys plus both bundles). */
+type StoreStatements = {
+	stateGet: StatementSync;
+	stateSet: StatementSync;
+	cursorGet: StatementSync;
+} & LedgerStmts & ReviewAccountStmts;
+
 /** Open (creating on first use) the central store. */
 export async function openMemoryStore(explicitPath?: string): Promise<MemoryStore> {
 	const path = explicitPath === undefined ? defaultStorePath() : resolve(explicitPath);
 	const database = await openDatabase(path);
 	migrateDatabase(database);
-	const memories = new Repository<MemoryRow>(database, MEMORIES);
-	const skills = new Repository<SkillRow>(database, SKILLS);
-	const prompts = new Repository<PromptRow>(database, PROMPTS);
+	const { memories, skills, prompts } = openRepositories(database);
 
-	const stmts = {
+	const stmts: StoreStatements = {
 		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
 		stateSet: database.prepare(
 			"INSERT INTO state (workspace_id, key, value) VALUES (?, ?, ?) " +
@@ -98,6 +100,36 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 
 	const store: MemoryStore = {
 		path,
+		...buildMemoryMethods(memories, database, stmts),
+		...buildSkillMethods(skills, database, stmts.skillLog),
+		...buildPromptMethods(prompts, database, stmts.promptLog),
+		...buildCommonMethods(memories, skills, prompts, database, stmts),
+		...createUsageCounters(memories, skills, prompts),
+		...createReviewAccounts(stmts, memories, skills),
+	};
+	return store;
+}
+
+/** The memory read/write methods over one memories repository. */
+function buildMemoryMethods(
+	memories: Repository<MemoryRow>,
+	database: DatabaseSync,
+	stmts: Pick<StoreStatements, "stateGet" | "stateSet" | "cursorGet" | "latestSkip" | "bumpSkip" | "ledger">,
+): Pick<
+	MemoryStore,
+	| "get"
+	| "list"
+	| "listAll"
+	| "search"
+	| "applyProposals"
+	| "logSkipped"
+	| "cursor"
+	| "setCursor"
+	| "state"
+	| "setState"
+	| "listWorkspaces"
+> {
+	return {
 		get(workspaceId, id) {
 			const row = memories.getRow(workspaceId, id);
 			return row === undefined ? undefined : recordOf(row);
@@ -137,6 +169,92 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		listWorkspaces() {
 			return memories.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
 		},
+	};
+}
+
+/** The skill read/write methods over one skills repository. */
+function buildSkillMethods(
+	skills: Repository<SkillRow>,
+	database: DatabaseSync,
+	skillLog: StatementSync,
+): Pick<MemoryStore, "getSkill" | "listSkills" | "listAllSkills" | "searchSkills" | "applySkillProposals" | "listSkillWorkspaces"> {
+	return {
+		getSkill(workspaceId, id) {
+			const row = skills.getRow(workspaceId, id);
+			return row === undefined ? undefined : skillRecordOf(row);
+		},
+		listSkills(workspaceId) {
+			return skills.listRows(workspaceId).map(skillRecordOf);
+		},
+		listAllSkills(workspaceId) {
+			return skills.listVisibleRows(workspaceId).map(skillRecordOf);
+		},
+		searchSkills(workspaceId, query, limit = 20) {
+			return skills.searchRows(workspaceId, query, limit).map(skillRecordOf);
+		},
+		applySkillProposals(ctx, proposals) {
+			return applySkillBatch(skills, database, skillLog, ctx, proposals, {
+				rootOf: skillRootOf,
+				writeFile: writeSkillFile,
+				removeFile: removeSkillFile,
+			});
+		},
+		listSkillWorkspaces() {
+			return skills.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
+		},
+	};
+}
+
+/** The prompt read/write methods over one prompts repository. */
+function buildPromptMethods(
+	prompts: Repository<PromptRow>,
+	database: DatabaseSync,
+	promptLog: StatementSync,
+): Pick<MemoryStore, "getPrompt" | "listPrompts" | "listAllPrompts" | "searchPrompts" | "applyPromptProposals" | "listPromptWorkspaces"> {
+	return {
+		getPrompt(workspaceId, id) {
+			const row = prompts.getRow(workspaceId, id);
+			return row === undefined ? undefined : promptRecordOf(row);
+		},
+		listPrompts(workspaceId) {
+			return prompts.listRows(workspaceId).map(promptRecordOf);
+		},
+		listAllPrompts(workspaceId) {
+			return prompts.listVisibleRows(workspaceId).map(promptRecordOf);
+		},
+		searchPrompts(workspaceId, query, limit = 20) {
+			return prompts.searchRows(workspaceId, query, limit).map(promptRecordOf);
+		},
+		applyPromptProposals(ctx, proposals) {
+			return applyPromptBatch(prompts, database, promptLog, ctx, proposals);
+		},
+		listPromptWorkspaces() {
+			return prompts.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
+		},
+	};
+}
+
+/** The cross-kind methods: recency race, patrol, plugin log, retention, close. */
+function buildCommonMethods(
+	memories: Repository<MemoryRow>,
+	skills: Repository<SkillRow>,
+	prompts: Repository<PromptRow>,
+	database: DatabaseSync,
+	stmts: Pick<
+		StoreStatements,
+		| "stateSet"
+		| "recentLedger"
+		| "recentSkill"
+		| "recentPrompt"
+		| "prune"
+		| "skillPrune"
+		| "promptPrune"
+		| "reviewPrune"
+		| "pluginLogPrune"
+		| "pluginLog"
+	>,
+): Pick<MemoryStore, "mostRecentlyActiveWorkspace" | "patrol" | "logPlugin" | "pruneLedger" | "close"> {
+	return {
 		mostRecentlyActiveWorkspace() {
 			return latestWorkspaceId([
 				stmts.recentLedger.get() as { workspace_id?: unknown; ts?: unknown } | undefined,
@@ -147,42 +265,11 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 			]);
 		},
 		patrol() {
-			const result = {
-				ts: new Date().toISOString(),
-				orphanFtsRows: 0,
-				quarantined: [] as { workspaceId: string; id: string; reason: string }[],
-				skillOrphanFtsRows: 0,
-				skillQuarantined: [] as { workspaceId: string; id: string; reason: string }[],
-				skillFilesReconciled: 0,
-				skillOrphanFilesRemoved: 0,
-				skillFileErrors: 0,
-				promptOrphanFtsRows: 0,
-				promptQuarantined: [] as { workspaceId: string; id: string; reason: string }[],
-			};
-			for (const rid of memories.ftsOrphanIds()) {
-				memories.dropFtsRow(rid);
-				result.orphanFtsRows += 1;
-			}
-			for (const rid of skills.ftsOrphanIds()) {
-				skills.dropFtsRow(rid);
-				result.skillOrphanFtsRows += 1;
-			}
-			for (const rid of prompts.ftsOrphanIds()) {
-				prompts.dropFtsRow(rid);
-				result.promptOrphanFtsRows += 1;
-			}
-			quarantineSecrets(memories, skills, prompts, result, (workspaceId, id) => {
-				// A quarantined skill must stop loading immediately: drop
-				// its managed file (hand-written files stay, with an error
-				// counted so the residue stays visible).
-				for (const warning of removeSkillFile(skillRootOf(workspaceId), id)) {
-					void warning;
-					result.skillFileErrors += 1;
-				}
+			return runPatrol(memories, skills, prompts, (workspaceId, key, value) => stmts.stateSet.run(workspaceId, key, value), {
+				rootOf: skillRootOf,
+				removeFile: removeSkillFile,
+				reconcile: reconcileSkillFiles,
 			});
-			reconcileSkillFiles(skills, result);
-			stmts.stateSet.run(GLOBAL_WORKSPACE, PATROL_STATE_KEY, JSON.stringify(result));
-			return result;
 		},
 		logPlugin(entry) {
 			stmts.pluginLog.run(
@@ -205,89 +292,5 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		close() {
 			database.close();
 		},
-		getSkill(workspaceId, id) {
-			const row = skills.getRow(workspaceId, id);
-			return row === undefined ? undefined : skillRecordOf(row);
-		},
-		listSkills(workspaceId) {
-			return skills.listRows(workspaceId).map(skillRecordOf);
-		},
-		listAllSkills(workspaceId) {
-			return skills.listVisibleRows(workspaceId).map(skillRecordOf);
-		},
-		searchSkills(workspaceId, query, limit = 20) {
-			return skills.searchRows(workspaceId, query, limit).map(skillRecordOf);
-		},
-		applySkillProposals(ctx, proposals) {
-			const outcomes: SkillProposalOutcome[] = [];
-			const files: SkillLedgerFile[] = [];
-			const intents: SkillFileIntent[] = [];
-			const runId = ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : undefined);
-			const now = new Date().toISOString();
-			database.exec("BEGIN");
-			for (const proposal of proposals) {
-				const outcome = applySkillOne(skills, ctx, proposal, now, files, intents);
-				outcomes.push(outcome);
-				if (!outcome.ok) {
-					break;
-				}
-			}
-			const applied = outcomes.every((outcome) => outcome.ok);
-			database.exec(applied ? "COMMIT" : "ROLLBACK");
-			// The database is the source of truth: files sync after the commit
-			// and never fail the batch — patrol retries whatever refuses.
-			const warnings: SkillFileWarning[] = [];
-			if (applied) {
-				for (const intent of intents) {
-					const root = skillRootOf(intent.partition);
-					const row = skills.getRow(intent.partition, intent.id);
-					if (intent.op === "write") {
-						if (row === undefined || row.status !== "active") {
-							continue;
-						}
-						warnings.push(...writeSkillFile(root, skillRecordOf(row)));
-					} else {
-						warnings.push(...removeSkillFile(root, intent.id));
-					}
-				}
-			}
-			const decision = applied ? ctx.decision : `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
-			writeSkillLedger(stmts.skillLog, {
-				runId,
-				sessionId: ctx.sessionId,
-				workspaceId: ctx.workspaceId,
-				trigger: ctx.trigger,
-				decision,
-				status: applied ? "applied" : "rejected",
-				files: applied ? files : [],
-				warnings,
-			});
-			return { outcomes, warnings };
-		},
-		listSkillWorkspaces() {
-			return skills.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
-		},
-		getPrompt(workspaceId, id) {
-			const row = prompts.getRow(workspaceId, id);
-			return row === undefined ? undefined : promptRecordOf(row);
-		},
-		listPrompts(workspaceId) {
-			return prompts.listRows(workspaceId).map(promptRecordOf);
-		},
-		listAllPrompts(workspaceId) {
-			return prompts.listVisibleRows(workspaceId).map(promptRecordOf);
-		},
-		searchPrompts(workspaceId, query, limit = 20) {
-			return prompts.searchRows(workspaceId, query, limit).map(promptRecordOf);
-		},
-		applyPromptProposals(ctx, proposals) {
-			return applyPromptBatch(prompts, database, stmts.promptLog, ctx, proposals);
-		},
-		listPromptWorkspaces() {
-			return prompts.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));
-		},
-		...createUsageCounters(memories, skills, prompts),
-		...createReviewAccounts(stmts, memories, skills),
 	};
-	return store;
 }
