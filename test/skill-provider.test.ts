@@ -7,10 +7,10 @@ import {
 	CREATOR_SKILLS,
 	CREATOR_SKILLS_PROVIDER,
 	createCreatorProvider,
+	mountCreatorSkillsWhenAvailable,
 	packageAssetsDir,
 	registerCreatorSkills,
 } from "../src/surfaces/skill-provider.js";
-
 function seedDir(files: Record<string, string>): string {
 	const dir = mkdtempSync(join(tmpdir(), "creator-skills-"));
 	for (const [file, body] of Object.entries(files)) {
@@ -75,5 +75,34 @@ describe("creator skill provider", () => {
 			const loaded = await provider.get({ name: spec.id });
 			expect(loaded.content).toContain(spec.id === "evolve-skill-creator" ? "Skill Creator" : "Memory Creator");
 		}
+	});
+
+	it("mounts through nested inject and logs registration", () => {
+		const events: string[] = [];
+		const log = {
+			warn: (event: string) => events.push(`warn:${event}`),
+			info: (event: string) => events.push(`info:${event}`),
+		};
+		let registered = 0;
+		const host = {
+			inject: (services: string[], callback: (scoped: unknown) => void) => {
+				expect(services).toEqual(["skills"]);
+				callback({ skills: { registerProvider: () => registered++ } });
+			},
+		};
+		mountCreatorSkillsWhenAvailable(host, log);
+		expect(registered).toBe(1);
+		expect(events).toContain("info:creator-skills-registered");
+	});
+
+	it("mount degrades with a warning when inject or service is missing", () => {
+		const events: string[] = [];
+		const log = {
+			warn: (event: string) => events.push(`warn:${event}`),
+			info: (event: string) => events.push(`info:${event}`),
+		};
+		mountCreatorSkillsWhenAvailable({}, log);
+		mountCreatorSkillsWhenAvailable({ inject: (_services: string[], callback: (scoped: unknown) => void) => callback({}) }, log);
+		expect(events).toEqual(["warn:creator-skills-not-mounted", "warn:creator-skills-empty"]);
 	});
 });

@@ -321,7 +321,6 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 	// Created before the store exists: the early mounts and the failure path
 	// below call it, and lines written before readiness are dropped.
 	const log = createPluginLog(() => state.store);
-	mountCreatorSkillsWhenAvailable(host, log);
 	void openMemoryStore().then(
 		(store) => {
 			state.store = store;
@@ -333,6 +332,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 				log.warn("prune-failed", `ledger retention skipped: ${error instanceof Error ? error.message : String(error)}`);
 			}
 			mountToolsWhenAvailable(host, store, state, log);
+			mountCreatorSkillsWhenAvailable(host, log);
 			mountExtractionWhenAvailable(host, store, config, log);
 			mountReviewWhenAvailable(host, store, config, log);
 			if (config.memoryCard?.enabled !== false) {
