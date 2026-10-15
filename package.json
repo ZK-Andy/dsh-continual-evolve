@@ -28,6 +28,7 @@
     "lib/**/*.d.ts",
     "client/client.js",
     "cordis.patch.yml",
+    "assets/*.md",
     "locale/*.json",
     "README.md",
     "LICENSE"

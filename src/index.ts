@@ -48,6 +48,7 @@ import type { SurfaceReader } from "./extraction-surface.js";import {
 	memorySectionText,
 } from "./surfaces/memory-section.js";
 import { registerEvolveTools } from "./surfaces/evolve-tools.js";
+import { mountCreatorSkillsWhenAvailable } from "./surfaces/skill-provider.js";
 import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
 import { createPluginLog, type PluginLog } from "./plugin-log.js";
@@ -320,6 +321,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 	// Created before the store exists: the early mounts and the failure path
 	// below call it, and lines written before readiness are dropped.
 	const log = createPluginLog(() => state.store);
+	mountCreatorSkillsWhenAvailable(host, log);
 	void openMemoryStore().then(
 		(store) => {
 			state.store = store;

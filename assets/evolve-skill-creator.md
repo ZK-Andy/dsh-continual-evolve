@@ -1,8 +1,3 @@
----
-name: evolve-skill-creator
-description: 写一条可复用的自创技能（evolve_ 前缀）——从用户的一段做法里提炼出标题、触发钩子和正文。自创技能要沉淀时用它；改官方 dsh-* 技能时不要用它。
----
-
 # Evolve Skill Creator（自创）
 
 > 自创技能，仿官方 `skill-creator` 的结构（出处：`anthropics/skills` 的 skill-creator 模板）按本项目门禁改写。只产出**内容**（标题＋钩子＋正文），不写任何落盘指令——存储由插件代码负责。

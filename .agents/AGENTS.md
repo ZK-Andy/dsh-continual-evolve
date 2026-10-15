@@ -6,7 +6,7 @@
 
 - `.agents/skills/` 由 DSH 自动发现（skill 工具按需加载），无需注册。
 - `dsh-*` 为 deepseek-harness 原版；**正文不改方法论**——本项目要加的专属规则写进上层 AGENTS.md 或本文件。
-- 自创技能一律 `evolve_*` 前缀：`evolve-skill-creator`（写技能，仿官方 skill-creator 结构）、`evolve-memory-creator`（写记忆，同结构，规则来自 `memory-rules.ts`）。自创只产出内容（标题＋钩子＋正文），不写落盘指令；落盘是插件代码的事。
+- 自创技能一律 `evolve_*` 前缀；首批两份（`evolve-skill-creator` 写技能、`evolve-memory-creator` 写记忆，规则分别仿官方模板与本仓库 `memory-rules.ts`）随包以 bundled provider 提供（`assets/` 单一事实源，不进 `.agents/skills/`）。自创只产出内容（标题＋钩子＋正文），不写落盘指令；落盘是插件代码的事。
 - 用不上的技能不会触发，零干扰；首版稳定后按证据剪枝（触发过 ≥1 次、或其规则被文档/评审引用者保留）。
 
 ## ADR（Agent Notes）

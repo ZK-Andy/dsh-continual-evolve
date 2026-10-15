@@ -1,8 +1,3 @@
----
-name: evolve-memory-creator
-description: 写一条持久记忆——从对话里提炼用户画像、做法纠正或资源指针，配好类型、钩子和正文。用户明确说记住/忘掉时用它；仓库版本细节（归 ADR/docs）不要写成记忆。
----
-
 # Evolve Memory Creator（自创）
 
 > 自创技能，与 `evolve-skill-creator` 同结构（访谈 → 正文 → 自检），内容规则来自本项目 `memory-rules.ts` 的机械门禁。只产出**内容**（类型＋标题＋钩子＋正文），不写任何落盘指令——存储由插件代码负责。
