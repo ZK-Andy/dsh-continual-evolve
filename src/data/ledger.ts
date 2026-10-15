@@ -1,0 +1,89 @@
+/**
+ * Ledger writers: the extraction ledger (`extraction_log`) and the skill
+ * ledger (`skill_log`). Rows are audit + rollback payloads; preparation
+ * stays with the store assembly, JSON encoding and skip coalescing live
+ * here exactly once.
+ */
+import type { StatementSync } from "node:sqlite";
+import { COALESCED_SKIP_REASONS, type LedgerEntry } from "../store-types.js";
+
+/**
+ * JSON-encode the optional ledger fields and insert the row.
+ * @param ledger - The prepared extraction_log insert.
+ * @param entry - The ledger row to append.
+ */
+export function writeMemoryLedger(ledger: StatementSync, entry: LedgerEntry): void {
+	ledger.run(
+		entry.runId ?? null,
+		new Date().toISOString(),
+		entry.sessionId ?? null,
+		entry.workspaceId ?? null,
+		entry.trigger,
+		entry.decision ?? null,
+		entry.skipReason ?? null,
+		entry.status ?? null,
+		entry.durationMs ?? null,
+		entry.model ?? null,
+		entry.usage === undefined ? null : JSON.stringify(entry.usage),
+		entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
+		entry.cheapError ?? null,
+		entry.files === undefined ? null : JSON.stringify(entry.files),
+	);
+}
+
+/**
+ * Insert one skill ledger row.
+ * @param skillLog - The prepared skill_log insert.
+ * @param entry - Run provenance, decision, file payload, and warnings.
+ */
+export function writeSkillLedger(
+	skillLog: StatementSync,
+	entry: {
+		runId: string | undefined;
+		sessionId: string | undefined;
+		workspaceId: string | undefined;
+		trigger: string;
+		decision: string | undefined;
+		status: string | undefined;
+		files: unknown;
+		warnings: unknown;
+	},
+): void {
+	skillLog.run(
+		entry.runId ?? null,
+		new Date().toISOString(),
+		entry.sessionId ?? null,
+		entry.workspaceId ?? null,
+		entry.trigger,
+		entry.decision ?? null,
+		entry.status ?? null,
+		entry.files === undefined ? null : JSON.stringify(entry.files),
+		entry.warnings === undefined ? null : JSON.stringify(entry.warnings),
+	);
+}
+
+/**
+ * Fold a repeat of the previous row's mechanical skip into that row: the
+ * quiet turns of one session are one cursor position, so they are one
+ * ledger row carrying how many wake-ups it stands for. Only a
+ * *consecutive* repeat coalesces — anything in between starts a new row.
+ * The bumped row takes the newest `ts`, so recency queries still see the
+ * session as active.
+ * @param latestSkip - The prepared latest-skip lookup.
+ * @param bumpSkip - The prepared skip-row bump.
+ * @param entry - The skip to ledger.
+ * @returns True when the skip folded into the previous row.
+ */
+export function coalesceSkipRun(latestSkip: StatementSync, bumpSkip: StatementSync, entry: LedgerEntry): boolean {
+	if (entry.status !== "skipped" || entry.skipReason === undefined || !COALESCED_SKIP_REASONS.has(entry.skipReason)) {
+		return false;
+	}
+	const latest = latestSkip.get(entry.workspaceId ?? null, entry.sessionId ?? null) as
+		| { rid: number; reason: string | null; status: string | null }
+		| undefined;
+	if (latest === undefined || latest.status !== "skipped" || latest.reason !== entry.skipReason) {
+		return false;
+	}
+	bumpSkip.run(new Date().toISOString(), latest.rid);
+	return true;
+}

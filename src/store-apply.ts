@@ -13,7 +13,7 @@ import {
 	type MemoryType,
 	slugifyId,
 } from "./memory-rules.js";
-import type { LedgerEntry, MemoryRecord } from "./store.js";
+import type { LedgerEntry, MemoryRecord } from "./store-types.js";
 import { type Repository } from "./data/repository.js";
 
 /** What a single proposal produced. */
