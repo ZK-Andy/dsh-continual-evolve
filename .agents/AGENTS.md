@@ -5,7 +5,8 @@
 ## 技能
 
 - `.agents/skills/` 由 DSH 自动发现（skill 工具按需加载），无需注册。
-- 技能为 deepseek-harness 原版；**正文不改方法论**——本项目要加的专属规则写进上层 AGENTS.md 或本文件。
+- `dsh-*` 为 deepseek-harness 原版；**正文不改方法论**——本项目要加的专属规则写进上层 AGENTS.md 或本文件。
+- 自创技能一律 `evolve_*` 前缀：`evolve-skill-creator`（写技能，仿官方 skill-creator 结构）、`evolve-memory-creator`（写记忆，同结构，规则来自 `memory-rules.ts`）。自创只产出内容（标题＋钩子＋正文），不写落盘指令；落盘是插件代码的事。
 - 用不上的技能不会触发，零干扰；首版稳定后按证据剪枝（触发过 ≥1 次、或其规则被文档/评审引用者保留）。
 
 ## ADR（Agent Notes）
@@ -18,5 +19,6 @@
 
 ## 出处声明（MIT）
 
-- `.agents/skills/` 全部技能：© deepseek-ai，MIT License，来自 `deepseek-ai/deepseek-harness`（https://github.com/deepseek-ai/deepseek-harness）。2026-08-22 自 devops-template 逐字原样拷贝（与上游一致，已 diff 验证）。
+- `.agents/skills/` 的 `dsh-*` 技能：© deepseek-ai，MIT License，来自 `deepseek-ai/deepseek-harness`（https://github.com/deepseek-ai/deepseek-harness）。2026-08-22 自 devops-template 逐字原样拷贝（与上游一致，已 diff 验证）。
+- `evolve-skill-creator` / `evolve-memory-creator` 为本项目自创（MIT，随本仓库）：前者仿 `anthropics/skills` 的 skill-creator 结构按本项目门禁改写，后者同结构、规则来自本仓库 `memory-rules.ts`。
 - `.agents/notes` 骨架、`templates/` 骨架、门禁脚本：来自 devops-template（提炼自 deepseek-harness，MIT）。搬运保留出处。
