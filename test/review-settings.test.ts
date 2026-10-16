@@ -199,4 +199,106 @@ describe("reviewSettingsRoute", () => {
 		await flush();
 		expect(second.recorded.status).toBe(413);
 	});
+
+	it("accepts a pre-serialized string body and rejects broken JSON", async () => {
+		const deps = depsWith();
+		const first = record();
+		reviewSettingsRoute(deps).handler(
+			{ method: "POST", url: CARD_API_REVIEW_SETTINGS_PATH, body: JSON.stringify({ dryRun: false }) } as CardRequest,
+			first.response,
+		);
+		await flush();
+		expect(first.recorded.status).toBe(200);
+		expect(deps.saved).toEqual([{ dryRun: false }]);
+
+		const second = record();
+		reviewSettingsRoute(depsWith()).handler(
+			{ method: "POST", url: CARD_API_REVIEW_SETTINGS_PATH, body: "{oops" } as CardRequest,
+			second.response,
+		);
+		await flush();
+		expect(second.recorded.status).toBe(400);
+	});
+
+	it("rejects a POST with no body source at all", async () => {
+		const { recorded, response } = record();
+		reviewSettingsRoute(depsWith()).handler({ method: "POST", url: CARD_API_REVIEW_SETTINGS_PATH }, response);
+		await flush();
+		expect(recorded.status).toBe(400);
+	});
+
+	it("rejects an enabled field of the wrong type", async () => {
+		const save = vi.fn();
+		const { recorded, response } = record();
+		reviewSettingsRoute(depsWith({ save })).handler(
+			{ method: "POST", url: CARD_API_REVIEW_SETTINGS_PATH, body: { enabled: "yes" } } as CardRequest,
+			response,
+		);
+		await flush();
+		expect(recorded.status).toBe(400);
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it("reads streamed bodies through every failure shape", async () => {
+		function streamed(): {
+			request: CardRequest;
+			emit(event: string, ...args: never[]): void;
+		} {
+			const listeners = new Map<string, Array<(...args: never[]) => void>>();
+			const request = {
+				method: "POST",
+				url: CARD_API_REVIEW_SETTINGS_PATH,
+				on: (event: string, listener: (...args: never[]) => void) => {
+					const list = listeners.get(event) ?? [];
+					list.push(listener);
+					listeners.set(event, list);
+					return request;
+				},
+			} as unknown as CardRequest;
+			return {
+				request,
+				emit: (event: string, ...args: never[]) => {
+					for (const listener of listeners.get(event) ?? []) {
+						listener(...args);
+					}
+				},
+			};
+		}
+
+		// Empty stream.
+		const empty = streamed();
+		const emptyRecorded = record();
+		reviewSettingsRoute(depsWith()).handler(empty.request, emptyRecorded.response);
+		empty.emit("end" as never);
+		await flush();
+		expect(emptyRecorded.recorded.status).toBe(400);
+
+		// Invalid JSON over the stream, then a late duplicate end.
+		const broken = streamed();
+		const brokenRecorded = record();
+		reviewSettingsRoute(depsWith()).handler(broken.request, brokenRecorded.response);
+		broken.emit("data", Buffer.from("{oops") as never);
+		broken.emit("end" as never);
+		broken.emit("end" as never);
+		await flush();
+		expect(brokenRecorded.recorded.status).toBe(400);
+
+		// Stream error event.
+		const failed = streamed();
+		const failedRecorded = record();
+		reviewSettingsRoute(depsWith()).handler(failed.request, failedRecorded.response);
+		failed.emit("error", new Error("socket hung up") as never);
+		await flush();
+		expect(failedRecorded.recorded.status).toBe(400);
+
+		// Subscribing itself throws.
+		const throwing = { method: "POST", url: CARD_API_REVIEW_SETTINGS_PATH } as CardRequest;
+		(throwing as unknown as { on: unknown }).on = () => {
+			throw new Error("no stream");
+		};
+		const throwingRecorded = record();
+		reviewSettingsRoute(depsWith()).handler(throwing, throwingRecorded.response);
+		await flush();
+		expect(throwingRecorded.recorded.status).toBe(400);
+	});
 });
