@@ -860,3 +860,39 @@ describe("settings form helpers", () => {
 		expect(validate({ ...toForm(SETTINGS), staleDays: "-1" }).ok).toBe(false);
 	});
 });
+
+describe("workspace selection and query helpers", () => {
+	it("prefers the selected workspace, then the server hint, then the first row", async () => {
+		const { exports } = loadBundle(makeReact());
+		const resolveSelected = exports.resolveSelectedWorkspace as (
+			model: { workspaces: Array<{ root: string }>; defaultRoot: string | null },
+			root: string | null,
+		) => string;
+		const model = { workspaces: [{ root: "/ws/a" }, { root: "/ws/b" }], defaultRoot: "/ws/b" };
+		expect(resolveSelected(model, "/ws/a")).toBe("/ws/a");
+		expect(resolveSelected(model, null)).toBe("/ws/b");
+		expect(resolveSelected(model, "/ws/gone")).toBe("/ws/b");
+		expect(resolveSelected({ workspaces: [{ root: "/ws/a" }], defaultRoot: null }, null)).toBe("/ws/a");
+	});
+
+	it("resolves the scope label target the same way", async () => {
+		const { exports } = loadBundle(makeReact());
+		const resolveCurrent = exports.resolveScopeCurrent as (
+			workspaces: Array<{ root: string }>,
+			selected: string | null,
+		) => { root: string } | null;
+		expect(resolveCurrent([{ root: "/ws/a" }], "/ws/a")).toEqual({ root: "/ws/a" });
+		expect(resolveCurrent([], null)).toBeNull();
+	});
+
+	it("matches rows case-insensitively over text fields only", async () => {
+		const { exports } = loadBundle(makeReact());
+		const match = exports.matchQueryFields as (row: Record<string, unknown>, fields: string[], query: string) => boolean;
+		const row = { id: "Fedora", title: "桌面环境", count: 3 };
+		expect(match(row, ["id", "title"], "")).toBe(true);
+		expect(match(row, ["id", "title"], "fed")).toBe(true);
+		expect(match(row, ["id", "title"], "桌面")).toBe(true);
+		expect(match(row, ["id", "title"], "missing")).toBe(false);
+		expect(match(row, ["count"], "3")).toBe(false);
+	});
+});

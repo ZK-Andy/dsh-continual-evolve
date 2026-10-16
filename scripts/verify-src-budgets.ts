@@ -1,8 +1,10 @@
 #!/usr/bin/env -S ../../node_modules/.bin/tsx
 /**
- * Verify src module budgets (docs/architecture-standard.md §2): single-file
- * lines ≤ 400, internal-module out-degree ≤ 12 (assembly root index.ts ≤ 14).
- * Single-function lines ≤ 80 is soft: reported as warnings, never fails.
+ * Verify module budgets (docs/architecture-standard.md §2 + §5): src
+ * single-file lines ≤ 400, internal-module out-degree ≤ 12 (assembly root
+ * index.ts ≤ 14). Single-function lines ≤ 80 is soft in src: reported as
+ * warnings, never fails. client/*.js has no file-line budget (single-bundle
+ * exemption) but its functions are hard-capped at 80 (god functions banned).
  *
  * Line counts use wc -l semantics (newline characters). Out-degree counts
  * distinct relative (./ or ../) module specifiers in static and dynamic
@@ -28,6 +30,17 @@ function collectTs(dir: string, out: string[] = []): string[] {
 		const st = statSync(full);
 		if (st.isDirectory()) collectTs(full, out);
 		else if (name.endsWith(".ts")) out.push(full);
+	}
+	return out;
+}
+
+/** client/ is one hand-written bundle: collect its .js sources for the function gate. */
+function collectJs(dir: string, out: string[] = []): string[] {
+	for (const name of readdirSync(dir)) {
+		const full = join(dir, name);
+		const st = statSync(full);
+		if (st.isDirectory()) collectJs(full, out);
+		else if (name.endsWith(".js")) out.push(full);
 	}
 	return out;
 }
@@ -173,6 +186,27 @@ function main(): number {
 	console.log(`Checked ${files.length} src modules`);
 	for (const e of errors) console.log(`FAIL: ${e}`);
 	for (const w of warns) console.log(`WARN: ${w}`);
+	// §5: the client bundle has no file-line budget, but god functions are
+	// banned — over-long client functions fail the gate, not warn.
+	try {
+		if (statSync("client").isDirectory()) {
+			const jsFiles = collectJs("client").sort();
+			console.log(`Checked ${jsFiles.length} client bundles`);
+			for (const file of jsFiles) {
+				const rel = relative(".", file);
+				const text = readFileSync(file, "utf-8");
+				for (const span of functionSpans(text).filter((s) => s.lines > SOFT_MAX_FUNCTION_LINES)) {
+					errors.push(`${rel}: function ${span.name} ~${span.lines} lines exceeds hard budget ${SOFT_MAX_FUNCTION_LINES}`);
+				}
+			}
+		}
+	} catch {
+		console.log("SKIP: client does not exist (no client tree)");
+	}
+	for (const e of errors) {
+		if (!e.startsWith("client/")) continue;
+		console.log(`FAIL: ${e}`);
+	}
 	return errors.length > 0 ? 1 : 0;
 }
 

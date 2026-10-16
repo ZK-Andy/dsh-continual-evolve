@@ -638,18 +638,18 @@ window.__ModuleLoader__.load({
 		 * closes on a pointerdown outside its wrapper, which cannot be the click
 		 * that opened it.
 		 */
-		function WorkspaceScopeMenu(props) {
-			var workspaces = props.workspaces;
-			var selected = props.selected;
-			var onSelect = props.onSelect;
-			var t = props.t;
-			var UI = props.UI;
-			var openState = useState(false);
-			var open = openState[0];
-			var setOpen = openState[1];
-			var wrapRef = useRef(null);
-			var hostMenu =
-				UI !== null && UI !== undefined && UI.Menu !== undefined && UI.Menu !== null ? UI.Menu : null;
+		/** The workspace the selector shows: the selected one, else the first. */
+		function resolveScopeCurrent(workspaces, selected) {
+			for (var index = 0; index < workspaces.length; index++) {
+				if (workspaces[index].root === selected) {
+					return workspaces[index];
+				}
+			}
+			return workspaces.length > 0 ? workspaces[0] : null;
+		}
+
+		/** Outside-click + Escape dismissal for the hand-rolled menu. Host-menu mode needs none. */
+		function useScopeDismiss(hostMenu, open, wrapRef, setOpen) {
 			useEffect(
 				function () {
 					if (hostMenu !== null || !open || typeof document === "undefined") {
@@ -683,27 +683,16 @@ window.__ModuleLoader__.load({
 				},
 				[open, hostMenu],
 			);
-			var current = null;
-			for (var index = 0; index < workspaces.length; index++) {
-				if (workspaces[index].root === selected) {
-					current = workspaces[index];
-					break;
-				}
-			}
-			if (current === null && workspaces.length > 0) {
-				current = workspaces[0];
-			}
-			var label = current === null ? "" : current.label || workspaceLabel(current.root);
+		}
+
+		/** The selector trigger: host Button when available, plain button otherwise. */
+		function scopeTrigger(t, UI, vm) {
 			var scopeChildren = [
-				createElement("span", { key: "label", className: "dce-scope-label" }, label),
+				createElement("span", { key: "label", className: "dce-scope-label" }, vm.label),
 				createElement("span", { key: "caret", className: "dce-scope-caret" }, createElement(Chevron, null)),
 			];
-			var toggle = function () {
-				setOpen(!open);
-			};
-			var trigger = null;
 			if (UI !== null && UI !== undefined && typeof UI.Button !== "undefined" && UI.Button !== null) {
-				trigger = createElement(
+				return createElement(
 					UI.Button,
 					{
 						key: "trigger",
@@ -713,27 +702,84 @@ window.__ModuleLoader__.load({
 						className: "dce-scope-pill",
 						type: "button",
 						"aria-haspopup": "menu",
-						"aria-expanded": open ? "true" : "false",
+						"aria-expanded": vm.open ? "true" : "false",
 						"aria-label": t("scopeLabel"),
-						onClick: toggle,
-					},
-					scopeChildren,
-				);
-			} else {
-				trigger = createElement(
-					"button",
-					{
-						key: "trigger",
-						type: "button",
-						className: "dce-scope",
-						"aria-haspopup": "menu",
-						"aria-expanded": open ? "true" : "false",
-						"aria-label": t("scopeLabel"),
-						onClick: toggle,
+						onClick: vm.onToggle,
 					},
 					scopeChildren,
 				);
 			}
+			return createElement(
+				"button",
+				{
+					key: "trigger",
+					type: "button",
+					className: "dce-scope",
+					"aria-haspopup": "menu",
+					"aria-expanded": vm.open ? "true" : "false",
+					"aria-label": t("scopeLabel"),
+					onClick: vm.onToggle,
+				},
+				scopeChildren,
+			);
+		}
+
+		/** The hand-rolled menu list (host-menu mode renders through the primitive instead). */
+		function scopeFallbackMenu(t, vm) {
+			if (!vm.open) {
+				return null;
+			}
+			return createElement(
+				"div",
+				{ key: "menu", className: "dce-menu", role: "menu", "aria-label": t("scopeLabel") },
+				vm.workspaces.map(function (workspace) {
+					return createElement(
+						"button",
+						{
+							key: workspace.root,
+							type: "button",
+							role: "menuitemradio",
+							"aria-checked": workspace.root === vm.selected ? "true" : "false",
+							className: "dce-menu-item",
+							"data-active": workspace.root === vm.selected ? "true" : "false",
+							onClick: function () {
+								vm.onPick(workspace.root);
+							},
+						},
+						workspace.label || workspaceLabel(workspace.root),
+					);
+				}),
+			);
+		}
+
+		function WorkspaceScopeMenu(props) {
+			var workspaces = props.workspaces;
+			var selected = props.selected;
+			var onSelect = props.onSelect;
+			var t = props.t;
+			var UI = props.UI;
+			var openState = useState(false);
+			var open = openState[0];
+			var setOpen = openState[1];
+			var wrapRef = useRef(null);
+			var hostMenu =
+				UI !== null && UI !== undefined && UI.Menu !== undefined && UI.Menu !== null ? UI.Menu : null;
+			useScopeDismiss(hostMenu, open, wrapRef, setOpen);
+			var current = resolveScopeCurrent(workspaces, selected);
+			var label = current === null ? "" : current.label || workspaceLabel(current.root);
+			var onPick = function (root) {
+				setOpen(false);
+				if (root !== selected) {
+					onSelect(root);
+				}
+			};
+			var trigger = scopeTrigger(t, UI, {
+				label: label,
+				open: open,
+				onToggle: function () {
+					setOpen(!open);
+				},
+			});
 			if (hostMenu !== null) {
 				return createElement(hostMenu, {
 					key: "scope",
@@ -747,12 +793,7 @@ window.__ModuleLoader__.load({
 						};
 					}),
 					selectedId: selected,
-					onSelect: function (id) {
-						setOpen(false);
-						if (id !== selected) {
-							onSelect(id);
-						}
-					},
+					onSelect: onPick,
 					onClose: function () {
 						setOpen(false);
 					},
@@ -762,34 +803,167 @@ window.__ModuleLoader__.load({
 					selection: "check",
 				});
 			}
-			var menu = null;
-			if (open) {
-				menu = createElement(
+			var menu = scopeFallbackMenu(t, { open: open, workspaces: workspaces, selected: selected, onPick: onPick });
+			return createElement("div", { key: "scope", className: "dce-scope-wrap", ref: wrapRef }, trigger, menu);
+		}
+
+		/** Case-insensitive substring match over the row's text fields. */
+		function matchQueryFields(row, fields, query) {
+			if (query.length === 0) {
+				return true;
+			}
+			return fields
+				.filter(function (field) {
+					return typeof row[field] === "string";
+				})
+				.some(function (field) {
+					return row[field].toLocaleLowerCase().includes(query);
+				});
+		}
+
+		/** The file search box both lists share. */
+		function fileSearchInput(t, query, onQueryChange) {
+			return createElement("input", {
+				key: "search",
+				type: "search",
+				className: "dce-search",
+				value: query,
+				placeholder: t("searchPlaceholder"),
+				"aria-label": t("searchPlaceholder"),
+				onChange: function (event) {
+					onQueryChange(event.currentTarget.value);
+				},
+			});
+		}
+
+		/** One patrol-quarantine warning line, or null when clean. */
+		function quarantineLine(t, quarantined) {
+			if (!Array.isArray(quarantined) || quarantined.length === 0) {
+				return null;
+			}
+			return createElement(
+				"div",
+				{ key: "quarantined", className: "dce-warn" },
+				t("quarantined") + quarantined.map(function (entry) { return entry.id; }).join("、"),
+			);
+		}
+
+		/** The memory file list: stats, search, head, rows or the empty state. */
+		function memoryFilesBlock(t, UI, vm) {
+			var query = String(vm.query).trim().toLocaleLowerCase();
+			var files = vm.snapshot.files.filter(function (file) {
+				return matchQueryFields(file, ["id", "title", "description", "type"], query);
+			});
+			var parts = [
+				createElement("div", { key: "stats", className: "dce-stats" }, t("stats", { files: vm.snapshot.fileCount })),
+				quarantineLine(t, vm.snapshot.quarantined),
+				fileSearchInput(t, vm.query, vm.onQueryChange),
+				createElement(
 					"div",
-					{ key: "menu", className: "dce-menu", role: "menu", "aria-label": t("scopeLabel") },
-					workspaces.map(function (workspace) {
-						return createElement(
-							"button",
-							{
-								key: workspace.root,
-								type: "button",
-								role: "menuitemradio",
-								"aria-checked": workspace.root === selected ? "true" : "false",
-								className: "dce-menu-item",
-								"data-active": workspace.root === selected ? "true" : "false",
-								onClick: function () {
-									setOpen(false);
-									if (workspace.root !== selected) {
-										onSelect(workspace.root);
-									}
+					{ key: "head", className: "dce-files-head" },
+					createElement("span", { className: "dce-files-title" }, t("filesHeading")),
+					createElement("span", { className: "dce-files-count" }, String(files.length)),
+					createElement("span", { className: "dce-spacer" }),
+					createElement(RefreshButton, { UI: UI, t: t, onClick: vm.onRefresh }),
+				),
+			];
+			if (files.length === 0) {
+				parts.push(createElement("div", { key: "none", className: "dce-empty" }, t("searchEmpty")));
+			} else {
+				parts.push(
+					createElement(
+						"ul",
+						{ key: "files", className: "dce-list" },
+						files.map(function (file) {
+							return createElement(FileRow, {
+								key: file.id,
+								file: file,
+								now: vm.now,
+								t: t,
+								UI: UI,
+								expanded: vm.expandedFile === file.id,
+								preview: vm.preview,
+								onToggle: function () {
+									vm.onToggleFile(file.id);
 								},
-							},
-							workspace.label || workspaceLabel(workspace.root),
-						);
-					}),
+							});
+						}),
+					),
 				);
 			}
-			return createElement("div", { key: "scope", className: "dce-scope-wrap", ref: wrapRef }, trigger, menu);
+			return parts;
+		}
+
+		/** The skill list: same shape as memories, plus the global badge. */
+		function skillFilesBlock(t, UI, vm) {
+			var query = String(vm.query).trim().toLocaleLowerCase();
+			var rows = Array.isArray(vm.skillData.files) ? vm.skillData.files : [];
+			var skillFiles = rows.filter(function (file) {
+				return matchQueryFields(file, ["id", "title", "description", "scope"], query);
+			});
+			var skillParts = [
+				createElement("div", { key: "stats", className: "dce-stats" }, t("skillStats", { files: vm.skillData.fileCount })),
+				quarantineLine(t, vm.skillData.quarantined),
+				createElement(
+					"div",
+					{ key: "head", className: "dce-files-head" },
+					createElement("span", { className: "dce-files-title" }, t("skillsHeading")),
+					createElement("span", { className: "dce-files-count" }, String(skillFiles.length)),
+				),
+			];
+			if (skillFiles.length === 0) {
+				skillParts.push(createElement("div", { key: "none", className: "dce-empty" }, t("skillsEmpty")));
+			} else {
+				skillParts.push(
+					createElement(
+						"ul",
+						{ key: "files", className: "dce-list" },
+						skillFiles.map(function (file) {
+							return createElement(FileRow, {
+								key: file.id,
+								file: file,
+								now: vm.now,
+								t: t,
+								UI: UI,
+								badge: file.scope === "global" ? t("skillScopeGlobal") : "",
+								deletedKey: "skillPreviewDeleted",
+								expanded: vm.expandedSkill === file.id,
+								preview: vm.skillPreview,
+								onToggle: function () {
+									vm.onToggleSkill(file.id);
+								},
+							});
+						}),
+					),
+				);
+			}
+			return createElement("div", { key: "skills", className: "dce-workspace" }, skillParts);
+		}
+
+		/** The skills section: error, empty hint, or the list. */
+		function skillsBodyOf(t, UI, vm) {
+			var skillData = vm.skillData;
+			if ((skillData === null || skillData === undefined) && vm.skillError !== null && vm.skillError !== undefined) {
+				return createElement("div", { key: "skills", className: "dce-error" }, t("readError") + vm.skillError);
+			}
+			if (skillData === null || skillData === undefined || !skillData.exists) {
+				return createElement("div", { key: "skills", className: "dce-hint" }, t("skillsEmpty"));
+			}
+			return skillFilesBlock(t, UI, vm);
+		}
+
+		/** The memory body: error states or the file list. */
+		function memoryBodyOf(t, UI, vm) {
+			if (vm.snapshot === null || vm.snapshot === undefined || !vm.snapshot.exists) {
+				return createElement("div", { className: "dce-empty" }, t("absent"));
+			}
+			if (vm.snapshot.readError !== null && vm.snapshot.readError !== undefined) {
+				return [
+					createElement("div", { key: "root", className: "dce-stats" }, vm.root),
+					createElement("div", { key: "err", className: "dce-error" }, t("readFailed") + vm.snapshot.readError),
+				];
+			}
+			return memoryFilesBlock(t, UI, vm);
 		}
 
 		/** One workspace's memory store: stats, drift warnings, searchable file list with previews. */
@@ -799,16 +973,6 @@ window.__ModuleLoader__.load({
 			var onSelect = props.onSelect;
 			var t = props.t;
 			var UI = props.UI;
-			var now = props.now;
-			var expandedFile = props.expandedFile;
-			var preview = props.preview;
-			var onToggleFile = props.onToggleFile;
-			var onRefresh = props.onRefresh;
-			var query = props.query;
-			var onQueryChange = props.onQueryChange;
-			var expandedSkill = props.expandedSkill;
-			var skillPreview = props.skillPreview;
-			var onToggleSkill = props.onToggleSkill;
 			var scope = createElement(WorkspaceScopeMenu, {
 				key: "scope",
 				workspaces: entry.workspaces.map(function (workspace) {
@@ -831,163 +995,28 @@ window.__ModuleLoader__.load({
 					createElement("div", { key: "root", className: "dce-stats" }, active.root),
 					createElement("div", { key: "err", className: "dce-error" }, t("readError") + active.error),
 				];
-			} else if (active.snapshot === null || active.snapshot === undefined || !active.snapshot.exists) {
-				body = createElement("div", { className: "dce-empty" }, t("absent"));
-			} else if (active.snapshot.readError !== null && active.snapshot.readError !== undefined) {
-				body = [
-					createElement("div", { key: "root", className: "dce-stats" }, active.root),
-					createElement("div", { key: "err", className: "dce-error" }, t("readFailed") + active.snapshot.readError),
-				];
 			} else {
-				var snapshot = active.snapshot;
-				var normalizedQuery = String(query).trim().toLocaleLowerCase();
-				var files = snapshot.files.filter(function (file) {
-					if (normalizedQuery.length === 0) {
-						return true;
-					}
-					return [file.id, file.title, file.description, file.type]
-						.filter(function (value) {
-							return typeof value === "string";
-						})
-						.some(function (value) {
-							return value.toLocaleLowerCase().includes(normalizedQuery);
-						});
+				body = memoryBodyOf(t, UI, {
+					root: active.root,
+					snapshot: active.snapshot,
+					query: props.query,
+					onQueryChange: props.onQueryChange,
+					now: props.now,
+					expandedFile: props.expandedFile,
+					preview: props.preview,
+					onToggleFile: props.onToggleFile,
+					onRefresh: props.onRefresh,
 				});
-				var parts = [
-					createElement(
-						"div",
-						{ key: "stats", className: "dce-stats" },
-						t("stats", { files: snapshot.fileCount }),
-					),
-				];
-				if (snapshot.quarantined.length > 0) {
-					parts.push(
-						createElement("div", { key: "quarantined", className: "dce-warn" }, t("quarantined") + snapshot.quarantined.map(function (entry) { return entry.id; }).join("、")),
-					);
-				}
-				parts.push(
-					createElement("input", {
-						key: "search",
-						type: "search",
-						className: "dce-search",
-						value: query,
-						placeholder: t("searchPlaceholder"),
-						"aria-label": t("searchPlaceholder"),
-						onChange: function (event) {
-							onQueryChange(event.currentTarget.value);
-						},
-					}),
-				);
-				parts.push(
-					createElement(
-						"div",
-						{ key: "head", className: "dce-files-head" },
-						createElement("span", { className: "dce-files-title" }, t("filesHeading")),
-						createElement("span", { className: "dce-files-count" }, String(files.length)),
-						createElement("span", { className: "dce-spacer" }),
-						createElement(RefreshButton, {
-							UI: UI,
-							t: t,
-							onClick: onRefresh,
-						}),
-					),
-				);
-				if (files.length === 0) {
-					parts.push(createElement("div", { key: "none", className: "dce-empty" }, t("searchEmpty")));
-				} else {
-					parts.push(
-						createElement(
-							"ul",
-							{ key: "files", className: "dce-list" },
-							files.map(function (file) {
-								return createElement(FileRow, {
-									key: file.id,
-									file: file,
-									now: now,
-									t: t,
-									UI: UI,
-									expanded: expandedFile === file.id,
-									preview: preview,
-									onToggle: function () {
-										onToggleFile(file.id);
-									},
-								});
-							}),
-						),
-					);
-				}
-				body = parts;
 			}
-			var skillsBody = (function () {
-				var skillData = active.skillSnapshot;
-				if ((skillData === null || skillData === undefined) && active.skillError !== null && active.skillError !== undefined) {
-					return createElement("div", { key: "skills", className: "dce-error" }, t("readError") + active.skillError);
-				}
-				if (skillData === null || skillData === undefined || !skillData.exists) {
-					return createElement("div", { key: "skills", className: "dce-hint" }, t("skillsEmpty"));
-				}
-				var rows = Array.isArray(skillData.files) ? skillData.files : [];
-				var skillQuery = String(query).trim().toLocaleLowerCase();
-				var skillFiles = rows.filter(function (file) {
-					if (skillQuery.length === 0) {
-						return true;
-					}
-					return [file.id, file.title, file.description, file.scope]
-						.filter(function (value) {
-							return typeof value === "string";
-						})
-						.some(function (value) {
-							return value.toLocaleLowerCase().includes(skillQuery);
-						});
-				});
-				var skillParts = [
-					createElement(
-						"div",
-						{ key: "stats", className: "dce-stats" },
-						t("skillStats", { files: skillData.fileCount }),
-					),
-				];
-				if (Array.isArray(skillData.quarantined) && skillData.quarantined.length > 0) {
-					skillParts.push(
-						createElement("div", { key: "quarantined", className: "dce-warn" }, t("quarantined") + skillData.quarantined.map(function (entry) { return entry.id; }).join("、")),
-					);
-				}
-				skillParts.push(
-					createElement(
-						"div",
-						{ key: "head", className: "dce-files-head" },
-						createElement("span", { className: "dce-files-title" }, t("skillsHeading")),
-						createElement("span", { className: "dce-files-count" }, String(skillFiles.length)),
-					),
-				);
-				if (skillFiles.length === 0) {
-					skillParts.push(createElement("div", { key: "none", className: "dce-empty" }, t("skillsEmpty")));
-				} else {
-					skillParts.push(
-						createElement(
-							"ul",
-							{ key: "files", className: "dce-list" },
-							skillFiles.map(function (file) {
-								return createElement(FileRow, {
-									key: file.id,
-									file: file,
-									now: now,
-									t: t,
-									UI: UI,
-									badge: file.scope === "global" ? t("skillScopeGlobal") : "",
-									deletedKey: "skillPreviewDeleted",
-									expanded: expandedSkill === file.id,
-									preview: skillPreview,
-									onToggle: function () {
-										onToggleSkill(file.id);
-									},
-								});
-							}),
-						),
-					);
-				}
-				return createElement("div", { key: "skills", className: "dce-workspace" }, skillParts);
-			})();
+			var skillsBody = skillsBodyOf(t, UI, {
+				skillData: active.skillSnapshot,
+				skillError: active.skillError,
+				query: props.query,
+				now: props.now,
+				expandedSkill: props.expandedSkill,
+				skillPreview: props.skillPreview,
+				onToggleSkill: props.onToggleSkill,
+			});
 			return createElement("div", { key: "block", className: "dce-workspace" }, scope, body, skillsBody);
 		}
 
@@ -1356,6 +1385,196 @@ window.__ModuleLoader__.load({
 		 * SettingsCard shape) whose open body is the ZCode-memory-viewer-shaped
 		 * read-only projection.
 		 */
+		/** The memory card header: title + desc + rotating chevron. */
+		function memoryCardHeader(t, open, onToggle) {
+			return createElement(
+				"button",
+				{
+					type: "button",
+					className: "dce-head",
+					"aria-expanded": open ? "true" : "false",
+					onClick: onToggle,
+				},
+				createElement(
+					"div",
+					{ className: "dce-head-text" },
+					createElement("div", { className: "dce-name" }, t("title")),
+					createElement("div", { className: "dce-desc" }, t("desc")),
+				),
+				createElement(
+					"span",
+					{ className: "dce-chevron", "data-open": open ? "true" : "false" },
+					createElement(Chevron, null),
+				),
+			);
+		}
+
+		/** Reload the card model when the reload token changes. No slots beyond the effect. */
+		function useCardModelLoad(reloadToken, setModel) {
+			useEffect(
+				function () {
+					var alive = true;
+					loadCardModel(fetch).then(
+						function (data) {
+							if (alive) setModel({ status: "ready", model: data, message: "" });
+						},
+						function (error) {
+							if (alive) {
+								setModel({ status: "error", model: null, message: error instanceof Error ? error.message : String(error) });
+							}
+						},
+					);
+					return function () {
+						alive = false;
+					};
+				},
+				[reloadToken],
+			);
+		}
+
+		/** Refresh button factory: back to loading, clear selection, bump the reload token. */
+		function makeCardRefresh(store) {
+			return function () {
+				store.setModel({ status: "loading", model: null, message: "" });
+				store.setSelection(function (current) {
+					return { root: current.root, query: "", expandedFile: null, expandedSkill: null };
+				});
+				store.setPreview({ file: null, status: "loading", content: "", message: "" });
+				store.setSkillPreview({ file: null, status: "loading", content: "", message: "" });
+				store.reload(function (n) {
+					return n + 1;
+				});
+			};
+		}
+
+		/**
+		 * The workspace the card opens on: the picked one when listed, else
+		 * the server's default hint, else the first row (pre-hint behaviour).
+		 */
+		function resolveSelectedWorkspace(model, root) {
+			var listed = function (candidate) {
+				return model.workspaces.some(function (workspace) {
+					return workspace.root === candidate;
+				});
+			};
+			if (root !== null && listed(root)) {
+				return root;
+			}
+			if (typeof model.defaultRoot === "string" && listed(model.defaultRoot)) {
+				return model.defaultRoot;
+			}
+			return model.workspaces[0].root;
+		}
+
+		/** Skill preview toggle factory: collapse, or expand and fetch the body. */
+		function makeSkillPreviewToggle(vm) {
+			return function (file) {
+				if (vm.selection.expandedSkill === file) {
+					vm.setSelection(function (current) {
+						return { root: current.root, query: current.query, expandedFile: current.expandedFile, expandedSkill: null };
+					});
+					return;
+				}
+				vm.setSelection(function (current) {
+					return { root: current.root, query: current.query, expandedFile: current.expandedFile, expandedSkill: file };
+				});
+				vm.setSkillPreview({ file: file, status: "loading", content: "", message: "" });
+				loadSkillContent(fetch, vm.selected, file).then(function (result) {
+					vm.setSkillPreview(function (current) {
+						if (current.file !== file) {
+							return current;
+						}
+						return { file: file, status: result.status, content: result.content, message: result.message };
+					});
+				});
+			};
+		}
+
+		/** Memory preview toggle factory: same shape as skills. */
+		function makeFilePreviewToggle(vm) {
+			return function (file) {
+				if (vm.selection.expandedFile === file) {
+					vm.setSelection(function (current) {
+						return { root: current.root, query: current.query, expandedFile: null, expandedSkill: current.expandedSkill };
+					});
+					return;
+				}
+				vm.setSelection(function (current) {
+					return { root: current.root, query: current.query, expandedFile: file, expandedSkill: current.expandedSkill };
+				});
+				vm.setPreview({ file: file, status: "loading", content: "", message: "" });
+				loadFileContent(fetch, vm.selected, file).then(function (result) {
+					vm.setPreview(function (current) {
+						if (current.file !== file) {
+							return current;
+						}
+						return { file: file, status: result.status, content: result.content, message: result.message };
+					});
+				});
+			};
+		}
+
+		/** The open ready body: resolve the workspace and wire the block to the card's states. */
+		function memoryCardReadyBody(t, UI, vm) {
+			var selected = resolveSelectedWorkspace(vm.model, vm.selection.root);
+			var toggles = {
+				selection: vm.selection,
+				setSelection: vm.setSelection,
+				setPreview: vm.setPreview,
+				setSkillPreview: vm.setSkillPreview,
+				selected: selected,
+			};
+			return memoryCardBlock(t, UI, {
+				model: vm.model,
+				selected: selected,
+				selection: vm.selection,
+				setSelection: vm.setSelection,
+				setPreview: vm.setPreview,
+				setSkillPreview: vm.setSkillPreview,
+				now: vm.now,
+				preview: vm.preview,
+				skillPreview: vm.skillPreview,
+				refresh: vm.refresh,
+				onToggleSkill: makeSkillPreviewToggle(toggles),
+				onToggleFile: makeFilePreviewToggle(toggles),
+			});
+		}
+
+		/** The open memory body: hint plus the workspace block wired to the card's states. */
+		function memoryCardBlock(t, UI, vm) {
+			return createElement(WorkspaceBlock, {
+				key: "inner",
+				entry: vm.model,
+				selected: vm.selected,
+				onSelect: function (root) {
+					vm.setSelection({ root: root, query: "", expandedFile: null, expandedSkill: null });
+					vm.setPreview({ file: null, status: "loading", content: "", message: "" });
+					vm.setSkillPreview({ file: null, status: "loading", content: "", message: "" });
+				},
+				onRefresh: vm.refresh,
+				t: t,
+				UI: UI,
+				now: vm.now,
+				expandedFile: vm.selection.expandedFile,
+				preview: vm.preview,
+				expandedSkill: vm.selection.expandedSkill,
+				skillPreview: vm.skillPreview,
+				onToggleSkill: vm.onToggleSkill,
+				onToggleFile: vm.onToggleFile,
+				query: vm.selection.query,
+				onQueryChange: function (value) {
+					vm.setSelection(function (current) {
+						return { root: current.root, query: value, expandedFile: current.expandedFile, expandedSkill: current.expandedSkill };
+					});
+				},
+			});
+		}
+
+		/**
+		 * The card: a collapsed-by-default framed disclosure (dshmarket
+		 * SettingsCard shape) whose open body is the ZCode-memory-viewer-shaped
+		 * read-only projection.
+		 */
 		function MemoryCard(props) {
 			var t = props.t;
 			var UI = props.UI;
@@ -1380,65 +1599,23 @@ window.__ModuleLoader__.load({
 			var nowState = useState(Date.now());
 			var now = nowState[0];
 			var setNow = nowState[1];
-			useEffect(
-				function () {
-					var alive = true;
-					loadCardModel(fetch).then(
-						function (data) {
-							if (alive) setModel({ status: "ready", model: data, message: "" });
-						},
-						function (error) {
-							if (alive) {
-								setModel({ status: "error", model: null, message: error instanceof Error ? error.message : String(error) });
-							}
-						},
-					);
-					return function () {
-						alive = false;
-					};
-				},
-				[reloadState[0]],
-			);
+			useCardModelLoad(reloadState[0], setModel);
 			useEffect(
 				function () {
 					if (open) setNow(Date.now());
 				},
 				[open],
 			);
-			var refresh = function () {
-				setModel({ status: "loading", model: null, message: "" });
-				setSelection(function (current) {
-					return { root: current.root, query: "", expandedFile: null, expandedSkill: null };
-				});
-				setPreview({ file: null, status: "loading", content: "", message: "" });
-				setSkillPreview({ file: null, status: "loading", content: "", message: "" });
-				reload(function (n) {
-					return n + 1;
-				});
-			};
-			var header = createElement(
-				"button",
-				{
-					type: "button",
-					className: "dce-head",
-					"aria-expanded": open ? "true" : "false",
-					onClick: function () {
-						setOpen(!open);
-					},
-				},
-				createElement(
-					"div",
-					{ className: "dce-head-text" },
-					createElement("div", { className: "dce-name" }, t("title")),
-					createElement("div", { className: "dce-desc" }, t("desc")),
-				),
-				createElement(
-					"span",
-					{ className: "dce-chevron", "data-open": open ? "true" : "false" },
-					createElement(Chevron, null),
-				),
-			);
-			var body = null;
+			var refresh = makeCardRefresh({
+				setModel: setModel,
+				setSelection: setSelection,
+				setPreview: setPreview,
+				setSkillPreview: setSkillPreview,
+				reload: reload,
+			});
+			var header = memoryCardHeader(t, open, function () {
+				setOpen(!open);
+			});
 			if (!open) {
 				return createElement("div", { className: "dce-card", "data-open": "false" }, header);
 			}
@@ -1450,96 +1627,28 @@ window.__ModuleLoader__.load({
 			} else if (model.model.workspaces.length === 0) {
 				inner = createElement("div", { key: "inner", className: "dce-empty" }, t("empty"));
 			} else {
-				var selected = selection.root;
-				var listed = function (root) {
-					return model.model.workspaces.some(function (workspace) {
-						return workspace.root === root;
-					});
-				};
-				if (selected === null || !listed(selected)) {
-					// The server names the workspace to open on (the host's current
-					// one); an unknown or absent name leaves the first row, which is
-					// the pre-hint behaviour.
-					selected = typeof model.model.defaultRoot === "string" && listed(model.model.defaultRoot)
-						? model.model.defaultRoot
-						: model.model.workspaces[0].root;
-				}
-				inner = createElement(WorkspaceBlock, {
-					key: "inner",
-					entry: model.model,
-					selected: selected,
-					onSelect: function (root) {
-						setSelection({ root: root, query: "", expandedFile: null, expandedSkill: null });
-						setPreview({ file: null, status: "loading", content: "", message: "" });
-						setSkillPreview({ file: null, status: "loading", content: "", message: "" });
-					},
-					onRefresh: refresh,
-					t: t,
-					UI: UI,
+				inner = memoryCardReadyBody(t, UI, {
+					model: model.model,
+					selection: selection,
+					setSelection: setSelection,
+					setPreview: setPreview,
+					setSkillPreview: setSkillPreview,
 					now: now,
-					expandedFile: selection.expandedFile,
 					preview: preview,
-					expandedSkill: selection.expandedSkill,
 					skillPreview: skillPreview,
-					onToggleSkill: function (file) {
-						if (selection.expandedSkill === file) {
-							setSelection(function (current) {
-								return { root: current.root, query: current.query, expandedFile: current.expandedFile, expandedSkill: null };
-							});
-							return;
-						}
-						setSelection(function (current) {
-							return { root: current.root, query: current.query, expandedFile: current.expandedFile, expandedSkill: file };
-						});
-						setSkillPreview({ file: file, status: "loading", content: "", message: "" });
-						loadSkillContent(fetch, selected, file).then(function (result) {
-							setSkillPreview(function (current) {
-								if (current.file !== file) {
-									return current;
-								}
-								return { file: file, status: result.status, content: result.content, message: result.message };
-							});
-						});
-					},
-					onToggleFile: function (file) {
-						if (selection.expandedFile === file) {
-							setSelection(function (current) {
-								return { root: current.root, query: current.query, expandedFile: null, expandedSkill: current.expandedSkill };
-							});
-							return;
-						}
-						setSelection(function (current) {
-							return { root: current.root, query: current.query, expandedFile: file, expandedSkill: current.expandedSkill };
-						});
-						setPreview({ file: file, status: "loading", content: "", message: "" });
-						loadFileContent(fetch, selected, file).then(function (result) {
-							setPreview(function (current) {
-								if (current.file !== file) {
-									return current;
-								}
-								return { file: file, status: result.status, content: result.content, message: result.message };
-							});
-						});
-					},
-					query: selection.query,
-					onQueryChange: function (value) {
-						setSelection(function (current) {
-							return { root: current.root, query: value, expandedFile: current.expandedFile, expandedSkill: current.expandedSkill };
-						});
-					},
+					refresh: refresh,
 				});
 			}
-			body = createElement(
-				"div",
-				{ key: "body", className: "dce-body" },
-				createElement("div", { className: "dce-hint" }, t("hint")),
-				inner,
-			);
 			return createElement(
 				"div",
 				{ className: "dce-card", "data-open": "true" },
 				header,
-				body,
+				createElement(
+					"div",
+					{ key: "body", className: "dce-body" },
+					createElement("div", { className: "dce-hint" }, t("hint")),
+					inner,
+				),
 			);
 		}
 
@@ -1553,6 +1662,9 @@ window.__ModuleLoader__.load({
 		exports.settingsFormOf = settingsFormOf;
 		exports.isSettingsDirty = isSettingsDirty;
 		exports.validateSettingsForm = validateSettingsForm;
+		exports.resolveScopeCurrent = resolveScopeCurrent;
+		exports.resolveSelectedWorkspace = resolveSelectedWorkspace;
+		exports.matchQueryFields = matchQueryFields;
 		exports.apply = function apply(ctx) {
 			var tRaw = null;
 			try {

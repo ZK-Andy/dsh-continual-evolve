@@ -4,8 +4,8 @@
 
 ## 1. 组装根唯一性
 
-- `index.ts` 是唯一组装根：唯一读 Config、唯一调用 host 注册 API、唯一声明 `inject`。
-- 宿主 API 形状在 `index.ts` 本地声明（不 import DSH 类型包）；section 渲染与提示词文案在 `surfaces/`；存储装配在 `store.ts`（类型在 `store-types.ts`）；统一读写工具在 `surfaces/evolve-tools.ts`；提取轨在 `extraction.ts`。
+- `index.ts` 是唯一组装根：唯一读 Config、唯一声明 `inject`、唯一声明宿主 API 形状（不 import DSH 类型包）；section 渲染与提示词文案在 `surfaces/`；存储装配在 `store.ts`（类型在 `store-types.ts`）；统一读写工具在 `surfaces/evolve-tools.ts`；提取轨在 `extraction.ts`。
+- 委托条款：组装根可将挂载执行委托给 `surfaces/` 内聚挂载模块（如卡片挂载），但 Config 解包（volatile `.get()`）必须留在根内完成，挂载模块只收普通函数、复用根声明的宿主形状，不得自建第二份。400 行预算与本条打架时优先拆分，不豁免回根。
 - 一个 system-prompt section 一个注册点；section 名与 order 集中管理。
 
 ## 2. 模块规模预算
@@ -29,3 +29,9 @@
 1. 注入永不破坏会话组装：查库/bootstrap 的任何失败都降级为空渲染，不抛进宿主；`node:sqlite` 不可用时插件整体降级为无操作 + 告警。
 2. prompt section 会话内字节稳定（prompt cache 契约）。
 3. **存储单写者**：插件代码是记忆库的字面唯一写者——模型意图（显式与自动）一律经结构化提案过机械门禁（约束/枚举/secret/去重）后由代码事务内落盘；任何"模型直写存储"的路径都违宪。后台提取（定时器/监听器/LLM 调用）是唯一获准的常驻自动化，其护栏：轮级触发 + 去抖合并、机械跳过记账、全程 `extraction_log` 可对账（ADR `2026-10-06-sqlite-single-store`）。
+
+## 5. 客户端（client/）
+
+- `client/` 是唯一的宿主侧渲染层，职责只有两条：请求时投影（记忆/技能/提示词）与全局设置表面。只经同源 fetch 调本插件路由，不直连 store，不引用宿主未声明服务；文案走 `locale.register` + `bind`，样式走 `var(--dsw-alias-*)` token + `dce-` 前缀、单文件一次注入，primitives 缺席时原生兜底。
+- 保持单 bundle（host loader 只认一个 bundle id，禁打包器、禁构建拼接）；函数硬预算 80 行——上帝方法不允许，偿还手法是无 hook 纯函数抽取（hook 调用点原位不动）；文件行数因单 bundle 豁免，不设上限。
+- 门禁脚本对 `client/*.js` 只卡函数硬预算（`src/` 的软警告与出度规则不适用：无 import、无出度）。

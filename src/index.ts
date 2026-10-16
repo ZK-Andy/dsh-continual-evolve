@@ -280,6 +280,17 @@ function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config:
 }
 
 
+/** Build the card's settings reader: the volatile unpacking is the assembly root's job (ADR 2026-10-13). */
+function readReviewSettingsOf(config: EvolveConfig): () => ReviewSettingsSnapshot {
+	return () => ({
+		enabled: config.review?.enabled?.get() ?? true,
+		dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
+		dailyBudget: config.review?.dailyBudget?.get() ?? REVIEW_DEFAULT_DAILY_BUDGET,
+		batchSize: config.review?.batchSize?.get() ?? REVIEW_DEFAULT_BATCH_SIZE,
+		staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
+	});
+}
+
 export function apply(host: HostContext, config: EvolveConfig): void {
 	if (config.memoryIndex?.enabled === false) {
 		return;
@@ -305,16 +316,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			mountReviewWhenAvailable(host, store, config, log);
 			mountSettingsPresentation(host, log);
 			if (config.memoryCard?.enabled !== false) {
-				// The volatile unpacking stays the assembly root's job (ADR
-				// 2026-10-13): the card mount only receives a plain reader.
-				const readReviewSettings = (): ReviewSettingsSnapshot => ({
-					enabled: config.review?.enabled?.get() ?? true,
-					dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
-					dailyBudget: config.review?.dailyBudget?.get() ?? REVIEW_DEFAULT_DAILY_BUDGET,
-					batchSize: config.review?.batchSize?.get() ?? REVIEW_DEFAULT_BATCH_SIZE,
-					staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
-				});
-				mountCardWhenAvailable(host, store, readReviewSettings, log);
+				mountCardWhenAvailable(host, store, readReviewSettingsOf(config), log);
 			}
 			log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 		},
