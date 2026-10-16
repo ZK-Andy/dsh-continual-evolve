@@ -15,8 +15,9 @@
  * - the extraction scheduler (`extraction.ts`): turn-level, per-session
  *   slots, single-flight per session; proposals land only through the
  *   store's gates;
- * - the read-only card routes (`card-routes.ts`) in the official plugin
- *   manager.
+ * - the memory + settings cards (`card-routes.ts` + `review-settings.ts` +
+ *   `card-mount.ts`): the memory projection plus the global review-settings
+ *   surface in the official plugin manager.
  *
  * The store opens asynchronously (dynamic `node:sqlite` import); until it is
  * ready — or forever, if the runtime lacks `node:sqlite` — the section
@@ -28,7 +29,7 @@
  * production across every prior release.
  */
 import z from "@deepseek-ai/schemastery";
-import { mountCardRoutes, type CardWebServer } from "./surfaces/card-routes.js";
+import { mountCardWhenAvailable, mountSettingsPresentation } from "./surfaces/card-mount.js";
 import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./extraction.js";
 import { resolveCallRoute, type RouteResolver } from "./llm-call.js";
 import {
@@ -53,7 +54,6 @@ import { importWorkspaceMd } from "./import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
 import { createPluginLog, type PluginLog } from "./plugin-log.js";
 import { pruneIfDue } from "./retention.js";
-import { newestRegistryPath } from "./workspace-hint.js";
 
 export const name = "continual-evolve";
 
@@ -278,39 +278,6 @@ function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config:
 	});
 }
 
-/**
- * Mount the card routes on the host web server through a nested inject, so
- * the plugin stays mountable on hosts without that service. Called once the
- * store is ready — the routes are projections of the store, not of files.
- *
- * The card's opening workspace comes from the host registry, read through
- * `ctx.get` on every request (the FAQ #2 sibling-service rule — the service is
- * optional, so it must not join the inject list, which would gate the mount).
- */
-function mountCardWhenAvailable(host: HostContext, store: MemoryStore, log: PluginLog): void {
-	const nested = host as HostContext & Partial<NestedInjectHost>;
-	if (typeof nested.inject !== "function") {
-		log.warn(
-			"card-not-mounted",
-			"host context exposes no inject — memory card routes not mounted (memory section unaffected)",
-		);
-		return;
-	}
-	nested.inject(["webServer"], (scoped: unknown) => {
-		const context = scoped as { webServer?: CardWebServer; get?: (name: string) => unknown };
-		const webServer = context.webServer;
-		if (webServer === undefined) {
-			log.warn(
-				"card-empty-server",
-				"webServer service present but empty — memory card routes not mounted (memory section unaffected)",
-			);
-			return;
-		}
-		mountCardRoutes(webServer, store, {
-			currentWorkspace: () => newestRegistryPath(context.get?.("workspaceRegistry")),
-		});
-	});
-}
 
 export function apply(host: HostContext, config: EvolveConfig): void {
 	if (config.memoryIndex?.enabled === false) {
@@ -335,8 +302,9 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			mountCreatorSkillsWhenAvailable(host, log);
 			mountExtractionWhenAvailable(host, store, config, log);
 			mountReviewWhenAvailable(host, store, config, log);
+			mountSettingsPresentation(host, log);
 			if (config.memoryCard?.enabled !== false) {
-				mountCardWhenAvailable(host, store, log);
+				mountCardWhenAvailable(host, store, config, log);
 			}
 			log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 		},

@@ -12,10 +12,11 @@
  * The card registers one slot, `plugins.bundle.config` — the seat the 0.1.7+
  * plugin manager declares for a bundle's own page. Slot detection is the
  * compatibility contract: a host that never declares the slot never runs the
- * registration, so the card is silently absent while the memory section is
+ * registration, so the cards are silently absent while the memory section is
  * unaffected. The render function answers the host's `view === "summary"`
  * call with null (the bundle list row shows the package description; the
- * card is the page).
+ * page holds two stacked cards: the global review-settings card above the
+ * memory card).
  *
  * Card form (v0.14): the dshmarket SettingsCard shape, one for one — a
  * collapsed-by-default framed card whose header is the toggle button
@@ -38,9 +39,11 @@
  * superset of ZCode's viewer.
  * Locale/theme/primitives wiring unchanged from v0.13: `ctx.locale.register`
  * + `bind`, `var(--dsw-alias-*)` tokens, primitives with plain-element
- * fallbacks so an old host never blanks the settings dialog. Read-only
- * projection, fetched at render time from this plugin's host routes
- * (same-origin). No editor, no write path, no cached state.
+ * fallbacks so an old host never blanks the settings dialog. The memory
+ * card is a read-only projection fetched at render time from this plugin's
+ * host routes (same-origin); the settings card above it reads/writes the
+ * global review settings through the same-origin settings endpoint (a 404
+ * hides it — the host mounted no settings route). No cached state.
  */
 window.__ModuleLoader__.load({
 	id: "dsh-continual-evolve",
@@ -117,6 +120,24 @@ window.__ModuleLoader__.load({
 			today: "今天 {time}",
 			yesterday: "昨天 {time}",
 			localeTag: "zh-CN",
+			settingsTitle: "评审设置",
+			settingsDesc: "内容质量自进化环的全局参数。",
+			settingsHint: "全局生效，不随工作区切换；修改 dryRun 等四项下一轮生效，enabled 需重启。",
+			settingsLoading: "正在读取设置…",
+			settingsLoadFailed: "设置读取失败：",
+			settingsEnabled: "启用评审环",
+			settingsEnabledHint: "关闭后不再触发评审，需重启生效。",
+			settingsDryRun: "试运行（只记账不落盘）",
+			settingsDryRunHint: "打开时 verdict 只记账、不改库不隔离。",
+			settingsDailyBudget: "每日上限",
+			settingsBatchSize: "每批数量",
+			settingsStaleDays: "回炉天数",
+			settingsNumbersHint: "数字须为非负整数，每批数量至少为 1。",
+			settingsSave: "保存",
+			settingsReset: "重置",
+			settingsSaving: "正在保存…",
+			settingsSaved: "已保存。",
+			settingsSaveFailed: "保存失败：",
 		};
 		var en = {
 			title: "Workspace Memory",
@@ -150,6 +171,24 @@ window.__ModuleLoader__.load({
 			today: "Today {time}",
 			yesterday: "Yesterday {time}",
 			localeTag: "en-US",
+			settingsTitle: "Review settings",
+			settingsDesc: "Global parameters of the content-quality loop.",
+			settingsHint: "Global — independent of the workspace selector; dryRun and the three numbers apply on the next drain, enabled needs a restart.",
+			settingsLoading: "Loading settings…",
+			settingsLoadFailed: "Failed to load settings: ",
+			settingsEnabled: "Enable the review loop",
+			settingsEnabledHint: "Off stops all review drains; needs a restart.",
+			settingsDryRun: "Dry run (ledger only)",
+			settingsDryRunHint: "On: verdicts are ledgered, nothing lands or quarantines.",
+			settingsDailyBudget: "Daily budget",
+			settingsBatchSize: "Batch size",
+			settingsStaleDays: "Stale days",
+			settingsNumbersHint: "Numbers must be non-negative integers; batch size at least 1.",
+			settingsSave: "Save",
+			settingsReset: "Reset",
+			settingsSaving: "Saving…",
+			settingsSaved: "Saved.",
+			settingsSaveFailed: "Failed to save: ",
 		};
 
 		function format(template, params) {
@@ -329,6 +368,70 @@ window.__ModuleLoader__.load({
 				};
 			}
 		}
+		/**
+		 * Fetch the global review settings. A 404 means the host mounted the
+		 * memory card without the settings route (no settings/configEditor
+		 * service) — the caller hides the settings card instead of erroring.
+		 *
+		 * @param {typeof fetch} fetchImpl - injectable for tests.
+		 * @returns {Promise<{status: "ready"|"unavailable"|"failed", settings: object|null, message: string}>}
+		 */
+		async function loadReviewSettings(fetchImpl) {
+			try {
+				var response = await fetchImpl(API_ROOT + "/review-settings");
+				if (response.status === 404) {
+					return { status: "unavailable", settings: null, message: "" };
+				}
+				if (!response.ok) {
+					return { status: "failed", settings: null, message: "HTTP " + response.status };
+				}
+				var body = await response.json();
+				return { status: "ready", settings: body, message: "" };
+			} catch (error) {
+				return {
+					status: "failed",
+					settings: null,
+					message: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}
+
+		/**
+		 * Persist a partial review-settings patch.
+		 *
+		 * @param {typeof fetch} fetchImpl - injectable for tests.
+		 * @param {object} patch - validated partial patch.
+		 * @returns {Promise<{status: "ready"|"failed", settings: object|null, message: string}>}
+		 */
+		async function saveReviewSettings(fetchImpl, patch) {
+			try {
+				var response = await fetchImpl(API_ROOT + "/review-settings", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(patch),
+				});
+				if (!response.ok) {
+					var hint = "HTTP " + response.status;
+					try {
+						var failed = await response.json();
+						if (failed !== null && typeof failed === "object" && typeof failed.error === "string" && failed.error.length > 0) {
+							hint = failed.error;
+						}
+					} catch (error) {
+						void error;
+					}
+					return { status: "failed", settings: null, message: hint };
+				}
+				return { status: "ready", settings: await response.json(), message: "" };
+			} catch (error) {
+				return {
+					status: "failed",
+					settings: null,
+					message: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}
+
 		/** Display label for a workspace: its directory name (ZCode shows a project name, not a path). */
 		function workspaceLabel(root) {
 			var normalized = String(root).replace(/[\\/]+$/, "");
@@ -398,6 +501,17 @@ window.__ModuleLoader__.load({
 				".dce-warn{color:var(--dsw-alias-state-warn-primary,#b45309);font-size:12px;line-height:18px}",
 				".dce-error{color:var(--dsw-alias-state-error-primary,#dc2626);font-size:12px;line-height:18px}",
 				".dce-fallback-btn{background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-primary,#1f2328);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:6px;padding:3px 10px;font-size:12px;line-height:18px;cursor:pointer}",
+				".dce-page{display:flex;flex-direction:column;gap:12px}",
+				".dce-setting{display:flex;align-items:center;gap:10px;min-height:28px}",
+				".dce-setting-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
+				".dce-setting-name{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500;line-height:18px}",
+				".dce-setting-desc{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}",
+				".dce-check{width:16px;height:16px;flex:none;accent-color:var(--dsw-alias-brand-primary,#4f6ef7)}",
+				".dce-number{width:96px;flex:none;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l4,#d8dee4);border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-1,#fff);height:30px;color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;padding:0 8px;outline:none;text-align:right}",
+				".dce-number:focus-visible{border-color:var(--dsw-alias-brand-primary,#4f6ef7)}",
+				".dce-actions{display:flex;align-items:center;gap:8px}",
+				".dce-status{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}",
+				".dce-ok{color:var(--dsw-alias-state-success-primary,#15803d);font-size:12px;line-height:18px}",
 			].join("\n");
 			document.head.appendChild(style);
 		}
@@ -878,6 +992,275 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * The settings card: a collapsed-by-default framed disclosure in the
+		 * same chrome as the memory card, but global — it never follows the
+		 * workspace selector. A 404 from the settings endpoint means the host
+		 * mounted the memory card without the settings route, and the card
+		 * hides itself instead of erroring.
+		 */
+		function SettingsCard(props) {
+			var t = props.t;
+			injectCardStyle();
+			var openState = useState(false);
+			var open = openState[0];
+			var setOpen = openState[1];
+			var modelState = useState({ status: "idle", settings: null, message: "" });
+			var model = modelState[0];
+			var setModel = modelState[1];
+			var formState = useState(null);
+			var form = formState[0];
+			var setForm = formState[1];
+			var busyState = useState(false);
+			var busy = busyState[0];
+			var setBusy = busyState[1];
+			var noticeState = useState({ kind: "", message: "" });
+			var notice = noticeState[0];
+			var setNotice = noticeState[1];
+			useEffect(
+				function () {
+					if (!open || model.status !== "idle") {
+						return;
+					}
+					setModel({ status: "loading", settings: null, message: "" });
+					loadReviewSettings(fetch).then(function (result) {
+						if (result.status === "ready") {
+							setModel({ status: "ready", settings: result.settings, message: "" });
+							setForm({
+								enabled: result.settings.enabled !== false,
+								dryRun: result.settings.dryRun !== false,
+								dailyBudget: String(result.settings.dailyBudget),
+								batchSize: String(result.settings.batchSize),
+								staleDays: String(result.settings.staleDays),
+							});
+						} else if (result.status === "unavailable") {
+							setModel({ status: "unavailable", settings: null, message: "" });
+						} else {
+							setModel({ status: "error", settings: null, message: result.message });
+						}
+					});
+				},
+				[open],
+			);
+			if (model.status === "unavailable") {
+				return null;
+			}
+			var header = createElement(
+				"button",
+				{
+					type: "button",
+					className: "dce-head",
+					"aria-expanded": open ? "true" : "false",
+					onClick: function () {
+						setOpen(!open);
+					},
+				},
+				createElement(
+					"div",
+					{ className: "dce-head-text" },
+					createElement("div", { className: "dce-name" }, t("settingsTitle")),
+					createElement("div", { className: "dce-desc" }, t("settingsDesc")),
+				),
+				createElement(
+					"span",
+					{ className: "dce-chevron", "data-open": open ? "true" : "false" },
+					createElement(Chevron, null),
+				),
+			);
+			if (!open) {
+				return createElement("div", { className: "dce-card", "data-open": "false" }, header);
+			}
+			var inner = null;
+			if (model.status === "idle" || model.status === "loading") {
+				inner = createElement("div", { key: "inner", className: "dce-hint" }, t("settingsLoading"));
+			} else if (model.status === "error") {
+				inner = createElement("div", { key: "inner", className: "dce-error" }, t("settingsLoadFailed") + model.message);
+			} else if (form !== null) {
+				var saved = model.settings;
+				var dirty =
+					form.enabled !== (saved.enabled !== false) ||
+					form.dryRun !== (saved.dryRun !== false) ||
+					form.dailyBudget !== String(saved.dailyBudget) ||
+					form.batchSize !== String(saved.batchSize) ||
+					form.staleDays !== String(saved.staleDays);
+				var setField = function (key, value) {
+					setForm(function (current) {
+						if (current === null) {
+							return current;
+						}
+						var next = {};
+						for (var field in current) {
+							if (Object.prototype.hasOwnProperty.call(current, field)) {
+								next[field] = current[field];
+							}
+						}
+						next[key] = value;
+						return next;
+					});
+					setNotice({ kind: "", message: "" });
+				};
+				var numberField = function (key, label) {
+					return createElement(
+						"label",
+						{ key: key, className: "dce-setting" },
+						createElement(
+							"span",
+							{ className: "dce-setting-text" },
+							createElement("span", { className: "dce-setting-name" }, label),
+						),
+						createElement("input", {
+							type: "number",
+							min: key === "batchSize" ? "1" : "0",
+							step: "1",
+							className: "dce-number",
+							value: form[key],
+							disabled: busy,
+							onChange: function (event) {
+								setField(key, event.target.value);
+							},
+						}),
+					);
+				};
+				var statusLine =
+					notice.kind === "error"
+						? createElement("div", { key: "status", className: "dce-error" }, t("settingsSaveFailed") + notice.message)
+						: notice.kind === "ok"
+							? createElement("div", { key: "status", className: "dce-ok" }, t("settingsSaved"))
+							: busy
+								? createElement("div", { key: "status", className: "dce-status" }, t("settingsSaving"))
+								: null;
+				inner = createElement(
+					"div",
+					{ key: "inner", className: "dce-workspace" },
+					createElement("div", { key: "hint", className: "dce-hint" }, t("settingsHint")),
+					createElement(
+						"label",
+						{ key: "enabled", className: "dce-setting" },
+						createElement(
+							"span",
+							{ className: "dce-setting-text" },
+							createElement("span", { className: "dce-setting-name" }, t("settingsEnabled")),
+							createElement("span", { className: "dce-setting-desc" }, t("settingsEnabledHint")),
+						),
+						createElement("input", {
+							type: "checkbox",
+							className: "dce-check",
+							checked: form.enabled,
+							disabled: busy,
+							onChange: function (event) {
+								setField("enabled", event.target.checked);
+							},
+						}),
+					),
+					createElement(
+						"label",
+						{ key: "dryRun", className: "dce-setting" },
+						createElement(
+							"span",
+							{ className: "dce-setting-text" },
+							createElement("span", { className: "dce-setting-name" }, t("settingsDryRun")),
+							createElement("span", { className: "dce-setting-desc" }, t("settingsDryRunHint")),
+						),
+						createElement("input", {
+							type: "checkbox",
+							className: "dce-check",
+							checked: form.dryRun,
+							disabled: busy,
+							onChange: function (event) {
+								setField("dryRun", event.target.checked);
+							},
+						}),
+					),
+					numberField("dailyBudget", t("settingsDailyBudget")),
+					numberField("batchSize", t("settingsBatchSize")),
+					numberField("staleDays", t("settingsStaleDays")),
+					createElement("div", { key: "numbersHint", className: "dce-hint" }, t("settingsNumbersHint")),
+					createElement(
+						"div",
+						{ key: "actions", className: "dce-actions" },
+						createElement(
+							"button",
+							{
+								type: "button",
+								className: "dce-fallback-btn",
+								disabled: busy || !dirty,
+								onClick: function () {
+									var patch = {
+										enabled: form.enabled,
+										dryRun: form.dryRun,
+										dailyBudget: Number(form.dailyBudget),
+										batchSize: Number(form.batchSize),
+										staleDays: Number(form.staleDays),
+									};
+									if (
+										!Number.isInteger(patch.dailyBudget) ||
+										patch.dailyBudget < 0 ||
+										!Number.isInteger(patch.batchSize) ||
+										patch.batchSize < 1 ||
+										!Number.isInteger(patch.staleDays) ||
+										patch.staleDays < 0
+									) {
+										setNotice({ kind: "error", message: t("settingsNumbersHint") });
+										return;
+									}
+									setBusy(true);
+									setNotice({ kind: "", message: "" });
+									saveReviewSettings(fetch, patch).then(function (result) {
+										setBusy(false);
+										if (result.status === "ready") {
+											setModel({ status: "ready", settings: result.settings, message: "" });
+											setForm({
+												enabled: result.settings.enabled !== false,
+												dryRun: result.settings.dryRun !== false,
+												dailyBudget: String(result.settings.dailyBudget),
+												batchSize: String(result.settings.batchSize),
+												staleDays: String(result.settings.staleDays),
+											});
+											setNotice({ kind: "ok", message: "" });
+										} else {
+											setNotice({ kind: "error", message: result.message });
+										}
+									});
+								},
+							},
+							busy ? t("settingsSaving") : t("settingsSave"),
+						),
+						createElement(
+							"button",
+							{
+								type: "button",
+								className: "dce-fallback-btn",
+								disabled: busy || !dirty,
+								onClick: function () {
+									setForm({
+										enabled: saved.enabled !== false,
+										dryRun: saved.dryRun !== false,
+										dailyBudget: String(saved.dailyBudget),
+										batchSize: String(saved.batchSize),
+										staleDays: String(saved.staleDays),
+									});
+									setNotice({ kind: "", message: "" });
+								},
+							},
+							t("settingsReset"),
+						),
+					),
+					statusLine,
+				);
+			}
+			var body = createElement(
+				"div",
+				{ key: "body", className: "dce-body" },
+				inner,
+			);
+			return createElement(
+				"div",
+				{ className: "dce-card", "data-open": "true" },
+				header,
+				body,
+			);
+		}
+
+		/**
 		 * The card: a collapsed-by-default framed disclosure (dshmarket
 		 * SettingsCard shape) whose open body is the ZCode-memory-viewer-shaped
 		 * read-only projection.
@@ -1074,6 +1457,8 @@ window.__ModuleLoader__.load({
 		exports.loadCardModel = loadCardModel;
 		exports.loadFileContent = loadFileContent;
 		exports.loadSkillContent = loadSkillContent;
+		exports.loadReviewSettings = loadReviewSettings;
+		exports.saveReviewSettings = saveReviewSettings;
 		exports.apply = function apply(ctx) {
 			var tRaw = null;
 			try {
@@ -1143,7 +1528,15 @@ window.__ModuleLoader__.load({
 						},
 					},
 					function (ownerProps) {
-						return ownerProps && ownerProps.view === "summary" ? null : createElement(MemoryCard, { t: t, UI: UI });
+						if (ownerProps && ownerProps.view === "summary") {
+							return null;
+						}
+						return createElement(
+							"div",
+							{ className: "dce-page" },
+							createElement(SettingsCard, { key: "settings", t: t }),
+							createElement(MemoryCard, { key: "memory", t: t, UI: UI }),
+						);
 					},
 				);
 			});

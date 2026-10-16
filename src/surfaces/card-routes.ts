@@ -1,18 +1,22 @@
 /**
- * The read-only HTTP surface the plugin management card fetches from.
+ * The HTTP surface the plugin management card fetches from.
  *
  * Mounted through the host's `webServer` service (same registration shape
- * dshmarket uses: `kind: "exact"` routes on the profile's web server), the
- * three endpoints are GET-only projections of the central SQLite store: the
- * workspace list (active partitions whose directory still exists) plus the
- * partition the card should open on, the memory snapshot for a known
- * workspace, and one record's body by id. The store itself is the security
- * fence — a `root` parameter only resolves when the database has rows for it,
- * so the API cannot probe the filesystem; the content endpoint takes an id,
- * never a path. Handlers are synchronous and never throw past the response.
+ * dshmarket uses: `kind: "exact"` routes on the profile's web server). The
+ * memory/skill/prompt endpoints are GET-only projections of the central
+ * SQLite store (see the fence below); the review-settings endpoint is the
+ * card's global settings surface (GET reads the live volatile snapshot,
+ * POST merges through the host `configEditor`, never the database).
+ * Handlers are synchronous except the settings POST body/save, and never
+ * throw past the response.
  */
 import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
 import { mountPromptRoutes } from "./prompt-routes.js";
+import {
+	CARD_API_REVIEW_SETTINGS_PATH,
+	reviewSettingsRoute,
+	type ReviewSettingsDeps,
+} from "./review-settings.js";
 import {
 	idParamOf,
 	isGet,
@@ -34,6 +38,7 @@ export const CARD_API_MEMORY_PATH = "/dsh-continual-evolve/api/v1/memory";
 export const CARD_API_MEMORY_FILE_PATH = "/dsh-continual-evolve/api/v1/memory/file";
 export const CARD_API_SKILLS_PATH = "/dsh-continual-evolve/api/v1/skills";
 export const CARD_API_SKILL_FILE_PATH = "/dsh-continual-evolve/api/v1/skills/file";
+export { CARD_API_REVIEW_SETTINGS_PATH };
 
 /**
  * Per-request hints the mount takes from the host. Both are optional: a host
@@ -46,6 +51,12 @@ export interface CardRouteOptions {
 	 * workspace attached while the card is open is picked up on refresh.
 	 */
 	currentWorkspace?: (() => string | undefined) | undefined;
+	/**
+	 * The global review-settings read/write pair. Optional: hosts without
+	 * the `settings`/`configEditor` services mount the memory card without
+	 * the settings route, and the client hides the settings card.
+	 */
+	reviewSettings?: ReviewSettingsDeps | undefined;
 }
 
 /** The card's read fence: a root only resolves when the store has rows for it. */
@@ -220,6 +231,9 @@ export function mountCardRoutes(
 		}),
 	);
 	disposers.push(mountPromptRoutes(webServer, store, isKnownRoot));
+	if (options.reviewSettings !== undefined) {
+		disposers.push(webServer.register(reviewSettingsRoute(options.reviewSettings)));
+	}
 	return () => {
 		for (const disposer of disposers) {
 			if (typeof disposer === "function") {

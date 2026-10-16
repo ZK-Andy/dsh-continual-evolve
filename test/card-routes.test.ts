@@ -13,6 +13,7 @@ import {
 	type CardRoute,
 	type CardWebServer,
 } from "../src/surfaces/card-routes.js";
+import { CARD_API_REVIEW_SETTINGS_PATH } from "../src/surfaces/review-settings.js";
 import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/surfaces/prompt-routes.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
@@ -94,6 +95,23 @@ describe("mountCardRoutes", () => {
 				CARD_API_PROMPT_FILE_PATH,
 			].sort(),
 		);
+		disposer();
+		expect(routes.size).toBe(0);
+	});
+
+	it("mounts the global review-settings route only when the deps are provided", async () => {
+		const { routes, webServer } = makeWebServer();
+		const disposer = mountCardRoutes(webServer, store, {
+			reviewSettings: {
+				read: () => ({ enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 }),
+				save: async () => {},
+			},
+		});
+		expect(routes.has(CARD_API_REVIEW_SETTINGS_PATH)).toBe(true);
+		expect(routes.size).toBe(8);
+		const recorded = call(routes.get(CARD_API_REVIEW_SETTINGS_PATH), { method: "GET", url: CARD_API_REVIEW_SETTINGS_PATH });
+		expect(recorded.status).toBe(200);
+		expect(jsonBody(recorded)).toEqual({ enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 });
 		disposer();
 		expect(routes.size).toBe(0);
 	});

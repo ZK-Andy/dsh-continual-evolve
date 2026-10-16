@@ -242,7 +242,7 @@ describe("apply card wiring", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 7) {
+			if (routes.size !== 8) {
 				throw new Error("routes not mounted yet");
 			}
 		});
@@ -251,6 +251,7 @@ describe("apply card wiring", () => {
 			"/dsh-continual-evolve/api/v1/memory/file",
 			"/dsh-continual-evolve/api/v1/prompts",
 			"/dsh-continual-evolve/api/v1/prompts/file",
+			"/dsh-continual-evolve/api/v1/review-settings",
 			"/dsh-continual-evolve/api/v1/skills",
 			"/dsh-continual-evolve/api/v1/skills/file",
 			"/dsh-continual-evolve/api/v1/workspaces",
@@ -259,6 +260,61 @@ describe("apply card wiring", () => {
 		const list = get(routes, "/dsh-continual-evolve/api/v1/workspaces");
 		expect(list.status).toBe(200);
 		expect(JSON.parse(list.body)).toEqual({ workspaces: [], defaultRoot: null });
+	});
+
+	it("reads review settings from the live config and saves through the host editor", async () => {
+		const entry = {};
+		let persisted: Record<string, unknown> | undefined;
+		const editor = {
+			edit: async (_entry: unknown, change: (current: Record<string, unknown>) => Record<string, unknown>) => {
+				persisted = change({ review: { dryRun: true } });
+			},
+		};
+		const { routes, host } = makeCtxWithWebServer();
+		Object.assign(host, { get: (name: string) => (name === "configEditor" ? editor : undefined), fiber: { entry } });
+		const live = { dryRun: true };
+		apply(host, {
+			...fullConfig,
+			review: {
+				enabled: { get: () => true },
+				dryRun: { get: () => live.dryRun },
+				dailyBudget: { get: () => 100 },
+				batchSize: { get: () => 10 },
+				staleDays: { get: () => 30 },
+			},
+		} as EvolveConfig);
+		await vi.waitFor(() => {
+			if (routes.size !== 8) {
+				throw new Error("routes not mounted yet");
+			}
+		});
+		const snapshot = get(routes, "/dsh-continual-evolve/api/v1/review-settings");
+		expect(snapshot.status).toBe(200);
+		expect(JSON.parse(snapshot.body)).toMatchObject({ enabled: true, dryRun: true, dailyBudget: 100 });
+		const route = routes.get("/dsh-continual-evolve/api/v1/review-settings") as {
+			handler: (request: unknown, response: { writeHead: (status: number) => unknown; end: (body?: string) => void }) => void;
+		};
+		let status = 0;
+		let body = "";
+		route.handler(
+			{ method: "POST", url: "/dsh-continual-evolve/api/v1/review-settings", body: { dryRun: false } },
+			{
+				writeHead: (code: number) => {
+					status = code;
+				},
+				end: (text?: string) => {
+					body = text ?? "";
+				},
+			},
+		);
+		await vi.waitFor(() => {
+			if (persisted === undefined) {
+				throw new Error("settings not persisted yet");
+			}
+		});
+		expect(status).toBe(200);
+		expect(persisted).toEqual({ review: { dryRun: false } });
+		expect(JSON.parse(body)).toMatchObject({ dryRun: true });
 	});
 
 	it("survives a workspace registry that throws when the card asks for a hint", async () => {
@@ -271,7 +327,7 @@ describe("apply card wiring", () => {
 		});
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 7) {
+			if (routes.size !== 8) {
 				throw new Error("routes not mounted yet");
 			}
 		});
@@ -292,7 +348,7 @@ describe("apply card wiring", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 7) {
+			if (routes.size !== 8) {
 				throw new Error("routes not mounted yet");
 			}
 		});

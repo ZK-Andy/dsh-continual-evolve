@@ -208,6 +208,8 @@ describe("client bundle", () => {
 		expect(exports.inject).toEqual(["slots", "locale", "theme"]);
 		expect(typeof exports.apply).toBe("function");
 		expect(typeof exports.loadCardModel).toBe("function");
+		expect(typeof exports.loadReviewSettings).toBe("function");
+		expect(typeof exports.saveReviewSettings).toBe("function");
 	});
 
 	it("disables itself with a warning when the host react module is missing", () => {
@@ -258,6 +260,8 @@ describe("client bundle", () => {
 		expect(registered[0].dicts.en.title).toBe("Workspace Memory");
 		expect(registered[0].dicts.zh.localeTag).toBe("zh-CN");
 		expect(registered[0].dicts.en.localeTag).toBe("en-US");
+		expect(registered[0].dicts.zh.settingsTitle).toBe("评审设置");
+		expect(registered[0].dicts.en.settingsTitle).toBe("Review settings");
 		expect(boundNs).toBe("dsh-continual-evolve");
 		expect(effects).toContain("dsh-continual-evolve: dictionaries");
 	});
@@ -268,7 +272,8 @@ describe("client bundle", () => {
 		(exports.apply as (ctx: unknown) => void)(ctx);
 		expect(registrations).toHaveLength(1);
 		// Loading state renders without throwing: fallback t + fallback button.
-		const element = registrations[0].render({}) as { props: { t: (key: string) => string } };
+		const page = registrations[0].render({}) as { children: Array<{ props: { t: (key: string) => string } }> };
+		const element = page.children[1];
 		expect(element.props.t("title")).toContain("工作区记忆");
 	});
 
@@ -290,10 +295,17 @@ describe("client bundle", () => {
 		const { ctx, registrations } = makeCtx();
 		(exports.apply as (ctx: unknown) => void)(ctx);
 		expect(registrations).toHaveLength(1);
-		const card = registrations[0].render({}) as { type: (props: never) => unknown; props: Record<string, unknown> };
-		// The card element targets the MemoryCard component with a UI handle.
-		expect(typeof card.type).toBe("function");
-		expect(card.props.UI).toMatchObject({ Button: FakeButton });
+		const page = registrations[0].render({}) as { type: string; props: Record<string, unknown>; children: unknown[] };
+		// One entry, two stacked cards: the global settings card above the memory card.
+		expect(page.type).toBe("div");
+		expect(page.props.className).toBe("dce-page");
+		expect(page.children).toHaveLength(2);
+		const [settingsCard, memoryCard] = page.children as Array<{ type: (props: never) => unknown; props: Record<string, unknown> }>;
+		expect(typeof settingsCard.type).toBe("function");
+		expect((settingsCard.type as { name?: string }).name).toBe("SettingsCard");
+		expect(typeof memoryCard.type).toBe("function");
+		expect((memoryCard.type as { name?: string }).name).toBe("MemoryCard");
+		expect(memoryCard.props.UI).toMatchObject({ Button: FakeButton });
 		expect(created).not.toHaveLength(0);
 	});
 
@@ -325,6 +337,13 @@ describe("client bundle", () => {
 		expect(code).toContain('role: "menu"');
 		expect(code).toContain('role: "menuitemradio"');
 		expect(code).not.toContain("dce-chip");
+		// The settings card shares the entry: same disclosure chrome, its own
+		// global endpoint, hidden on 404 instead of erroring.
+		expect(code).toContain("settingsTitle");
+		expect(code).toContain("/review-settings");
+		expect(code).toContain("unavailable");
+		expect(code).toContain('className: "dce-page"');
+		expect(code).toContain('className: "dce-setting"');
 		// The list is the host Menu primitive when available, and the old-host
 		// fallback closes on pointerdown outside its wrapper — never on a click
 		// listener, which the opening click itself would trigger.
@@ -368,7 +387,9 @@ describe("card refresh wiring", () => {
 		const { exports } = loadBundle(harness.react);
 		const { ctx, registrations } = makeCtx();
 		(exports.apply as (ctx: unknown) => void)(ctx);
-		const card = registrations[0].render({}) as ElementLike;
+		const page = registrations[0].render({}) as ElementLike;
+		// One entry, two stacked cards — drive the memory card below the global settings card.
+		const card = (page.children?.[1] ?? page) as ElementLike;
 		const render = (): ElementLike => {
 			harness.begin();
 			return (card.type as (props: unknown) => ElementLike)(card.props);
@@ -400,7 +421,9 @@ describe("workspace scope selector", () => {
 		const { exports } = loadBundle(harness.react, modules);
 		const { ctx, registrations } = makeCtx();
 		(exports.apply as (ctx: unknown) => void)(ctx);
-		const card = registrations[0].render({}) as ElementLike;
+		const page = registrations[0].render({}) as ElementLike;
+		// One entry, two stacked cards — drive the memory card below the global settings card.
+		const card = (page.children?.[1] ?? page) as ElementLike;
 		const render = (): ElementLike => {
 			harness.begin();
 			return (card.type as (props: unknown) => ElementLike)(card.props);
@@ -762,5 +785,52 @@ describe("loadSkillContent", () => {
 		expect(await load(fetchImpl, ROOT, ID)).toEqual({ status: "tooLarge", content: "", message: "" });
 		status = 500;
 		expect(await load(fetchImpl, ROOT, ID)).toEqual({ status: "failed", content: "", message: "HTTP 500" });
+	});
+});
+
+describe("review settings helpers", () => {
+	const SETTINGS = { enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 };
+
+	it("loads the global snapshot and hides the card on 404", async () => {
+		const { exports } = loadBundle(makeReact());
+		const load = exports.loadReviewSettings as (fetchImpl: typeof fetch) => Promise<unknown>;
+		const ok = (async (url: string | URL) => {
+			expect(String(url).endsWith("/review-settings")).toBe(true);
+			return jsonResponse(SETTINGS);
+		}) as unknown as typeof fetch;
+		expect(await load(ok)).toEqual({ status: "ready", settings: SETTINGS, message: "" });
+		const missing = (async () => jsonResponse({ error: "x" }, 404)) as unknown as typeof fetch;
+		expect(await load(missing)).toEqual({ status: "unavailable", settings: null, message: "" });
+		const down = (async () => {
+			throw new Error("socket down");
+		}) as unknown as typeof fetch;
+		expect(await load(down)).toEqual({ status: "failed", settings: null, message: "socket down" });
+	});
+
+	it("posts a patch as JSON and surfaces server errors", async () => {
+		const { exports } = loadBundle(makeReact());
+		const save = exports.saveReviewSettings as (fetchImpl: typeof fetch, patch: unknown) => Promise<unknown>;
+		const calls: Array<{ url: unknown; init: { body: string } }> = [];
+		const ok = (async (url: unknown, init: { body: string }) => {
+			calls.push({ url, init });
+			return jsonResponse({ ...SETTINGS, dryRun: false });
+		}) as unknown as typeof fetch;
+		expect(await save(ok, { dryRun: false })).toEqual({
+			status: "ready",
+			settings: { ...SETTINGS, dryRun: false },
+			message: "",
+		});
+		expect(String(calls[0].url).endsWith("/review-settings")).toBe(true);
+		expect(JSON.parse(calls[0].init.body)).toEqual({ dryRun: false });
+		const rejected = (async () => ({
+			ok: false,
+			status: 400,
+			json: async () => ({ error: 'field "batchSize" must be an integer >= 1' }),
+		})) as unknown as typeof fetch;
+		expect(await save(rejected, { batchSize: 0 })).toEqual({
+			status: "failed",
+			settings: null,
+			message: 'field "batchSize" must be an integer >= 1',
+		});
 	});
 });
