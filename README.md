@@ -91,32 +91,20 @@ Layout:
 
 ```
 ├── src/
-│   ├── index.ts            # registration: section + tools + extraction + review + card wiring
+│   ├── index.ts            # registration: config + host shapes + apply orchestration
+│   ├── assemble.ts         # shared mounts: tools + extraction + review + creator skills
 │   ├── store.ts            # store assembly: open/migrate, per-kind method builders, re-exports
 │   ├── store-types.ts      # store surface (single MemoryStore) + ledger/account shapes
-│   ├── token-usage.ts      # single accounting entry: normalize provider usage, pure sums
-│   ├── plugin-log.ts       # the plugin's own log table (the host logger has no sink to write to)
-│   ├── retention.ts        # ledger retention: one 30-day window, day-throttled prune trigger
-│   ├── llm-call.ts         # the only transport: route, reasoning effort, output budget, failure facts
-│   ├── subagent.ts         # the loader every LLM call goes through (assemble → call → parse → account)
-│   ├── subagent-defs.ts    # every subagent job in one table: prompt, budget fallback, answer parser
-│   ├── prompt-date.ts      # the clock prompts judge dates by: the run's day + its instruction line
-│   ├── chain.ts            # responsibility chain: one step per link, order assembled by the caller
-│   ├── review-candidates.ts # its queue: what is due (new > corrects-linked > stale)
-│   ├── review.ts           # autonomous quality loop: batch, budget, rollup, scheduler
-│   ├── review-ring.ts      # its chain: cheap gate → evolve pass → landing (+ per-run ring)
-│   ├── review-prompt.ts    # review prompts + verdict parsing (gate + memory/skill rubrics)
-│   ├── extraction.ts       # entry + per-session scheduler (turn-level, no idle timer)
-│   ├── extraction-ring.ts  # its chain: cheap pre-gate → proposal call + gated application
-│   ├── extraction-surface.ts # trajectory slicing: cursor, eligibility, serialization
-│   ├── extraction-prompt.ts  # the extraction prompt + answer parsing
-│   ├── import-md.ts        # lossless legacy markdown migration
-│   ├── workspace-hint.ts   # card: the host's current workspace as the opening default
 │   ├── data/               # storage back end: database, generic repository + descriptors,
-│   │                       # row/record shapes (single home), migration, ledgers, review accounts, patrol
-│   ├── services/           # write gates: per-kind rules + per-action batch application
-│   └── surfaces/           # presentation: unified evolve_* tools, card routes + settings mount,
-│                           # injection, snapshots, file projection (read-only, patrol-reconciled)
+│   │                       # row/record shapes (single home), secret screen, migration, ledgers,
+│   │                       # review accounts, patrol
+│   ├── services/           # application services: write gates (rules + batch application),
+│   │                       # extraction/review loops (schedulers, chains, prompts, subagents),
+│   │                       # transport, accounting, retention, md import, skill files, plugin log
+│   ├── pages/
+│   │   └── memory-card/    # the plugin-manager page: routes + settings + mount + hint
+│   └── surfaces/           # presentation: unified evolve_* tools, injection, snapshots,
+│                           # section text + guide, creator-skill provider (read-only, patrol-reconciled)
 ├── client/
 │   └── client.js          # hand-written client bundle: memory + review-settings cards
 ├── locale/                # host package metadata: localized display name + description (zh/en)

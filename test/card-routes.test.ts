@@ -12,9 +12,9 @@ import {
 	type CardRequest,
 	type CardRoute,
 	type CardWebServer,
-} from "../src/surfaces/card-routes.js";
-import { CARD_API_REVIEW_SETTINGS_PATH } from "../src/surfaces/review-settings.js";
-import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/surfaces/prompt-routes.js";
+} from "../src/pages/memory-card/card-routes.js";
+import { CARD_API_REVIEW_SETTINGS_PATH } from "../src/pages/memory-card/settings.js";
+import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/pages/memory-card/prompt-routes.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;

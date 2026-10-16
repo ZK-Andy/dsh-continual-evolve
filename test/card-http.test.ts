@@ -5,7 +5,7 @@ import {
 	rootParamOf,
 	sendJson,
 	type CardResponse,
-} from "../src/surfaces/card-http.js";
+} from "../src/pages/memory-card/card-http.js";
 
 function recorder(): { response: CardResponse; seen: { status: number; headers?: Record<string, string>; body?: string } } {
 	const seen: { status: number; headers?: Record<string, string>; body?: string } = { status: 0 };

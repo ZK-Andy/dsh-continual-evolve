@@ -162,41 +162,6 @@ export function registerCreatorSkills(skills: CreatorSkillsService, assetsDir: s
 	skills.registerProvider(() => createCreatorProvider(assetsDir));
 }
 
-/** The minimal plugin log face mount events report through. */
-export interface SkillsMountLog {
-	warn(event: string, message: string): void;
-	info(event: string, message: string): void;
-}
-
-/** Nested-inject lookup shape (cast target only — the parameter stays `unknown`). */
-interface SkillsMountHost {
-	inject?: ((services: string[], callback: (scoped: unknown) => void) => void) | undefined;
-}
-
-/**
- * Register the bundled creator skills when the host has a skills service.
- * A host without nested inject (or without the service) degrades to a
- * warning — section and tools are unaffected.
- * @param host - The host context to look the skills service up in.
- * @param log - The plugin log face for mount events.
- */
-export function mountCreatorSkillsWhenAvailable(host: unknown, log: SkillsMountLog): void {
-	const inject = (host as SkillsMountHost).inject;
-	if (typeof inject !== "function") {
-		log.warn("creator-skills-not-mounted", "no host inject — creator skills not registered");
-		return;
-	}
-	inject(["skills"], (scoped: unknown) => {
-		const skills = (scoped as { skills?: unknown }).skills as CreatorSkillsService | undefined;
-		if (skills === undefined || typeof skills.registerProvider !== "function") {
-			log.warn("creator-skills-empty", "no skills service — creator skills not registered");
-			return;
-		}
-		registerCreatorSkills(skills, packageAssetsDir());
-		log.info("creator-skills-registered", "creator skills registered (bundled rank)");
-	});
-}
-
 /**
  * Resolve the shipped assets directory next to this module
  * (`<package>/assets` from either `src/` or `lib/` layouts).

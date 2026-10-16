@@ -5,8 +5,8 @@
  * same GET-only contract, same never-throw-past-the-response discipline.
  */
 import { idParamOf, isGet, rootParamOf, sendJson, type CardRequest, type CardResponse, type CardRoute, type CardWebServer } from "./card-http.js";
-import { promptEntryContent, promptSnapshot } from "./prompt-snapshot.js";
-import type { MemoryStore } from "../store.js";
+import { promptEntryContent, promptSnapshot } from "../../surfaces/prompt-snapshot.js";
+import type { MemoryStore } from "../../store.js";
 
 /** URL paths of the prompt API (kind-exact routes under the card prefix). */
 export const CARD_API_PROMPTS_PATH = "/dsh-continual-evolve/api/v1/prompts";

@@ -5,8 +5,8 @@ import {
 	reviewSettingsRoute,
 	type ReviewSettingsDeps,
 	type ReviewSettingsSnapshot,
-} from "../src/surfaces/review-settings.js";
-import type { CardRequest, CardResponse } from "../src/surfaces/card-http.js";
+} from "../src/pages/memory-card/settings.js";
+import type { CardRequest, CardResponse } from "../src/pages/memory-card/card-http.js";
 
 const SNAPSHOT: ReviewSettingsSnapshot = {
 	enabled: true,

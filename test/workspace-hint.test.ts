@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { canonicalPath, newestRegistryPath } from "../src/workspace-hint.js";
+import { canonicalPath, newestRegistryPath } from "../src/pages/memory-card/workspace-hint.js";
 
 /** A registry stub holding whatever records the test hands it. */
 function registryWith(rows: unknown): { list: () => unknown } {

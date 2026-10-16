@@ -10,13 +10,13 @@
  * Handlers are synchronous except the settings POST body/save, and never
  * throw past the response.
  */
-import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "./memory-snapshot.js";
+import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "../../surfaces/memory-snapshot.js";
 import { mountPromptRoutes } from "./prompt-routes.js";
 import {
 	CARD_API_REVIEW_SETTINGS_PATH,
 	reviewSettingsRoute,
 	type ReviewSettingsDeps,
-} from "./review-settings.js";
+} from "./settings.js";
 import {
 	idParamOf,
 	isGet,
@@ -27,8 +27,8 @@ import {
 	type CardRoute,
 	type CardWebServer,
 } from "./card-http.js";
-import type { MemoryStore } from "../store.js";
-import { canonicalPath } from "../workspace-hint.js";
+import type { MemoryStore } from "../../store.js";
+import { canonicalPath } from "./workspace-hint.js";
 
 export type { CardRequest, CardResponse, CardRoute, CardWebServer };
 

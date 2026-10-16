@@ -8,11 +8,11 @@
  * from the entry's local declarations.
  */
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
-import type { ReviewSettingsSnapshot } from "./review-settings.js";
-import type { MemoryStore } from "../store.js";
-import type { PluginLog } from "../services/plugin-log.js";
-import { newestRegistryPath } from "../workspace-hint.js";
-import type { HostContext, NestedInjectHost } from "../index.js";
+import type { ReviewSettingsSnapshot } from "./settings.js";
+import type { MemoryStore } from "../../store.js";
+import type { PluginLog } from "../../services/plugin-log.js";
+import { newestRegistryPath } from "./workspace-hint.js";
+import type { HostContext, NestedInjectHost } from "../../index.js";
 
 /**
  * Mount the card routes on the host web server through a nested inject, so

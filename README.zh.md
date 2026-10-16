@@ -91,31 +91,19 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 
 ```
 ├── src/
-│   ├── index.ts            # 注册：section + 工具 + 提取 + 评审 + 卡片接线
+│   ├── index.ts            # 注册：配置 + 宿主形状 + apply 编排
+│   ├── assemble.ts         # 通用挂载：工具 + 提取 + 评审 + 自带技能
 │   ├── store.ts            # 存储装配：打开/迁移、按类方法组装、对外重导出
 │   ├── store-types.ts      # 存储表面（单 MemoryStore）+ 账本/账户形状
-│   ├── token-usage.ts      # 统一记账口：归一各家用量、纯累加
-│   ├── plugin-log.ts       # 插件自有日志：只写库表（宿主 logger 无承接方）
-│   ├── retention.ts        # 账本保留期：30 天窗口 + 按日节流的裁剪触发
-│   ├── llm-call.ts         # 唯一传输层：路由、推理档位、输出预算、失败事实
-│   ├── subagent.ts         # 所有 LLM 调用经过的装载器（装配 → 调用 → 解析 → 记账）
-│   ├── subagent-defs.ts    # 子代理定义表：提示词、预算兜底、应答解析器，一处声明
-│   ├── prompt-date.ts      # 提示词的时钟：本轮基准日 + 那行「今天」指令
-│   ├── chain.ts            # 责任链：一环节一步，顺序由环境类组装
-│   ├── review-candidates.ts # 评审队列：什么该审（新写 > 被纠正牵连 > 陈旧）
-│   ├── review.ts           # 内容质量自进化：批量、预算、日 rollup、调度
-│   ├── review-ring.ts      # 它的链：便宜门 → 贵改写 → 落盘（含单轮 ring 装配）
-│   ├── review-prompt.ts    # 评审提示词 + verdict 解析（门 + 记忆/技能 rubric）
-│   ├── extraction.ts       # 入口 + 按会话分槽的调度器（轮级、无空闲计时器）
-│   ├── extraction-ring.ts  # 它的链：预检门 → 提案调用 + 过门落盘
-│   ├── extraction-surface.ts # 轨迹切片：游标、资格判定、序列化
-│   ├── extraction-prompt.ts  # 提取 prompt + 应答解析
-│   ├── import-md.ts        # 旧版 markdown 无损迁移
-│   ├── workspace-hint.ts   # 卡片：宿主当前工作区作为打开时的默认选中
-│   ├── data/               # 存储后端：连接、通用仓储 + 描述符、行/记录形状（单一家）、迁移、账本、评审账目、巡检
-│   ├── services/           # 写门禁：按类规则 + 按动作批量应用
-│   └── surfaces/           # 表现层：统一 evolve_* 工具、卡片路由 + 设置挂载、注入、
-│                           # 快照、文件投影（只读，巡检对账）
+│   ├── data/               # 存储后端：连接、通用仓储 + 描述符、行/记录形状（单一家）、
+│   │                       # 密钥筛查、迁移、账本、评审账目、巡检
+│   ├── services/           # 应用服务：写门禁（规则 + 批量应用）、提取/评审环
+│   │                       # （调度、链、提示词、子代理）、传输、记账、保留、md 导入、
+│   │                       # 技能文件、插件日志
+│   ├── pages/
+│   │   └── memory-card/    # 插件管理页：路由 + 设置 + 挂载 + 工作区提示
+│   └── surfaces/           # 表现层：统一 evolve_* 工具、注入、快照、section 文案 +
+│                           # 指南、自带技能 provider（只读，巡检对账）
 ├── client/
 │   └── client.js          # 手写 client bundle：记忆 + 评审设置双卡片
 ├── locale/                # 宿主包元数据：显示名 + 描述双语（zh/en）
