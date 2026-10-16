@@ -142,6 +142,8 @@ export interface LedgerStmts {
 export interface StateStmts {
 	stateGet: StatementSync;
 	stateSet: StatementSync;
+	stateListPrefix: StatementSync;
+	stateDelete: StatementSync;
 	cursorGet: StatementSync;
 }
 
@@ -157,6 +159,8 @@ export function prepareStateStmts(database: DatabaseSync): StateStmts {
 			"INSERT INTO state (workspace_id, key, value) VALUES (?, ?, ?) " +
 				"ON CONFLICT (workspace_id, key) DO UPDATE SET value = excluded.value",
 		),
+		stateListPrefix: database.prepare("SELECT workspace_id, key, value FROM state WHERE key LIKE ? || '%'"),
+		stateDelete: database.prepare("DELETE FROM state WHERE workspace_id = ? AND key = ?"),
 		cursorGet: database.prepare("SELECT CAST(value AS INTEGER) AS seq FROM state WHERE workspace_id = ? AND key = ?"),
 	};
 }

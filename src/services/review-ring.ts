@@ -9,7 +9,7 @@
  * attributed, which is what left the gate's failure rate unreadable.
  */
 import { type ChainLink, type ChainOutcome } from "./chain.js";
-import { observedUsageOf } from "./llm-call.js";
+import { failureCodeOf, observedUsageOf } from "./llm-call.js";
 import type { ModelSelection } from "./model-route.js";
 import { evolvePrompt, gatePrompt, type EvolveVerdict } from "./review-prompt.js";
 import { REVIEW_EVOLVE_BY_KIND, REVIEW_GATE_BY_KIND } from "./subagent-defs.js";
@@ -39,6 +39,13 @@ export interface ReviewItem {
 	evolved?: EvolveVerdict;
 	/** The evolve call's raw usage payload; `undefined` when it never reported one. */
 	evolveUsage?: unknown;
+	/**
+	 * The host's failure code when an LLM leg died (`AUTH`, `RATE_LIMIT`, …).
+	 * The batch reads it to tell a route that is refused from one that blipped:
+	 * a refused route stops the whole drain instead of paying for the refusal
+	 * once per candidate.
+	 */
+	faultCode?: string | undefined;
 }
 
 /** The row fields every terminal path shares. */
@@ -116,6 +123,7 @@ function gateLink(): ChainLink<ReviewItem> {
 					cheapUsage: observedUsageOf(error), applied: 0,
 				});
 				item.skipReasons.push("gate-llm-failed");
+				item.faultCode = failureCodeOf(error);
 				return "handled";
 			}
 		},
@@ -159,6 +167,7 @@ function evolveLink(): ChainLink<ReviewItem> {
 					cheapUsage: item.gate.usage, evolveUsage: observedUsageOf(error) ?? item.evolveUsage, applied: 0,
 				});
 				item.skipReasons.push("evolve-llm-failed");
+				item.faultCode = failureCodeOf(error);
 				return "handled";
 			}
 		},

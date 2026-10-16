@@ -9,7 +9,7 @@
  * reported before it died.
  */
 import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
-import { observedUsageOf } from "./llm-call.js";
+import { failureCodeOf, isRouteRejected, observedUsageOf } from "./llm-call.js";
 import type { ModelSelection } from "./model-route.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
 import { CHEAP_INCREMENT_MAX, cheapPrompt, extractionPrompt, manifestLineOf, type ParsedAnswer } from "./extraction-prompt.js";
@@ -17,7 +17,7 @@ import { todayUtc } from "./prompt-date.js";
 import { pruneIfDue } from "./retention.js";
 import { extractionGate, extractionMain } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentAnswer, type SubagentCall, type SubagentLoader } from "./subagent.js";
-import type { LedgerEntry, MemoryStore } from "../store.js";
+import { ROUTE_REJECTED_REASON, type LedgerEntry, type MemoryStore } from "../store.js";
 import type { ExtractionDeps, ExtractionResult, ExtractionTarget, RunOptions } from "./extraction.js";
 import type { MemoryProposal } from "./memory-rules.js";
 
@@ -248,10 +248,13 @@ async function runProposalCall(
 		return answer;
 	} catch (error) {
 		const { message, detail } = errorText(error);
+		// A refused route is labelled as such in the account: the failure
+		// discipline's halt is only visible if the row says why it happened.
+		const reason = isRouteRejected(error) ? ROUTE_REJECTED_REASON : "llm-failed";
 		try {
 			store.logSkipped({
 				...item.ledgerBase,
-				skipReason: "llm-failed",
+				skipReason: reason,
 				status: "failed",
 				model: item.route.model,
 				usage: observedUsageOf(error),
@@ -263,7 +266,11 @@ async function runProposalCall(
 		} catch (ledgerError) {
 			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
 		}
-		item.result = { status: "failed", skipReason: `llm call failed: ${message}` };
+		item.result = {
+			status: "failed",
+			skipReason: reason === ROUTE_REJECTED_REASON ? ROUTE_REJECTED_REASON : `llm call failed: ${message}`,
+			faultCode: failureCodeOf(error),
+		};
 		return undefined;
 	}
 }

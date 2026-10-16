@@ -856,6 +856,120 @@ describe("createExtractionScheduler", () => {
 		expect(store.cursor(WS, "sess-1")).toBeUndefined();
 	});
 
+	/** An LLM that always fails with one host failure code, counting its calls. */
+	function codedLlm(code: string, message = "provider down"): LlmStream & { calls: Record<string, unknown>[] } {
+		const calls: Record<string, unknown>[] = [];
+		return {
+			calls,
+			// eslint-disable-next-line require-yield
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const error = new Error(message) as Error & { code: string };
+				error.code = code;
+				throw error;
+			},
+		};
+	}
+
+	/** This describe's ledger reader (the file's other one is scoped to another suite). */
+	function ledgerRows(): { status: string; skip_reason: string }[] {
+		const db = rawDb();
+		try {
+			return db.prepare("SELECT status, skip_reason FROM extraction_log ORDER BY rowid").all() as {
+				status: string;
+				skip_reason: string;
+			}[];
+		} finally {
+			db.close();
+		}
+	}
+
+	/** Let the scheduler's async tail (the run, its outcome record) finish. */
+	async function settle(times = 4): Promise<void> {
+		for (let i = 0; i < times; i += 1) {
+			await new Promise((resolve) => setImmediate(resolve));
+		}
+	}
+
+	it("stops calling a route the provider refused, until the route changes", async () => {
+		const { listeners, d, host, warns, infos } = makeHost();
+		d.llm = codedLlm("AUTH", "opencode-go API error (403)");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
+		createExtractionScheduler(host, d);
+
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (!warns.some((line) => line.startsWith("route-halted"))) {
+				throw new Error("not halted yet");
+			}
+		});
+		// One refused run costs its gate call and its main call. Every later
+		// boundary on the same route costs nothing at all.
+		expect(d.llm.calls).toHaveLength(2);
+		expect(ledgerRows()[0]?.skip_reason).toBe("route-rejected");
+
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await settle();
+		expect(d.llm.calls).toHaveLength(2);
+		expect(ledgerRows().map((row) => row.skip_reason)).toContain("route-halted");
+
+		// A model switch is the unfreeze: the next boundary calls again.
+		d.resolveRoute = () => ({ selection: { provider: "p", model: "switched" }, source: "session-selection" });
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (!infos.some((line) => line.startsWith("route-unfrozen"))) {
+				throw new Error("not unfrozen yet");
+			}
+		});
+		// The unfrozen boundary calls again (and is refused again — the route
+		// changed, the provider did not).
+		await settle(10);
+		expect(d.llm.calls.length).toBeGreaterThan(2);
+	});
+
+	it("backs a transient failure off, then clears the record on a clean run", async () => {
+		const { listeners, d, host } = makeHost();
+		d.llm = codedLlm("RATE_LIMIT");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
+		createExtractionScheduler(host, d);
+		const key = "extract:fail:sess-1";
+
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (store.state(WS, key) === undefined) {
+				throw new Error("no record yet");
+			}
+		});
+		// The first failure retries at once: one gate + main per attempt.
+		expect(JSON.parse(store.state(WS, key) ?? "{}")).toMatchObject({ count: 1, route: "deepseek/deepseek-chat" });
+
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (JSON.parse(store.state(WS, key) ?? "{}").count !== 2) {
+				throw new Error("second failure not counted yet");
+			}
+		});
+		expect(d.llm.calls).toHaveLength(4);
+
+		// Third boundary: the backoff is in force, so nothing is sent and the
+		// suppressed wake-up lands one coalesced row.
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await settle();
+		expect(d.llm.calls).toHaveLength(4);
+		expect(ledgerRows().map((row) => row.skip_reason)).toContain("route-backoff");
+
+		// The backoff window elapses (the clock is the test's), and a clean run
+		// clears the ladder.
+		store.setState(WS, key, JSON.stringify({ count: 2, until: 0, route: "deepseek/deepseek-chat" }));
+		d.llm = fakeLlm(answer);
+		listeners.get("agent/turn-stopping")![0]({ agent });
+		await vi.waitFor(() => {
+			if (store.state(WS, key) !== undefined) {
+				throw new Error("record not cleared yet");
+			}
+		});
+	});
+
 	it("coalesces a mid-run turn into one follow-up run", async () => {
 		const llm = gatedLlm(answer);
 		const surface = {

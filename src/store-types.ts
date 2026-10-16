@@ -29,8 +29,26 @@ export const MEMORY_FILE_PREVIEW_LIMIT = 5 * 1024 * 1024;
  * ledger keeps one counted row instead of one row per wake-up. Fault-shaped
  * skips (`no-route`, `no-surface`, `no-workspace`) and every failure stay one
  * row per occurrence — a persistent fault deserves a timeline, not a counter.
+ *
+ * `route-backoff` and `route-halted` join them: a wake-up the failure
+ * discipline suppressed is the same decision repeated, and the counted row is
+ * what keeps a day of backoff (or a halted route) from burying the account in
+ * identical lines.
  */
-export const COALESCED_SKIP_REASONS = new Set(["no-user-prose", "no-new-events"]);
+export const COALESCED_SKIP_REASONS = new Set(["no-user-prose", "no-new-events", "route-backoff", "route-halted"]);
+
+/**
+ * The ledger's `skip_reason` when a run died on a route the provider refused
+ * (`AUTH`/`NO_ADAPTER`/a capability fault): the track stops calling that route
+ * until it changes, instead of paying for another refusal every turn.
+ */
+export const ROUTE_REJECTED_REASON = "route-rejected";
+
+/** The ledger's `skip_reason` for a wake-up the route backoff suppressed. */
+export const ROUTE_BACKOFF_REASON = "route-backoff";
+
+/** The ledger's `skip_reason` for a wake-up suppressed because the route is halted. */
+export const ROUTE_HALTED_REASON = "route-halted";
 
 /** Longest message kept; a runaway error string must not become a table row. */
 export const PLUGIN_LOG_MESSAGE_MAX = 2000;
@@ -257,6 +275,10 @@ export interface MemoryStore {
 	setCursor(workspaceId: string, sessionId: string, seq: number): void;
 	state(workspaceId: string, key: string): string | undefined;
 	setState(workspaceId: string, key: string, value: string): void;
+	/** Every `state` row whose key starts with `prefix` (the retention sweep's reader). */
+	listState(prefix: string): { workspaceId: string; key: string; value: string }[];
+	/** Drop one `state` row (retention's sweep for self-describing records). */
+	deleteState(workspaceId: string, key: string): void;
 	listWorkspaces(): WorkspaceSummary[];
 	/**
 	 * The partition with the most recent session activity: the newest ledger

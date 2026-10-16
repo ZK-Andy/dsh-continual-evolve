@@ -8,10 +8,7 @@
  */
 import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./services/extraction.js";
 import { resolveCallRoute, type RouteResolver } from "./services/model-route.js";
-import {
-	createReviewScheduler,
-	type ReviewSchedulerHost,
-} from "./services/review.js";
+import { createReviewScheduler, type ReviewSchedulerHost } from "./services/review-scheduler.js";
 import type { SurfaceReader } from "./services/extraction-surface.js";
 import { registerEvolveTools } from "./surfaces/evolve-tools.js";
 import { packageAssetsDir, registerCreatorSkills } from "./surfaces/skill-provider.js";

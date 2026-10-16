@@ -64,6 +64,9 @@ export {
 	MEMORY_FILE_PREVIEW_LIMIT,
 	PATROL_STATE_KEY,
 	PLUGIN_LOG_MESSAGE_MAX,
+	ROUTE_BACKOFF_REASON,
+	ROUTE_HALTED_REASON,
+	ROUTE_REJECTED_REASON,
 } from "./store-types.js";
 export { StoreUnavailableError } from "./data/database.js";
 
@@ -105,7 +108,10 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 function buildMemoryMethods(
 	memories: Repository<MemoryRow>,
 	database: DatabaseSync,
-	stmts: Pick<StoreStatements, "stateGet" | "stateSet" | "cursorGet" | "latestSkip" | "bumpSkip" | "ledger">,
+	stmts: Pick<
+		StoreStatements,
+		"stateGet" | "stateSet" | "stateListPrefix" | "stateDelete" | "cursorGet" | "latestSkip" | "bumpSkip" | "ledger"
+	>,
 ): Pick<
 	MemoryStore,
 	| "get"
@@ -118,6 +124,8 @@ function buildMemoryMethods(
 	| "setCursor"
 	| "state"
 	| "setState"
+	| "listState"
+	| "deleteState"
 	| "listWorkspaces"
 > {
 	return {
@@ -156,6 +164,13 @@ function buildMemoryMethods(
 		},
 		setState(workspaceId, key, value) {
 			stmts.stateSet.run(workspaceId, key, value);
+		},
+		listState(prefix) {
+			const rows = stmts.stateListPrefix.all(prefix) as { workspace_id: string; key: string; value: string }[];
+			return rows.map((row) => ({ workspaceId: row.workspace_id, key: row.key, value: row.value }));
+		},
+		deleteState(workspaceId, key) {
+			stmts.stateDelete.run(workspaceId, key);
 		},
 		listWorkspaces() {
 			return memories.workspaceList().map((row) => ({ workspaceId: row.workspace_id, activeCount: row.n, updatedAt: row.u }));

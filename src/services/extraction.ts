@@ -23,10 +23,11 @@
  */
 import { ERROR_REASON_MAX, errorText, runExtractionInner } from "./extraction-ring.js";
 import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
-import type { LedgerEntry, MemoryStore } from "../store.js";
+import { GLOBAL_WORKSPACE, type LedgerEntry, type MemoryStore } from "../store.js";
 import { cwdOf } from "./agent.js";
 import type { LlmRuntime } from "./llm-call.js";
 import { resolveCallRoute, type ResolvedRoute, type RouteResolver, type RouteSource } from "./model-route.js";
+import { drainDecisionOf, recordRunOutcome, recordSuppressedWakeUp, routeRefOf, type RouteHaltState } from "./extraction-failure.js";
 import type { PluginLog } from "./plugin-log.js";
 
 export type { LlmStream, LlmRuntime } from "./llm-call.js";
@@ -58,6 +59,12 @@ export interface ExtractionTarget {
 export interface ExtractionResult {
 	status: "applied" | "rejected" | "skipped" | "failed";
 	skipReason?: SkipReason | string | undefined;
+	/**
+	 * The host's failure code when the run died on its LLM call (`AUTH`,
+	 * `RATE_LIMIT`, …), `undefined` when the failure carried none. The
+	 * scheduler's failure discipline classifies on this, never on the text.
+	 */
+	faultCode?: string | undefined;
 	/** Mutations landed (status "applied"). */
 	applied?: number | undefined;
 	/** The seq boundary the cursor advanced to (status "applied" or model skip). */
@@ -118,8 +125,13 @@ interface PendingTarget {
 	source: RouteSource | undefined;
 }
 
-/** One session's scheduling slot: a run in flight plus its newest boundary. */
-interface SessionSlot {
+/**
+ * One session's scheduling slot: a run in flight plus its newest boundary.
+ * It doubles as the halt state the failure discipline reads — the refused
+ * route lives here, dies with the process, and therefore unfreezes on a host
+ * restart by construction (`extraction-failure.ts`).
+ */
+interface SessionSlot extends RouteHaltState {
 	pending: PendingTarget | null;
 	running: boolean;
 }
@@ -222,26 +234,50 @@ function drainScheduler(state: SchedulerState, sessionId: string, trigger: Ledge
 	}
 	const target = slot.pending;
 	slot.pending = null;
+	const workspaceId = cwdOf(target.agent);
+	// The failure discipline is partitioned like the run: a session with no
+	// workspace never reaches a call, so the global partition is where its
+	// (unreachable) record would live.
+	const partition = workspaceId ?? GLOBAL_WORKSPACE;
+	const route = routeRefOf(target.provider, target.model);
+	const decision = drainDecisionOf(slot, deps.store, partition, target.sessionId, route, Date.now());
+	if (decision.unfrozen !== undefined) {
+		host.log.info("route-unfrozen", `${decision.unfrozen} → ${route}: calling again`, { workspaceId, sessionId });
+	}
+	if (decision.action !== "run") {
+		recordSuppressedWakeUp(host.log, deps.store, { workspaceId, sessionId: target.sessionId, trigger, model: target.model }, decision.action);
+		return;
+	}
 	slot.running = true;
 	// The route trace: which candidate answered, so a store that fell back to
 	// `agent.options` (an unreachable projection, a stale header) is visible
 	// instead of looking like a working fix (2026-10-16). The log face never
 	// throws — a trace must not be able to take a drain down.
-	host.log.info("route-resolved", `${target.provider ?? "?"}/${target.model ?? "?"} via ${target.source ?? "none"} (extract drain)`, {
-		workspaceId: cwdOf(target.agent),
+	host.log.info("route-resolved", `${route} via ${target.source ?? "none"} (extract drain)`, {
+		workspaceId,
 		sessionId: target.sessionId,
 	});
 	void runExtraction(
 		deps,
 		{
-			workspaceId: cwdOf(target.agent),
+			workspaceId,
 			sessionId: target.sessionId,
 			internalAgent: isInternalAgent(target.agent),
 			provider: target.provider,
 			model: target.model,
 		},
 		{ trigger },
-	).catch((error: unknown) => {
+	).then((result: ExtractionResult) => {
+		try {
+			recordRunOutcome(host.log, slot, deps.store, { workspaceId, sessionId: target.sessionId }, route, result, Date.now());
+		} catch (error) {
+			// The store can close under a run in flight (host shutdown, a test
+			// teardown). The discipline is a guard for the next turn; failing to
+			// update it must not become an unhandled rejection, and the run's own
+			// account was already written inside the ring.
+			host.log.warn("route-discipline-unwritten", errorText(error).message, { sessionId });
+		}
+	}).catch((error: unknown) => {
 		// Last resort: runExtraction ledgers its own unexpected failures,
 		// so this fires only when even that failed (the ledger write
 		// threw) — retry one ledger row here before the warn, so the
@@ -250,7 +286,7 @@ function drainScheduler(state: SchedulerState, sessionId: string, trigger: Ledge
 		try {
 			deps.store.logSkipped({
 				sessionId: target.sessionId,
-				workspaceId: cwdOf(target.agent),
+				workspaceId,
 				trigger,
 				skipReason: `unexpected-error: ${message.slice(0, ERROR_REASON_MAX)}`,
 				status: "failed",

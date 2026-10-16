@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+	LlmConfigError,
+	SubagentCallError,
+	failureCodeOf,
+	isRouteRejected,
+	isRouteRejectedCode,
 	observedUsageOf,
 	selectLowestReasoningEffort,
 	selectMaxTokens,
 	streamOnce,
-	SubagentCallError,
 	type LlmRuntime,
 	type ModelInfo,
 } from "../src/services/llm-call.js";
@@ -205,6 +209,56 @@ describe("resolveCallRoute", () => {
 	});
 });
 
+describe("the failure code and its classification", () => {
+	it("reads the host's code off a thrown value, and nothing off anything else", () => {
+		const host = Object.assign(new Error("boom"), { code: "AUTH" });
+		expect(failureCodeOf(host)).toBe("AUTH");
+		expect(failureCodeOf(new Error("no code"))).toBeUndefined();
+		expect(failureCodeOf(undefined)).toBeUndefined();
+		expect(failureCodeOf({ code: "" })).toBeUndefined();
+	});
+
+	it("carries a mid-stream failure code onto the thrown call error", async () => {
+		const llm: LlmRuntime = {
+			// eslint-disable-next-line require-yield
+			async *stream(): AsyncIterable<unknown> {
+				throw Object.assign(new Error("opencode-go API error (403)"), { code: "AUTH" });
+			},
+		};
+		const error = await streamOnce(llm, ROUTE, "sess-1", "sys", "prompt", 1024).catch((thrown: unknown) => thrown);
+
+		expect((error as SubagentCallError).code).toBe("AUTH");
+		expect(isRouteRejected(error)).toBe(true);
+	});
+
+	it("treats a refused route as terminal and everything unseen as transient", () => {
+		for (const code of ["AUTH", "NO_ADAPTER", "PLUGIN_CONFIG"]) {
+			expect(isRouteRejectedCode(code)).toBe(true);
+		}
+		// The host's own retryable set, a stream cut, and a code this plugin has
+		// never seen: all transient — a retry may help, and only a known refusal
+		// is worth halting on.
+		for (const code of ["RATE_LIMIT", "SERVER", "TIMEOUT", "TRANSPORT", "EMPTY_RESPONSE", "WHO_KNOWS", undefined]) {
+			expect(isRouteRejectedCode(code)).toBe(false);
+		}
+	});
+
+	it("gives the plugin's own capability faults a terminal code", () => {
+		const error = (() => {
+			try {
+				selectLowestReasoningEffort({ reasoning: { efforts: "nope" } });
+				return undefined;
+			} catch (thrown: unknown) {
+				return thrown;
+			}
+		})();
+
+		expect(error).toBeInstanceOf(LlmConfigError);
+		expect(failureCodeOf(error)).toBe("PLUGIN_CONFIG");
+		expect(isRouteRejected(error)).toBe(true);
+	});
+});
+
 describe("streamOnce", () => {
 	it("sends the capability-derived effort and the host session identity", async () => {
 		const llm = scriptedLlm(
@@ -240,6 +294,7 @@ describe("streamOnce", () => {
 		expect((error as SubagentCallError).message).toBe("LLM call error: X: boom");
 		expect((error as SubagentCallError).finish).toBe("error");
 		expect((error as SubagentCallError).route).toEqual(ROUTE);
+		expect((error as SubagentCallError).code).toBe("X");
 		expect(observedUsageOf(error)).toEqual({ inputTokens: 5, outputTokens: 7 });
 	});
 
@@ -256,6 +311,7 @@ describe("streamOnce", () => {
 		const error = await streamOnce(llm, ROUTE, "sess-1", "sys", "prompt", 1024).catch((thrown: unknown) => thrown);
 		expect((error as SubagentCallError).message).toBe("socket closed more detail");
 		expect((error as SubagentCallError).usage).toEqual({ totalTokens: 3 });
+		expect((error as SubagentCallError).code).toBeUndefined();
 		expect((error as Error).cause).toBeInstanceOf(Error);
 	});
 

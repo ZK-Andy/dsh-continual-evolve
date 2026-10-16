@@ -18,13 +18,10 @@
  * gates (`applyProposals` / `applySkillProposals` / `quarantine`).
  */
 import { runChain } from "./chain.js";
-import type { LlmRuntime } from "./llm-call.js";
-import { resolveCallRoute, type ModelSelection, type ResolvedRoute, type RouteResolver, type RouteSource } from "./model-route.js";
-import { cwdOf } from "./agent.js";
-import { todayUtc } from "./prompt-date.js";
-import type { PluginLog } from "./plugin-log.js";
-import { collectCandidates } from "./review-candidates.js";
-import { failureHead, assembleRing, type ReviewItem, type ReviewRing } from "./review-ring.js";
+import { isRouteRejectedCode, type LlmRuntime } from "./llm-call.js";
+import type { ModelSelection, RouteResolver } from "./model-route.js";
+import { ROUTE_REJECTED_REASON } from "../store-types.js";
+import { assembleRing, failureHead, type ReviewItem, type ReviewRing } from "./review-ring.js";
 import type { MemoryStore } from "../store.js";
 import { zeroUsage } from "./token-usage.js";
 
@@ -82,6 +79,12 @@ export interface ReviewRunSummary {
 	backlog: number;
 	cheapToken: number;
 	evolveToken: number;
+	/**
+	 * True when the batch stopped because the provider refused the route: the
+	 * scheduler halts that route, so the next boundary does not pay for the
+	 * same refusal once per candidate.
+	 */
+	routeRejected: boolean;
 }
 
 /** Defaults for the review settings the host may override — and edit live. */
@@ -124,7 +127,7 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	const ring = route === undefined || llm === undefined ? undefined : assembleRing({ llm, route, sessionId: opts.sessionId, today: opts.day });
 	const run: BatchRun = {
 		deps, opts, batch, runId, route, ring,
-		summary: { reviewed: 0, approved: 0, applied: 0, dropped: 0, backlog: 0, cheapToken: 0, evolveToken: 0 },
+		summary: { reviewed: 0, approved: 0, applied: 0, dropped: 0, backlog: 0, cheapToken: 0, evolveToken: 0, routeRejected: false },
 		skipReasons: [], newItems: 0, requeued: 0, position: 0,
 	};
 	// The run's account is written whatever happens to the loop: a fault that
@@ -186,6 +189,19 @@ async function reviewOneCandidate(run: BatchRun, candidate: ReviewCandidate): Pr
 			gate: { usage: zeroUsage(), raw: undefined },
 		};
 		await runChain(ring.links, item);
+		if (isRouteRejectedCode(item.faultCode)) {
+			// The gate/evolve leg already ledgered this item's own failure; this
+			// row is the drain's account of why it stopped, and the remaining
+			// candidates stay queued (nothing is dropped, nothing is re-billed).
+			deps.store.logReview({
+				runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
+				verdict: "skip", reason: ROUTE_REJECTED_REASON, model: route?.model, applied: 0,
+			});
+			skipReasons.push(ROUTE_REJECTED_REASON);
+			run.summary.routeRejected = true;
+			run.position += 1;
+			return true;
+		}
 	} catch (error) {
 		// A fault escaping the chain (a store write, a wiring bug) gets its
 		// own row carrying the error text and costs the batch only this
@@ -214,187 +230,4 @@ function exhaustBudget(run: BatchRun): void {
 		});
 	}
 	skipReasons.push("budget-exhausted");
-}
-
-/** The event wiring surface (duck-typed cordis context, mirrors extraction). */
-export interface ReviewSchedulerHost {
-	on(event: string, handler: (...args: never[]) => void): unknown;
-	/** The plugin's own log face: durable in the store, mirrored live. */
-	log: PluginLog;
-}
-
-/** The editable review settings, re-read on every drain. */
-export interface ReviewSettings {
-	dryRun: boolean;
-	dailyBudget: number;
-	batchSize: number;
-	staleDays: number;
-}
-
-export interface ReviewSchedulerConfig {
-	enabled: boolean;
-	/**
-	 * Read the current settings for each drain: the host's configuration is
-	 * volatile, so values edited live take effect without a remount and are
-	 * never captured once at mount time.
-	 */
-	read: () => ReviewSettings;
-	/** Minimum ms between two drains (default 5 minutes). */
-	minIntervalMs: number;
-}
-
-/**
- * Wire the review triggers onto the host context. Global single-flight with
- * a minimum interval: turn boundaries arm the pending workspace, compaction
- * and session close drain immediately. Each drain reviews one batch bounded
- * by the remaining daily budget — never more.
- */
-/** The review scheduler's mutable wiring: single-flight flag, pacing, and the pending route. */
-interface ReviewSchedulerState {
-	running: boolean;
-	lastRunAt: number;
-	pendingWorkspace: string | undefined;
-	lastRoute: { provider: string; model: string; sessionId: string; source: RouteSource } | undefined;
-}
-
-export function createReviewScheduler(
-	host: ReviewSchedulerHost,
-	deps: ReviewDeps,
-	config: ReviewSchedulerConfig,
-): () => void {
-	const listeners: unknown[] = [];
-	const state: ReviewSchedulerState = { running: false, lastRunAt: 0, pendingWorkspace: undefined, lastRoute: undefined };
-
-	listeners.push(
-		host.on("agent/turn-stopping", (payload: { agent?: unknown }) => {
-			const agent = payload.agent as { id?: unknown } | undefined;
-			const id = agent?.id;
-			if (typeof id !== "string" || id.length === 0) {
-				return;
-			}
-			// A drain needs a live route: the session's current selection first,
-			// then its last request header, the agent's creation-time options, the
-			// host default. With none, the boundary is only remembered and the next
-			// turn boundary reviews it — a review call is never sent with an empty
-			// provider or a dead session identity (both answered by a bare stream
-			// error). Absent resolver (older host, tests) still reads the agent's
-			// explicit selection: the fallback is the legacy behavior, never "no route".
-			const route: ResolvedRoute | undefined = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
-			if (route === undefined) {
-				state.pendingWorkspace = cwdOf(agent);
-				return;
-			}
-			state.lastRoute = {
-				provider: route.selection.provider,
-				model: route.selection.model,
-				sessionId: id,
-				source: route.source,
-			};
-			drainReview(state, host, deps, config, cwdOf(agent));
-		}),
-	);
-	const armed = config.read();
-	host.log.info(
-		"review-armed",
-		`scheduler armed (daily cap ${armed.dailyBudget}, dry-run ${armed.dryRun ? "on" : "off"})`,
-	);
-	return () => {
-		state.pendingWorkspace = undefined;
-		for (const listener of listeners) {
-			if (typeof listener === "function") {
-				listener();
-			}
-		}
-	};
-}
-
-/** Drain one batch when guards pass: enabled, single-flight, paced, routed. */
-function drainReview(
-	state: ReviewSchedulerState,
-	host: ReviewSchedulerHost,
-	deps: ReviewDeps,
-	config: ReviewSchedulerConfig,
-	triggerWorkspace: string | undefined,
-): void {
-	if (!config.enabled || state.running) {
-		if (triggerWorkspace !== undefined) {
-			state.pendingWorkspace = triggerWorkspace;
-		}
-		return;
-	}
-	if (Date.now() - state.lastRunAt < config.minIntervalMs) {
-		if (triggerWorkspace !== undefined) {
-			state.pendingWorkspace = triggerWorkspace;
-		}
-		return;
-	}
-	if (deps.llm === undefined || state.lastRoute?.provider === undefined || state.lastRoute?.model === undefined) {
-		return;
-	}
-	state.running = true;
-	state.lastRunAt = Date.now();
-	const workspace = triggerWorkspace ?? state.pendingWorkspace;
-	state.pendingWorkspace = undefined;
-	const route = state.lastRoute;
-	void runDrain(state, host, deps, config, workspace, route);
-}
-
-/** Run one drain: budget check, candidate batch, and the drain's own ledger discipline. */
-async function runDrain(
-	state: ReviewSchedulerState,
-	host: ReviewSchedulerHost,
-	deps: ReviewDeps,
-	config: ReviewSchedulerConfig,
-	workspace: string | undefined,
-	route: { provider: string; model: string; sessionId: string; source: RouteSource } | undefined,
-): Promise<void> {
-	const settings = config.read();
-	const day = todayUtc();
-	try {
-		const daily = deps.store.getDaily(day);
-		const remaining = settings.dailyBudget - (daily?.reviewed ?? 0);
-		if (remaining <= 0) {
-			host.log.info(
-				"review-budget-spent",
-				`drain skipped: daily budget spent (${daily?.reviewed ?? 0}/${settings.dailyBudget})`,
-				{ workspaceId: workspace },
-			);
-			return;
-		}
-		const candidates = collectCandidates(deps.store, { staleDays: settings.staleDays, limit: settings.batchSize * 2 });
-		const ordered = workspace === undefined
-			? candidates
-			: [...candidates.filter((c) => c.workspaceId === workspace), ...candidates.filter((c) => c.workspaceId !== workspace)];
-		// The trace's review half: whatever candidate the scheduler settled on is
-		// in the log before the first item pays for a verdict (2026-10-16). The
-		// log face never throws — a trace must not take a drain down.
-		host.log.info("route-resolved", `${route?.provider ?? "?"}/${route?.model ?? "?"} via ${route?.source ?? "none"} (review drain)`, {
-			workspaceId: workspace,
-			sessionId: route?.sessionId,
-		});
-		const summary = await runReviewBatch(deps, ordered.slice(0, settings.batchSize), {
-			day, budget: settings.dailyBudget, dryRun: settings.dryRun,
-			batchSize: settings.batchSize, staleDays: settings.staleDays,
-			provider: route?.provider, model: route?.model, sessionId: route?.sessionId,
-		});
-		host.log.info(
-			"review-drain",
-			`reviewed ${summary.reviewed}, approved ${summary.approved}, ` +
-				`applied ${summary.applied}, dropped ${summary.dropped}, backlog ${summary.backlog}`,
-			{ workspaceId: workspace, sessionId: route?.sessionId },
-		);
-	} catch (error) {
-		const head = failureHead(error);
-		host.log.warn("review-drain-failed", head, { workspaceId: workspace, sessionId: route?.sessionId });
-		// Two records on purpose: the log is the live channel, the day's
-		// rollup is the durable one every later reading sees. A drain that
-		// died must leave a trace in the ledger, not only in a log row.
-		try {
-			deps.store.mergeDaily(day, settings.dailyBudget, { skipReasons: [`drain-failed: ${head}`] });
-		} catch (recordError) {
-			host.log.warn("review-drain-unledgered", failureHead(recordError), { workspaceId: workspace });
-		}
-	} finally {
-		state.running = false;
-	}
 }

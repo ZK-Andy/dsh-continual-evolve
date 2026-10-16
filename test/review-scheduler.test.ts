@@ -5,12 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { todayUtc } from "../src/services/prompt-date.js";
 import { collectCandidates } from "../src/services/review-candidates.js";
-import {
-	createReviewScheduler,
-	runReviewBatch,
-	type ReviewLlm,
-	type ReviewSettings,
-} from "../src/services/review.js";
+import { runReviewBatch, type ReviewLlm } from "../src/services/review.js";
+import { createReviewScheduler, type ReviewSettings } from "../src/services/review-scheduler.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";
@@ -78,6 +74,21 @@ function cutGateLlm(gateText: string): ReviewLlm {
 	};
 }
 
+/** An LLM that always refuses the route with one host failure code. */
+function refusedLlm(code: string): ReviewLlm & { calls: number } {
+	const llm = {
+		calls: 0,
+		async *stream(): AsyncIterable<unknown> {
+			llm.calls += 1;
+			const error = new Error("opencode-go API error (403)") as Error & { code: string };
+			error.code = code;
+			throw error;
+			yield { type: "text-delta", text: "unreachable" };
+		},
+	};
+	return llm;
+}
+
 function throwingLlm(): ReviewLlm {
 	return {
 		async *stream(): AsyncIterable<unknown> {
@@ -85,6 +96,15 @@ function throwingLlm(): ReviewLlm {
 			yield { type: "text-delta", text: "unreachable" };
 		},
 	};
+}
+
+function rawReviewRows(): { reason: string | null; verdict: string }[] {
+	const db = new DatabaseSync(dbPath);
+	try {
+		return db.prepare("SELECT reason, verdict FROM review_log ORDER BY rowid").all() as { reason: string | null; verdict: string }[];
+	} finally {
+		db.close();
+	}
 }
 
 const flush = async (): Promise<void> => {
@@ -247,6 +267,93 @@ describe("createReviewScheduler", () => {
 		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1") } as never);
 		await flush();
 		expect(store.getDaily(todayUtc())?.reviewed).toBe(1);
+		dispose();
+	});
+
+	it("stops the drain when the route is refused, and halts that route", async () => {
+		for (const id of ["a", "b", "c"]) {
+			store.applyProposals(
+				{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+				[{ action: "create", id, type: "user", title: `title ${id}`, description: `d ${id}`, body: `b ${id}` }],
+			);
+		}
+		const h = host();
+		const refused = refusedLlm("AUTH");
+		let routeModel = "refused";
+		let llm: ReviewLlm = refused;
+		const dispose = createReviewScheduler(h, {
+			store,
+			get llm() {
+				return llm;
+			},
+			resolveRoute: () => ({ selection: { provider: "p", model: routeModel }, source: "agent-options" }),
+		}, { enabled: true, read: () => settings(), minIntervalMs: 0 });
+
+		const boundary = () => h.handlers.get("agent/turn-stopping")?.({ agent: { id: "sess-1", session: { header: { cwd: WS } } } } as never);
+		boundary();
+		await flush();
+
+		// Only the first candidate paid for the refusal (its gate leg is the first
+		// call made, and the refusal is terminal, so no evolve leg runs); the rest
+		// stayed queued instead of each buying the same refusal.
+		expect(refused.calls).toBe(1);
+		const daily = store.getDaily(todayUtc());
+		expect(daily?.reviewed).toBe(1);
+		expect(daily?.dropped).toBe(0);
+		expect(rawReviewRows().filter((row) => row.reason === "route-rejected")).toHaveLength(1);
+		expect(h.warns.some((line) => line.startsWith("route-halted"))).toBe(true);
+
+		// The next boundary on the same route sends nothing at all.
+		const before = store.getDaily(todayUtc())?.reviewed ?? 0;
+		boundary();
+		await flush();
+		expect(refused.calls).toBe(1);
+		expect(store.getDaily(todayUtc())?.reviewed).toBe(before);
+
+		// A different route is the unfreeze, and it reviews again.
+		routeModel = "healthy";
+		llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		boundary();
+		await flush();
+		expect(h.infos.some((line) => line.startsWith("route-unfrozen"))).toBe(true);
+		expect(store.getDaily(todayUtc())?.reviewed).toBeGreaterThan(before);
+		dispose();
+	});
+
+	it("stops the drain when the evolve leg is refused", async () => {
+		for (const id of ["a", "b"]) {
+			store.applyProposals(
+				{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+				[{ action: "create", id, type: "user", title: `title ${id}`, description: `d ${id}`, body: `b ${id}` }],
+			);
+		}
+		const h = host();
+		let calls = 0;
+		const llm: ReviewLlm = {
+			async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+				calls += 1;
+				if ((options.system as string).includes("评审门")) {
+					yield { type: "text-delta", text: `{"worthReview": true, "reason": "略"}` };
+					yield { type: "finish", reason: { kind: "stop" } };
+					return;
+				}
+				throw Object.assign(new Error("opencode-go API error (403)"), { code: "AUTH" });
+			},
+		};
+		const dispose = createReviewScheduler(h, {
+			store, llm,
+			resolveRoute: () => ({ selection: { provider: "p", model: "refused" }, source: "agent-options" }),
+		}, { enabled: true, read: () => settings(), minIntervalMs: 0 });
+
+		h.handlers.get("agent/turn-stopping")?.({ agent: { id: "sess-1", session: { header: { cwd: WS } } } } as never);
+		await flush();
+
+		// Gate plus evolve for the first candidate; the second never starts.
+		expect(calls).toBe(2);
+		expect(store.getDaily(todayUtc())?.reviewed).toBe(1);
+		expect(store.getDaily(todayUtc())?.dropped).toBe(0);
+		expect(rawReviewRows().some((row) => row.reason?.startsWith("evolve-llm-failed"))).toBe(true);
+		expect(rawReviewRows().filter((row) => row.reason === "route-rejected")).toHaveLength(1);
 		dispose();
 	});
 

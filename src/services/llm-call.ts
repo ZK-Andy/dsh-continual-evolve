@@ -69,13 +69,13 @@ export function selectLowestReasoningEffort(modelInfo: ModelInfo | undefined): s
 		return undefined;
 	}
 	if (!Array.isArray(efforts)) {
-		throw new Error("continual-evolve: invalid model reasoning metadata");
+		throw new LlmConfigError("continual-evolve: invalid model reasoning metadata");
 	}
 	const ids: string[] = [];
 	for (const effort of efforts as readonly unknown[]) {
 		const id = (effort as { id?: unknown } | null | undefined)?.id;
 		if (typeof id !== "string") {
-			throw new Error("continual-evolve: invalid model reasoning metadata");
+			throw new LlmConfigError("continual-evolve: invalid model reasoning metadata");
 		}
 		ids.push(id);
 	}
@@ -102,9 +102,24 @@ export function selectMaxTokens(modelInfo: ModelInfo | undefined, fallbackMaxTok
 		return fallbackMaxTokens;
 	}
 	if (typeof advertised !== "number" || !Number.isInteger(advertised) || advertised <= 0) {
-		throw new Error("continual-evolve: invalid model max-tokens metadata");
+		throw new LlmConfigError("continual-evolve: invalid model max-tokens metadata");
 	}
 	return advertised;
+}
+
+/**
+ * A fault in this plugin's own configuration (capability metadata the host
+ * answered with a shape the plugin cannot trust). Retrying cannot fix it, so
+ * it classifies as terminal: the route halts until it changes.
+ */
+export class LlmConfigError extends Error {
+	/** The stable code the failure discipline classifies on. */
+	readonly code = "PLUGIN_CONFIG";
+
+	constructor(message: string) {
+		super(message);
+		this.name = "LlmConfigError";
+	}
 }
 
 /**
@@ -122,14 +137,75 @@ export class SubagentCallError extends Error {
 	readonly finish: string | undefined;
 	/** The route the failed call ran on. */
 	readonly route: ModelSelection;
+	/**
+	 * The host's stable failure code (`AUTH`, `RATE_LIMIT`, `TRANSPORT`, …),
+	 * when the failure carried one. Classification reads this, never the
+	 * message: the host documents `code` as the field to route on, and the
+	 * message is a composition of code, route, and provider prose.
+	 */
+	readonly code: string | undefined;
 
-	constructor(message: string, observed: { usage: unknown; finish: string | undefined; route: ModelSelection; cause?: unknown }) {
+	constructor(
+		message: string,
+		observed: { usage: unknown; finish: string | undefined; route: ModelSelection; code?: unknown; cause?: unknown },
+	) {
 		super(message, observed.cause === undefined ? undefined : { cause: observed.cause });
 		this.name = "SubagentCallError";
 		this.usage = observed.usage;
 		this.finish = observed.finish;
 		this.route = observed.route;
+		this.code = codeTextOf(observed.code);
 	}
+}
+
+/**
+ * Host failure codes that mean "this route is refused": no retry can help, so
+ * the route halts until it changes. Everything else — rate limits, server and
+ * transport faults, timeouts, empty responses, stream cuts, and codes this
+ * plugin has never seen — is transient and retried under a backoff.
+ */
+const TERMINAL_ROUTE_CODES: ReadonlySet<string> = new Set(["AUTH", "NO_ADAPTER", "PLUGIN_CONFIG"]);
+
+/**
+ * One failure code as text: a code travels both as a field on a thrown value
+ * and as an already-extracted string, and both are normalized here.
+ * @param value - A code string, or a value carrying a `code` field.
+ * @returns The non-empty code, or `undefined` when there is none.
+ */
+function codeTextOf(value: unknown): string | undefined {
+	if (typeof value === "string") {
+		return value.length > 0 ? value : undefined;
+	}
+	return failureCodeOf(value);
+}
+
+/**
+ * The stable failure code a thrown value carries, when it carries one.
+ * @param value - Whatever a call threw (a host `LlmError`, this plugin's own failure, anything else).
+ * @returns The non-empty code, or `undefined` when there is none to classify on.
+ */
+export function failureCodeOf(value: unknown): string | undefined {
+	const code = (value as { code?: unknown } | null | undefined)?.code;
+	return typeof code === "string" && code.length > 0 ? code : undefined;
+}
+
+/**
+ * Whether a failure refuses the route rather than blipping on it.
+ * @param error - Whatever a call threw.
+ * @returns True when the route itself is unavailable (halt), false when a retry may help.
+ */
+export function isRouteRejected(error: unknown): boolean {
+	const code = error instanceof SubagentCallError ? error.code : failureCodeOf(error);
+	return isRouteRejectedCode(code);
+}
+
+/**
+ * The same verdict for a code that already travelled (a run's reported fault).
+ * @param code - The host's failure code, when the failure carried one.
+ * @returns True when the route itself is unavailable (halt), false when a retry may help.
+ */
+export function isRouteRejectedCode(code: string | undefined): boolean {
+	return code !== undefined && TERMINAL_ROUTE_CODES.has(code);
 }
 
 /**
@@ -206,11 +282,16 @@ export async function streamOnce(
 	} catch (error) {
 		// A provider that dies mid-stream still reported what it spent: the
 		// observation survives the failure so the ledger can show it.
-		throw new SubagentCallError(failureHeadOf(error), { usage, finish: finish?.kind, route, cause: error });
+		throw new SubagentCallError(failureHeadOf(error), { usage, finish: finish?.kind, route, code: failureCodeOf(error), cause: error });
 	}
 	const finishKind = finish?.kind;
 	if (finishKind === "error" || finishKind === "aborted") {
-		throw new SubagentCallError(failureTextOf(finishKind, finish?.failure), { usage, finish: finishKind, route });
+		throw new SubagentCallError(failureTextOf(finishKind, finish?.failure), {
+			usage,
+			finish: finishKind,
+			route,
+			code: failureCodeOf(finish?.failure),
+		});
 	}
 	if (text.trim().length === 0) {
 		// Nothing usable arrived: the finish reason is the only diagnosis.
