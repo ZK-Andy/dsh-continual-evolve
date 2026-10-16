@@ -148,7 +148,11 @@ describe("applyProposals — gates and atomicity", () => {
 			{ action: "delete", id: "snap-me" },
 		]);
 		const raw = rawDb();
-		const row = raw.prepare("SELECT run_id, status, files FROM extraction_log ORDER BY ts DESC LIMIT 1").get() as {
+		// Recency is insertion order, not the millisecond stamp: two batches can
+		// land in the same millisecond (the audit row commits with its body, so
+		// nothing separates the two writes), and a `ts DESC` pick then returns
+		// either row.
+		const row = raw.prepare("SELECT run_id, status, files FROM extraction_log ORDER BY rowid DESC LIMIT 1").get() as {
 			run_id: string;
 			status: string;
 			files: string;
