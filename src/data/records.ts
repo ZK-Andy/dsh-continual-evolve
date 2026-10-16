@@ -1,9 +1,10 @@
 /**
- * Row mapping between the SQLite tables and the store's record shapes.
- * The repository moves rows; this module translates them. Table/column
- * knowledge lives here and in `./resource-kinds.js`, nowhere else.
+ * The single home for storage shapes: each kind's row (snake_case columns
+ * as stored) next to its record (camelCased as served) plus the mapping
+ * between them. The repository moves rows; the mapping here translates
+ * them. Table/column knowledge lives here and in `./resource-kinds.js`,
+ * nowhere else.
  */
-import type { MemoryRecord, PromptRecord, SkillRecord } from "../store-types.js";
 
 export interface MemoryRow {
 	workspace_id: string;
@@ -19,6 +20,27 @@ export interface MemoryRow {
 	corrects: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+/** One stored memory record (snake_case columns camelCased). */
+export interface MemoryRecord {
+	workspaceId: string;
+	id: string;
+	type: "user" | "feedback" | "reference";
+	title: string;
+	description: string;
+	body: string;
+	status: "active" | "quarantined" | "archived";
+	/** Origin session id, `null` for imports. */
+	sourceSession: string | null;
+	/** Trajectory seq range the fact came from ("820-831"), `null` when unknown. */
+	sourceSeqs: string | null;
+	/** The extraction run that wrote it; `'explicit'` for tool writes. */
+	sourceRun: string | null;
+	/** Id of the memory this row corrects/supersedes in the same workspace, `null` when standalone. */
+	corrects: string | null;
+	createdAt: string;
+	updatedAt: string;
 }
 
 /**
@@ -58,6 +80,24 @@ export interface PromptRow {
 	updated_at: string;
 }
 
+/** One stored prompt supplement (workspace-scoped reusable prompt text). Prompts carry no type and no scope. */
+export interface PromptRecord {
+	workspaceId: string;
+	id: string;
+	title: string;
+	description: string;
+	body: string;
+	status: "active" | "quarantined" | "archived";
+	/** Origin session id, `null` for imports. */
+	sourceSession: string | null;
+	/** Trajectory seq range the supplement came from ("820-831"), `null` when unknown. */
+	sourceSeqs: string | null;
+	/** The run that wrote it; `'explicit'` for tool writes. */
+	sourceRun: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+
 /**
  * Map one prompts row to its record shape.
  * @param row - The raw prompts row.
@@ -91,6 +131,24 @@ export interface SkillRow {
 	source_run: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+/** One stored skill record (snake_case columns camelCased). Skills carry no type. */
+export interface SkillRecord {
+	workspaceId: string;
+	id: string;
+	title: string;
+	description: string;
+	body: string;
+	status: "active" | "quarantined" | "archived";
+	/** Origin session id, `null` for imports. */
+	sourceSession: string | null;
+	/** Trajectory seq range the skill came from ("820-831"), `null` when unknown. */
+	sourceSeqs: string | null;
+	/** The run that wrote it; `'explicit'` for tool writes. */
+	sourceRun: string | null;
+	createdAt: string;
+	updatedAt: string;
 }
 
 /**

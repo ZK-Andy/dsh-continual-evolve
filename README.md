@@ -93,8 +93,7 @@ Layout:
 ├── src/
 │   ├── index.ts            # registration: section + tools + extraction + review + card wiring
 │   ├── store.ts            # store assembly: open/migrate, per-kind method builders, re-exports
-│   ├── store-types.ts      # shared row/record/ledger shapes
-│   ├── store-facets.ts     # store surface per domain (memory/skill/prompt, heartbeat, review, admin)
+│   ├── store-types.ts      # store surface (single MemoryStore) + ledger/account shapes
 │   ├── token-usage.ts      # single accounting entry: normalize provider usage, pure sums
 │   ├── plugin-log.ts       # the plugin's own log table (the host logger has no sink to write to)
 │   ├── retention.ts        # ledger retention: one 30-day window, day-throttled prune trigger
@@ -114,7 +113,7 @@ Layout:
 │   ├── import-md.ts        # lossless legacy markdown migration
 │   ├── workspace-hint.ts   # card: the host's current workspace as the opening default
 │   ├── data/               # storage back end: database, generic repository + descriptors,
-│   │                       # migration, ledgers, review accounts, patrol
+│   │                       # row/record shapes (single home), migration, ledgers, review accounts, patrol
 │   ├── services/           # write gates: per-kind rules + per-action batch application
 │   └── surfaces/           # presentation: unified evolve_* tools, card routes + settings mount,
 │                           # injection, snapshots, file projection (read-only, patrol-reconciled)

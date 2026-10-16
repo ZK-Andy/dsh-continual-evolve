@@ -93,8 +93,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 ├── src/
 │   ├── index.ts            # 注册：section + 工具 + 提取 + 评审 + 卡片接线
 │   ├── store.ts            # 存储装配：打开/迁移、按类方法组装、对外重导出
-│   ├── store-types.ts      # 共享行/记录/账本形状
-│   ├── store-facets.ts     # 存储表面按域拆分（记忆/技能/提示词、心跳、评审、管理）
+│   ├── store-types.ts      # 存储表面（单 MemoryStore）+ 账本/账户形状
 │   ├── token-usage.ts      # 统一记账口：归一各家用量、纯累加
 │   ├── plugin-log.ts       # 插件自有日志：只写库表（宿主 logger 无承接方）
 │   ├── retention.ts        # 账本保留期：30 天窗口 + 按日节流的裁剪触发
@@ -113,7 +112,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 │   ├── extraction-prompt.ts  # 提取 prompt + 应答解析
 │   ├── import-md.ts        # 旧版 markdown 无损迁移
 │   ├── workspace-hint.ts   # 卡片：宿主当前工作区作为打开时的默认选中
-│   ├── data/               # 存储后端：连接、通用仓储 + 描述符、迁移、账本、评审账目、巡检
+│   ├── data/               # 存储后端：连接、通用仓储 + 描述符、行/记录形状（单一家）、迁移、账本、评审账目、巡检
 │   ├── services/           # 写门禁：按类规则 + 按动作批量应用
 │   └── surfaces/           # 表现层：统一 evolve_* 工具、卡片路由 + 设置挂载、注入、
 │                           # 快照、文件投影（只读，巡检对账）
