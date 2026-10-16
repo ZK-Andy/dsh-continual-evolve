@@ -1,22 +1,24 @@
 # TS 架构规范
 
-> 适用 `src/` 全部模块（经典分层后：`store.ts`（存储装配）/ `index.ts`（插件组装根）/ `surfaces/`（工具、卡片、注入、投影）/ `services/`（写门禁规则与批量应用）/ `data/`（连接、通用仓储、迁移、账本、巡检），`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
+> 适用 `src/` 全部模块与 `client/`（经典分层：`store.ts`（存储装配）/ `index.ts`（插件组装根）/ `surfaces/`（工具、卡片、注入、投影）/ `services/`（写门禁规则与批量应用）/ `data/`（连接、通用仓储、迁移、账本、巡检）/ `client/`（唯一的宿主侧渲染层：请求时投影与全局设置表面），`test/` 镜像被测文件归属）。见 ADR `2026-10-06-sqlite-single-store` 与 `2026-10-04-zcode-alignment-teardown`。
 
-## 1. 组装根唯一性
+## 1. 组装根与分层归属
 
-- `index.ts` 是唯一组装根：唯一读 Config、唯一声明 `inject`、唯一声明宿主 API 形状（不 import DSH 类型包）；section 渲染与提示词文案在 `surfaces/`；存储装配在 `store.ts`（类型在 `store-types.ts`）；统一读写工具在 `surfaces/evolve-tools.ts`；提取轨在 `extraction.ts`。
-- 委托条款：组装根可将挂载执行委托给 `surfaces/` 内聚挂载模块（如卡片挂载），但 Config 解包（volatile `.get()`）必须留在根内完成，挂载模块只收普通函数、复用根声明的宿主形状，不得自建第二份。400 行预算与本条打架时优先拆分，不豁免回根。
+- `index.ts` 是唯一组装根：唯一读 Config 做解包（volatile `.get()` 不出根）、唯一声明 `inject` 与宿主 API 形状（不 import DSH 类型包）；挂载执行可委托 `surfaces/` 内聚挂载模块，被委托方只收普通函数、复用根声明的形状，不得自建第二份、不读 Config。400 行预算与本条打架时优先拆分，不豁免回根。
+- 存储装配在 `store.ts`（共享形状在 `store-types.ts`，表面按能力域分面在 `store-facets.ts`，调用方依赖最窄分面）；统一读写工具在 `surfaces/evolve-tools.ts`；提取轨在 `extraction.ts`；section 渲染与提示词文案在 `surfaces/`。
+- 宿主侧渲染只在 `client/`：职责两条——请求时投影（记忆/技能/提示词）与全局设置表面；只经同源 fetch 调本插件路由，不直连 store，不引用宿主未声明服务；文案走 `locale.register` + `bind`，样式走 `var(--dsw-alias-*)` token + `dce-` 前缀、单文件一次注入，primitives 缺席时原生兜底；保持单 bundle（host loader 只认一个 bundle id，禁打包器、禁构建拼接）。
 - 一个 system-prompt section 一个注册点；section 名与 order 集中管理。
 
 ## 2. 模块规模预算
 
 | 预算 | 上限 |
 |---|---|
-| 单文件行数 | ≤ 400 |
+| 单文件行数（`src/`） | ≤ 400 |
 | 单文件出度（import 的内部模块数） | ≤ 12；组装根 `index.ts` ≤ 14 |
-| 单函数行数（软） | ≤ 80 |
+| 单函数行数（`src/`，软） | ≤ 80（超了只警告） |
+| 单函数行数（`client/`，硬） | ≤ 80（上帝方法不允许，超了门禁失败；文件行数因单 bundle 豁免） |
 
-超限必须在重构计划内拆分或携带 ADR 豁免；新增文件直接按预算卡。
+超限必须在重构计划内拆分或携带 ADR 豁免；新增文件直接按预算卡。`client/` 无 import、无出度，出度规则不适用。
 
 ## 3. 退役规则
 
@@ -29,9 +31,3 @@
 1. 注入永不破坏会话组装：查库/bootstrap 的任何失败都降级为空渲染，不抛进宿主；`node:sqlite` 不可用时插件整体降级为无操作 + 告警。
 2. prompt section 会话内字节稳定（prompt cache 契约）。
 3. **存储单写者**：插件代码是记忆库的字面唯一写者——模型意图（显式与自动）一律经结构化提案过机械门禁（约束/枚举/secret/去重）后由代码事务内落盘；任何"模型直写存储"的路径都违宪。后台提取（定时器/监听器/LLM 调用）是唯一获准的常驻自动化，其护栏：轮级触发 + 去抖合并、机械跳过记账、全程 `extraction_log` 可对账（ADR `2026-10-06-sqlite-single-store`）。
-
-## 5. 客户端（client/）
-
-- `client/` 是唯一的宿主侧渲染层，职责只有两条：请求时投影（记忆/技能/提示词）与全局设置表面。只经同源 fetch 调本插件路由，不直连 store，不引用宿主未声明服务；文案走 `locale.register` + `bind`，样式走 `var(--dsw-alias-*)` token + `dce-` 前缀、单文件一次注入，primitives 缺席时原生兜底。
-- 保持单 bundle（host loader 只认一个 bundle id，禁打包器、禁构建拼接）；函数硬预算 80 行——上帝方法不允许，偿还手法是无 hook 纯函数抽取（hook 调用点原位不动）；文件行数因单 bundle 豁免，不设上限。
-- 门禁脚本对 `client/*.js` 只卡函数硬预算（`src/` 的软警告与出度规则不适用：无 import、无出度）。

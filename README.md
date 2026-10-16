@@ -94,6 +94,7 @@ Layout:
 │   ├── index.ts            # registration: section + tools + extraction + review + card wiring
 │   ├── store.ts            # store assembly: open/migrate, per-kind method builders, re-exports
 │   ├── store-types.ts      # shared row/record/ledger shapes
+│   ├── store-facets.ts     # store surface per domain (memory/skill/prompt, heartbeat, review, admin)
 │   ├── token-usage.ts      # single accounting entry: normalize provider usage, pure sums
 │   ├── plugin-log.ts       # the plugin's own log table (the host logger has no sink to write to)
 │   ├── retention.ts        # ledger retention: one 30-day window, day-throttled prune trigger

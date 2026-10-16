@@ -1,10 +1,10 @@
 #!/usr/bin/env -S ../../node_modules/.bin/tsx
 /**
- * Verify module budgets (docs/architecture-standard.md §2 + §5): src
+ * Verify module budgets (docs/architecture-standard.md §2): src
  * single-file lines ≤ 400, internal-module out-degree ≤ 12 (assembly root
  * index.ts ≤ 14). Single-function lines ≤ 80 is soft in src: reported as
- * warnings, never fails. client/*.js has no file-line budget (single-bundle
- * exemption) but its functions are hard-capped at 80 (god functions banned).
+ * warnings, never fails; hard in client/*.js (god functions banned, while
+ * the bundle file itself carries no line budget).
  *
  * Line counts use wc -l semantics (newline characters). Out-degree counts
  * distinct relative (./ or ../) module specifiers in static and dynamic
@@ -186,7 +186,7 @@ function main(): number {
 	console.log(`Checked ${files.length} src modules`);
 	for (const e of errors) console.log(`FAIL: ${e}`);
 	for (const w of warns) console.log(`WARN: ${w}`);
-	// §5: the client bundle has no file-line budget, but god functions are
+	// §2: the client bundle has no file-line budget, but god functions are
 	// banned — over-long client functions fail the gate, not warn.
 	try {
 		if (statSync("client").isDirectory()) {

@@ -94,6 +94,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 │   ├── index.ts            # 注册：section + 工具 + 提取 + 评审 + 卡片接线
 │   ├── store.ts            # 存储装配：打开/迁移、按类方法组装、对外重导出
 │   ├── store-types.ts      # 共享行/记录/账本形状
+│   ├── store-facets.ts     # 存储表面按域拆分（记忆/技能/提示词、心跳、评审、管理）
 │   ├── token-usage.ts      # 统一记账口：归一各家用量、纯累加
 │   ├── plugin-log.ts       # 插件自有日志：只写库表（宿主 logger 无承接方）
 │   ├── retention.ts        # 账本保留期：30 天窗口 + 按日节流的裁剪触发

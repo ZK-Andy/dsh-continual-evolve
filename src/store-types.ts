@@ -1,16 +1,19 @@
 /**
- * The store's public shapes: every record, ledger, and account interface
- * plus the {@link MemoryStore} surface every consumer (tool, extraction,
- * card, injection) programs against. Implementation lives in
- * `./store.js` (assembly), `./data/*` ( SQL and accounts), and
- * `./services/skill-apply.js` (skill writes); this file carries no SQL.
+ * The store's shared shapes: every record, ledger, and account interface
+ * plus the constants both sides use. The store surface itself lives in
+ * `./store-facets.js` (one interface per capability domain, composed as
+ * {@link MemoryStore}); implementation lives in `./store.js` (assembly),
+ * `./data/*` (SQL and accounts), and `./services/skill-apply.js` (skill
+ * writes); this file carries no SQL.
  */
 import type { MemoryProposal } from "./services/memory-rules.js";
-import type { PromptProposal } from "./services/prompt-rules.js";
 import type { SkillProposal } from "./services/skill-rules.js";
 import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
+
+/** Re-exported so existing importers keep working: the composed store surface (facets in `./store-facets.js`). */
+export type { MemoryStore } from "./store-facets.js";
 
 /** State-table keys owned by the store (partitioned per workspace, `""` = global). */
 export const CURSOR_KEY_PREFIX = "seq:";
@@ -265,136 +268,4 @@ export interface PatrolResult {
 	promptOrphanFtsRows: number;
 	/** Prompts quarantined by the secret screen, with the redacted reasons. */
 	promptQuarantined: { workspaceId: string; id: string; reason: string }[];
-}
-
-/** The store surface every consumer (tool, extraction, card, injection) uses. */
-export interface MemoryStore {
-	readonly path: string;
-	get(workspaceId: string, id: string): MemoryRecord | undefined;
-	/** Active records, injection order: feedback > user > reference, then newest. */
-	list(workspaceId: string): MemoryRecord[];
-	/** Every non-archived record regardless of status (the card's projection). */
-	listAll(workspaceId: string): MemoryRecord[];
-	/**
-	 * Keyword search, workspace-scoped: whitespace-separated tokens are
-	 * AND-combined — trigram FTS when every token is ≥3 chars, literal LIKE
-	 * substrings otherwise, and a LIKE fallback whenever FTS finds nothing.
-	 */
-	search(workspaceId: string, query: string, limit?: number): MemoryRecord[];
-	/** The sole write gate: validate all proposals, apply atomically, ledger. */
-	applyProposals(ctx: ProposalContext, proposals: readonly MemoryProposal[]): ProposalOutcome[];
-	/** Ledger a run that produced no mutations (skips must be auditable too). */
-	logSkipped(entry: LedgerEntry): void;
-	cursor(workspaceId: string, sessionId: string): number | undefined;
-	setCursor(workspaceId: string, sessionId: string, seq: number): void;
-	state(workspaceId: string, key: string): string | undefined;
-	setState(workspaceId: string, key: string, value: string): void;
-	listWorkspaces(): WorkspaceSummary[];
-	/**
-	 * The partition with the most recent session activity: the newest ledger
-	 * instant against the newest memory or skill write, whichever is later.
-	 * The ledgers carry a row for every run — including skips and explicit
-	 * writes — so they track "a session worked here", while the memory write
-	 * is the durable fallback for a partition whose ledger rows were pruned.
-	 * Undefined only when the store holds neither.
-	 */
-	mostRecentlyActiveWorkspace(): string | undefined;
-	/** Hygiene pass: orphan FTS cleanup + secret quarantine. */
-	patrol(): PatrolResult;
-	/**
-	 * Append one plugin-log line — the durable home for plugin diagnostics,
-	 * because the host's logger has no exporter on a stock install.
-	 */
-	logPlugin(entry: PluginLogEntry): void;
-	/** Ledger and log rows older than the cutoff, removed (the unbounded tables). */
-	pruneLedger(beforeIso: string): number;
-	close(): void;
-	/** One active prompt supplement from a partition, undefined when absent. */
-	getPrompt(workspaceId: string, id: string): PromptRecord | undefined;
-	/** Active prompt supplements of one partition, newest first. */
-	listPrompts(workspaceId: string): PromptRecord[];
-	/** Every non-archived prompt supplement of one partition, newest first. */
-	listAllPrompts(workspaceId: string): PromptRecord[];
-	/**
-	 * Keyword search over prompt supplements, workspace-scoped: same
-	 * AND-combined trigram/LIKE discipline as memory search.
-	 */
-	searchPrompts(workspaceId: string, query: string, limit?: number): PromptRecord[];
-	/**
-	 * The sole prompt write gate: validate all proposals, apply atomically,
-	 * ledger with before/after snapshots. Prompts project to no files.
-	 */
-	applyPromptProposals(ctx: ProposalContext, proposals: readonly PromptProposal[]): PromptProposalOutcome[];
-	/** Partitions holding active prompt supplements. */
-	listPromptWorkspaces(): WorkspaceSummary[];
-	/** One active skill row from a partition, undefined when absent. */
-	getSkill(workspaceId: string, id: string): SkillRecord | undefined;
-	/** Active skills of one partition, newest first. */
-	listSkills(workspaceId: string): SkillRecord[];
-	/** Every non-archived skill of one partition, newest first. */
-	listAllSkills(workspaceId: string): SkillRecord[];
-	/**
-	 * Keyword search over skills, workspace-scoped: same AND-combined
-	 * trigram/LIKE discipline as memory search.
-	 */
-	searchSkills(workspaceId: string, query: string, limit?: number): SkillRecord[];
-	/**
-	 * The sole skill write gate: validate all proposals, apply atomically,
-	 * ledger with before/after snapshots, then sync the materialized files.
-	 * File sync never fails the batch — the database is the source of truth
-	 * and patrol retries whatever the filesystem refused.
-	 */
-	applySkillProposals(
-		ctx: ProposalContext,
-		proposals: readonly SkillProposal[],
-	): { outcomes: SkillProposalOutcome[]; warnings: SkillFileWarning[] };
-	/** Partitions holding active skills (the card's skill fence). */
-	listSkillWorkspaces(): WorkspaceSummary[];
-	/**
-	 * Record one real skill consumption (a body served by id, never a list
-	 * or search hit). Accounting never fails the read — failures degrade
-	 * silently, exactly like file sync never fails a write batch.
-	 */
-	recordSkillUse(workspaceId: string, skillId: string, scope: string): void;
-	/** Aggregate usage for one skill, undefined when never consumed. */
-	getSkillUse(workspaceId: string, skillId: string, scope: string): SkillUse | undefined;
-	/**
-	 * Record one real memory consumption (a body served by id, never a list
-	 * or search hit). Same heartbeat discipline as skill usage: accounting
-	 * never fails the read it rides on.
-	 */
-	recordMemoryUse(workspaceId: string, memoryId: string): void;
-	/** Aggregate usage for one memory, undefined when never consumed. */
-	getMemoryUse(workspaceId: string, memoryId: string): SkillUse | undefined;
-	/**
-	 * Record one real prompt consumption (a body served by id, never a list
-	 * or search hit). Same heartbeat discipline as skill usage: accounting
-	 * never fails the read it rides on.
-	 */
-	recordPromptUse(workspaceId: string, promptId: string): void;
-	/** Aggregate usage for one prompt supplement, undefined when never consumed. */
-	getPromptUse(workspaceId: string, promptId: string): SkillUse | undefined;
-	/** Append one per-item content-review verdict (the `item-review` account). */
-	logReview(entry: ReviewLogEntry): void;
-	/**
-	 * Atomically consume one unit of today's review budget: returns the
-	 * remaining budget after consumption, or -1 when the day is exhausted
-	 * (the caller drops the low-priority item and counts it as dropped).
-	 */
-	consumeReviewBudget(day: string, budget: number): number;
-	/** Today's rollup row, undefined when nothing ran yet today. */
-	getDaily(day: string): DailyStats | undefined;
-	/** Merge one run's counters into today's rollup row (upsert, additive). */
-	mergeDaily(day: string, budget: number, delta: DailyDelta): void;
-	/**
-	 * Soft-isolate one item (review quarantine verdict): hidden from
-	 * injection and reads, never deleted — the ledger keeps the before
-	 * snapshot for undo. Returns false when the row is absent.
-	 */
-	quarantine(workspaceId: string, kind: "memory" | "skill", id: string): boolean;
-	/**
-	 * The review history of one item: last verdict instant and landed
-	 * rewrite count, undefined when never reviewed (a new item).
-	 */
-	reviewStateOf(workspaceId: string, kind: "memory" | "skill", id: string): { lastTs: string | null; evolveCount: number } | undefined;
 }

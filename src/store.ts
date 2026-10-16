@@ -6,9 +6,11 @@
  * propose, the gates land. See ADR `2026-10-06-sqlite-single-store`.
  *
  * This file is the assembly root for storage: it opens the database,
- * prepares the statements, and spreads the method factories over one
- * {@link MemoryStore}. Row shapes live in `./store-types.js`, SQL bundles
- * in `./data/resource-kinds.js`, row mapping in `./data/records.js`,
+ * prepares the statements, and spreads the six method factories over one
+ * {@link MemoryStore} (one facet per factory — memory / skill / prompt
+ * partitions, usage heartbeat, review accounts, store admin).
+ * Row shapes live in `./store-types.js`, facet interfaces in
+ * `./store-facets.js`, SQL bundles in `./data/resource-kinds.js`, row mapping in `./data/records.js`,
  * ledgers in `./data/ledger.js`, review accounts in
  * `./data/review-accounts.js`, skill writes in `./services/skill-apply.js`,
  * and file projection in `./surfaces/skill-projection.js`.

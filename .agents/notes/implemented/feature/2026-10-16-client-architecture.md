@@ -31,6 +31,7 @@ Status: implemented
 
 ## Consequences
 
-- `SettingsCard` 66、`WorkspaceScopeMenu`、`WorkspaceBlock`、`MemoryCard` 全员 ≤80；`apply` 回 70 内；门禁双轨（`src/` 原样 + `client/` 函数硬门）全绿。
+- `SettingsCard` 66、`WorkspaceScopeMenu`、`WorkspaceBlock`、`MemoryCard` 全员 ≤80；`apply` 回 70 内；门禁双轨（`src/` 原样 + `client/` 函数硬门）全绿零警告。
+- 标准融合写法：委托并入 §1 组装根定义，client 职责并入 §1 分层归属、函数硬 80 并入 §2 预算表——无附录条款。
 - hook 顺序测试零改动：抽取的 helper 全无 hooks，`makeHookReact` 下标体系 intact。
 - 新增测试只锁纯逻辑（快照转换、脏检查、校验、选择解析、查询匹配），组件行为靠既有 hook 测试覆盖。
