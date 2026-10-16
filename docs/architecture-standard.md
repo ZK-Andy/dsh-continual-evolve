@@ -31,3 +31,7 @@
 1. 注入永不破坏会话组装：查库/bootstrap 的任何失败都降级为空渲染，不抛进宿主；`node:sqlite` 不可用时插件整体降级为无操作 + 告警。
 2. prompt section 会话内字节稳定（prompt cache 契约）。
 3. **存储单写者**：插件代码是记忆库的字面唯一写者——模型意图（显式与自动）一律经结构化提案过机械门禁（约束/枚举/secret/去重）后由代码事务内落盘；任何"模型直写存储"的路径都违宪。后台提取（定时器/监听器/LLM 调用）是唯一获准的常驻自动化，其护栏：轮级触发 + 去抖合并、机械跳过记账、全程 `extraction_log` 可对账（ADR `2026-10-06-sqlite-single-store`）。
+
+## 5. 分层语义门禁
+
+`scripts/verify-layering.ts`（进 `run-gates` 与 pre-commit）：R1 每文件显式列出允许的相对引用边（含两装配文件，无概括特权，新文件必须登记）；R2 SQL/表名裸字符串只许 `data/`；R3 `config.X?.y?.get(` 只许 `index.ts`（volatile 解包是组装根本职，循环读器由根单例构造后传入）；R4 `src/` 根只留装配与形状四文件。R5（client 函数硬 80）仍由 `verify-src-budgets.ts` 拥有。

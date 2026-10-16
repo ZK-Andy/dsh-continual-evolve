@@ -51,12 +51,12 @@ import {
 } from "./services/review.js";
 import {
 	createFrozenMemorySection,
-	cwdOf,
 	DEFAULT_MAX_CHARS,
 	DEFAULT_MEMORY_SECTION_ORDER,
 	MEMORY_SECTION_NAME,
 	memorySectionText,
 } from "./surfaces/memory-section.js";
+import { cwdOf } from "./services/agent.js";
 import { importWorkspaceMd } from "./services/import-md.js";
 import { openMemoryStore } from "./store.js";
 import { createPluginLog } from "./services/plugin-log.js";
@@ -178,10 +178,13 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			mountToolsWhenAvailable(host, store, state, log);
 			mountCreatorSkillsWhenAvailable(host, log);
 			mountExtractionWhenAvailable(host, store, config, log);
-			mountReviewWhenAvailable(host, store, config, log);
+			// One live reader built by the root, shared by the loop and the card:
+			// volatile config is unpacked here, never in the mounts.
+			const readReviewSettings = readReviewSettingsOf(config);
+			mountReviewWhenAvailable(host, store, { enabled: readReviewSettings().enabled, read: readReviewSettings }, log);
 			mountSettingsPresentation(host, log);
 			if (config.memoryCard?.enabled !== false) {
-				mountCardWhenAvailable(host, store, readReviewSettingsOf(config), log);
+				mountCardWhenAvailable(host, store, readReviewSettings, log);
 			}
 			log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 		},

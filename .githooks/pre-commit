@@ -30,4 +30,8 @@ echo "-> verify-doc-budgets.ts"
 echo "-> verify-governance.ts"
 ./node_modules/.bin/tsx scripts/verify-governance.ts
 
+# 6) 分层语义（快；纯文件扫描）
+echo "-> verify-layering.ts"
+./node_modules/.bin/tsx scripts/verify-layering.ts
+
 echo "pre-commit OK"

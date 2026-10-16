@@ -16,7 +16,7 @@ import { readMemoryRecords, writeMemoryRecord } from "./evolve-memory.js";
 import { readPromptRecords, writePromptRecord } from "./evolve-prompts.js";
 import { readSkillRecords, writeSkillRecord } from "./evolve-skills.js";
 import { stringField } from "./evolve-fields.js";
-import { cwdOf } from "./memory-section.js";
+import { cwdOf } from "../services/agent.js";
 import type { MemoryStore } from "../store.js";
 
 /** Minimal slice of the host tools service. */

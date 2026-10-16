@@ -19,7 +19,7 @@
  */
 import { runChain } from "./chain.js";
 import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
-import { cwdOf } from "../surfaces/memory-section.js";
+import { cwdOf } from "./agent.js";
 import { todayUtc } from "./prompt-date.js";
 import type { PluginLog } from "./plugin-log.js";
 import { collectCandidates } from "./review-candidates.js";

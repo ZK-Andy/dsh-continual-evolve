@@ -14,7 +14,8 @@
  * prompt stays stable within a session and cache reads keep hitting. A
  * memory written mid-session becomes visible in the NEXT session.
  */
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { cwdOf } from "../services/agent.js";
 import { memoryGuideIntro, MEMORY_GUIDE_RULES } from "./memory-guide.js";
 import type { MemoryStore } from "../store.js";
 
@@ -34,35 +35,6 @@ export const DEFAULT_FROZEN_SESSIONS = 32;
  */
 export function memoryDirFor(cwd: string): string {
 	return join(resolve(cwd), ".evolve", "memory");
-}
-
-/** Minimal agent shape the section needs (duck-typed). */
-interface CwdAgentLike {
-	session?: {
-		header?: {
-			cwd?: unknown;
-			meta?: { cwd?: unknown };
-		};
-	};
-	id?: unknown;
-}
-
-/** The assembling agent's validated absolute cwd, or undefined when absent. */
-export function cwdOf(agent: unknown): string | undefined {
-	try {
-		const header = (agent as CwdAgentLike | undefined)?.session?.header;
-		const raw = header?.cwd ?? header?.meta?.cwd;
-		if (typeof raw !== "string" || raw.trim().length === 0) {
-			return undefined;
-		}
-		const cwd = raw.trim();
-		if (!isAbsolute(cwd)) {
-			return undefined;
-		}
-		return resolve(cwd);
-	} catch {
-		return undefined;
-	}
 }
 
 /** What fitting the index into the budget produced. */
@@ -183,7 +155,7 @@ export function createFrozenMemorySection(maxSessions: number = DEFAULT_FROZEN_S
 	const frozen = new Map<string, string>();
 	return {
 		textFor(agent, build) {
-			const id = (agent as CwdAgentLike | undefined)?.id;
+			const id = (agent as { id?: unknown } | undefined)?.id;
 			const key = typeof id === "string" && id.length > 0 ? id : undefined;
 			if (key === undefined) {
 				return build(agent);

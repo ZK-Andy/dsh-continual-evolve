@@ -24,7 +24,7 @@
 import { ERROR_REASON_MAX, errorText, runExtractionInner } from "./extraction-ring.js";
 import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
 import type { LedgerEntry, MemoryStore } from "../store.js";
-import { cwdOf } from "../surfaces/memory-section.js";
+import { cwdOf } from "./agent.js";
 import { resolveCallRoute, type LlmRuntime, type RouteResolver } from "./llm-call.js";
 import type { PluginLog } from "./plugin-log.js";
 

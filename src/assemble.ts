@@ -10,10 +10,6 @@ import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "
 import { resolveCallRoute, type RouteResolver } from "./services/llm-call.js";
 import {
 	createReviewScheduler,
-	REVIEW_DEFAULT_BATCH_SIZE,
-	REVIEW_DEFAULT_DAILY_BUDGET,
-	REVIEW_DEFAULT_DRY_RUN,
-	REVIEW_DEFAULT_STALE_DAYS,
 	type ReviewSchedulerHost,
 } from "./services/review.js";
 import type { SurfaceReader } from "./services/extraction-surface.js";
@@ -125,13 +121,31 @@ export function mountExtractionWhenAvailable(host: HostContext, store: MemorySto
 }
 
 /**
+ * Per-drain review timings, re-read live on every drain (volatile config).
+ * Built by the assembly root (the only place that unpacks volatile config);
+ * this module only receives the entry-built reader and switch.
+ */
+export interface ReviewTimings {
+	dryRun: boolean;
+	dailyBudget: number;
+	batchSize: number;
+	staleDays: number;
+}
+
+/** What the review loop needs from config: a mount-time switch plus a live reader. */
+export interface ReviewSchedule {
+	enabled: boolean;
+	read(): ReviewTimings;
+}
+
+/**
  * Arm the review scheduler through a nested inject: the loop needs only the
  * LLM sibling (no trajectory reader — it judges stored items, not session
  * increments), so it mounts independently from extraction. Own prompts, own
  * budget, own ledger; the store's write gates are the only shared surface.
  */
-export function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig, log: PluginLog): void {
-	if (config.review?.enabled?.get() === false) {
+export function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, review: ReviewSchedule, log: PluginLog): void {
+	if (review.enabled === false) {
 		log.info("review-disabled", "review disabled by config — extraction and tools unaffected");
 		return;
 	}
@@ -152,12 +166,7 @@ export function mountReviewWhenAvailable(host: HostContext, store: MemoryStore, 
 			...(resolveRoute === undefined ? {} : { resolveRoute }),
 		}, {
 			enabled: true,
-			read: () => ({
-				dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
-				dailyBudget: config.review?.dailyBudget?.get() ?? REVIEW_DEFAULT_DAILY_BUDGET,
-				batchSize: config.review?.batchSize?.get() ?? REVIEW_DEFAULT_BATCH_SIZE,
-				staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
-			}),
+			read: () => review.read(),
 			minIntervalMs: 5 * 60 * 1000,
 		}));
 	});
