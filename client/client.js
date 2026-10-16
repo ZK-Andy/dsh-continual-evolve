@@ -991,6 +991,298 @@ window.__ModuleLoader__.load({
 			return createElement("div", { key: "block", className: "dce-workspace" }, scope, body, skillsBody);
 		}
 
+		/** Snapshot → editable form: booleans stay, numbers become strings. */
+		function settingsFormOf(settings) {
+			return {
+				enabled: settings.enabled !== false,
+				dryRun: settings.dryRun !== false,
+				dailyBudget: String(settings.dailyBudget),
+				batchSize: String(settings.batchSize),
+				staleDays: String(settings.staleDays),
+			};
+		}
+
+		/** Whether the form differs from the last saved snapshot. */
+		function isSettingsDirty(form, saved) {
+			return (
+				form.enabled !== (saved.enabled !== false) ||
+				form.dryRun !== (saved.dryRun !== false) ||
+				form.dailyBudget !== String(saved.dailyBudget) ||
+				form.batchSize !== String(saved.batchSize) ||
+				form.staleDays !== String(saved.staleDays)
+			);
+		}
+
+		/**
+		 * Validate the form into a POST patch. Numbers stay strings while
+		 * editing, so the check runs here — not in the row component.
+		 *
+		 * @returns {{ok: true, patch: object} | {ok: false}}
+		 */
+		function validateSettingsForm(form) {
+			var patch = {
+				enabled: form.enabled,
+				dryRun: form.dryRun,
+				dailyBudget: Number(form.dailyBudget),
+				batchSize: Number(form.batchSize),
+				staleDays: Number(form.staleDays),
+			};
+			if (
+				!Number.isInteger(patch.dailyBudget) ||
+				patch.dailyBudget < 0 ||
+				!Number.isInteger(patch.batchSize) ||
+				patch.batchSize < 1 ||
+				!Number.isInteger(patch.staleDays) ||
+				patch.staleDays < 0
+			) {
+				return { ok: false };
+			}
+			return { ok: true, patch: patch };
+		}
+
+		/** One checkbox row: label + hint on the left, switch on the right. */
+		function settingsSwitchRow(t, row) {
+			return createElement(
+				"label",
+				{ key: row.key, className: "dce-setting" },
+				createElement(
+					"span",
+					{ className: "dce-setting-text" },
+					createElement("span", { className: "dce-setting-name" }, row.name),
+					createElement("span", { className: "dce-setting-desc" }, row.desc),
+				),
+				createElement("input", {
+					type: "checkbox",
+					className: "dce-check",
+					checked: row.checked,
+					disabled: row.disabled,
+					onChange: function (event) {
+						row.onChange(event.target.checked);
+					},
+				}),
+			);
+		}
+
+		/** One number row: label on the left, fixed-width input on the right. */
+		function settingsNumberRow(t, row) {
+			return createElement(
+				"label",
+				{ key: row.key, className: "dce-setting" },
+				createElement(
+					"span",
+					{ className: "dce-setting-text" },
+					createElement("span", { className: "dce-setting-name" }, row.label),
+				),
+				createElement("input", {
+					type: "number",
+					min: row.key === "batchSize" ? "1" : "0",
+					step: "1",
+					className: "dce-number",
+					value: row.value,
+					disabled: row.disabled,
+					onChange: function (event) {
+						row.onChange(event.target.value);
+					},
+				}),
+			);
+		}
+
+		/** Save/reset buttons: disabled while busy or clean. */
+		function settingsActions(t, actions) {
+			return createElement(
+				"div",
+				{ key: "actions", className: "dce-actions" },
+				createElement(
+					"button",
+					{
+						type: "button",
+						className: "dce-fallback-btn",
+						disabled: actions.busy || !actions.dirty,
+						onClick: actions.onSave,
+					},
+					actions.busy ? t("settingsSaving") : t("settingsSave"),
+				),
+				createElement(
+					"button",
+					{
+						type: "button",
+						className: "dce-fallback-btn",
+						disabled: actions.busy || !actions.dirty,
+						onClick: actions.onReset,
+					},
+					t("settingsReset"),
+				),
+			);
+		}
+
+		/** The line under the buttons: error, ok, saving, or nothing. */
+		function settingsStatusLine(t, notice, busy) {
+			if (notice.kind === "error") {
+				return createElement("div", { key: "status", className: "dce-error" }, t("settingsSaveFailed") + notice.message);
+			}
+			if (notice.kind === "ok") {
+				return createElement("div", { key: "status", className: "dce-ok" }, t("settingsSaved"));
+			}
+			if (busy) {
+				return createElement("div", { key: "status", className: "dce-status" }, t("settingsSaving"));
+			}
+			return null;
+		}
+
+		/**
+		 * Run one save: validate, POST, and settle the states the card owns.
+		 * Pure orchestration — no elements, so the card stays a thin composer.
+		 */
+		function submitSettingsForm(t, fetchImpl, form, store) {
+			var checked = validateSettingsForm(form);
+			if (!checked.ok) {
+				store.setNotice({ kind: "error", message: t("settingsNumbersHint") });
+				return;
+			}
+			store.setBusy(true);
+			store.setNotice({ kind: "", message: "" });
+			saveReviewSettings(fetchImpl, checked.patch).then(function (result) {
+				store.setBusy(false);
+				if (result.status === "ready") {
+					store.setModel({ status: "ready", settings: result.settings, message: "" });
+					store.setForm(settingsFormOf(result.settings));
+					store.setNotice({ kind: "ok", message: "" });
+				} else {
+					store.setNotice({ kind: "error", message: result.message });
+				}
+			});
+		}
+
+		/** The settings card header: title + desc + rotating chevron. */
+		function settingsCardHeader(t, open, onToggle) {
+			return createElement(
+				"button",
+				{
+					type: "button",
+					className: "dce-head",
+					"aria-expanded": open ? "true" : "false",
+					onClick: onToggle,
+				},
+				createElement(
+					"div",
+					{ className: "dce-head-text" },
+					createElement("div", { className: "dce-name" }, t("settingsTitle")),
+					createElement("div", { className: "dce-desc" }, t("settingsDesc")),
+				),
+				createElement(
+					"span",
+					{ className: "dce-chevron", "data-open": open ? "true" : "false" },
+					createElement(Chevron, null),
+				),
+			);
+		}
+
+		/**
+		 * Load-on-first-open for the settings card. A hook (not an effect
+		 * inline) so the card itself stays a thin composer; call order is
+		 * fixed, so hook slots never shift.
+		 */
+		function useReviewSettingsLoad(open, model, store) {
+			useEffect(
+				function () {
+					if (!open || model.status !== "idle") {
+						return;
+					}
+					store.setModel({ status: "loading", settings: null, message: "" });
+					loadReviewSettings(fetch).then(function (result) {
+						if (result.status === "ready") {
+							store.setModel({ status: "ready", settings: result.settings, message: "" });
+							store.setForm(settingsFormOf(result.settings));
+						} else if (result.status === "unavailable") {
+							store.setModel({ status: "unavailable", settings: null, message: "" });
+						} else {
+							store.setModel({ status: "error", settings: null, message: result.message });
+						}
+					});
+				},
+				[open],
+			);
+		}
+
+		/** Field setter factory: immutable form update plus notice reset. */
+		function makeSettingsFieldSetter(setForm, setNotice) {
+			return function (key, value) {
+				setForm(function (current) {
+					if (current === null) {
+						return current;
+					}
+					var next = {};
+					for (var field in current) {
+						if (Object.prototype.hasOwnProperty.call(current, field)) {
+							next[field] = current[field];
+						}
+					}
+					next[key] = value;
+					return next;
+				});
+				setNotice({ kind: "", message: "" });
+			};
+		}
+
+		/** The open settings form: hint, rows, actions, status. No hooks inside. */
+		function settingsFormBody(t, vm) {
+			return createElement(
+				"div",
+				{ key: "inner", className: "dce-workspace" },
+				createElement("div", { key: "hint", className: "dce-hint" }, t("settingsHint")),
+				settingsSwitchRow(t, {
+					key: "enabled",
+					name: t("settingsEnabled"),
+					desc: t("settingsEnabledHint"),
+					checked: vm.form.enabled,
+					disabled: vm.busy,
+					onChange: function (value) {
+						vm.setField("enabled", value);
+					},
+				}),
+				settingsSwitchRow(t, {
+					key: "dryRun",
+					name: t("settingsDryRun"),
+					desc: t("settingsDryRunHint"),
+					checked: vm.form.dryRun,
+					disabled: vm.busy,
+					onChange: function (value) {
+						vm.setField("dryRun", value);
+					},
+				}),
+				settingsNumberRow(t, {
+					key: "dailyBudget",
+					label: t("settingsDailyBudget"),
+					value: vm.form.dailyBudget,
+					disabled: vm.busy,
+					onChange: function (value) {
+						vm.setField("dailyBudget", value);
+					},
+				}),
+				settingsNumberRow(t, {
+					key: "batchSize",
+					label: t("settingsBatchSize"),
+					value: vm.form.batchSize,
+					disabled: vm.busy,
+					onChange: function (value) {
+						vm.setField("batchSize", value);
+					},
+				}),
+				settingsNumberRow(t, {
+					key: "staleDays",
+					label: t("settingsStaleDays"),
+					value: vm.form.staleDays,
+					disabled: vm.busy,
+					onChange: function (value) {
+						vm.setField("staleDays", value);
+					},
+				}),
+				createElement("div", { key: "numbersHint", className: "dce-hint" }, t("settingsNumbersHint")),
+				settingsActions(t, { dirty: vm.dirty, busy: vm.busy, onSave: vm.onSave, onReset: vm.onReset }),
+				settingsStatusLine(t, vm.notice, vm.busy),
+			);
+		}
+
 		/**
 		 * The settings card: a collapsed-by-default framed disclosure in the
 		 * same chrome as the memory card, but global — it never follows the
@@ -1016,56 +1308,13 @@ window.__ModuleLoader__.load({
 			var noticeState = useState({ kind: "", message: "" });
 			var notice = noticeState[0];
 			var setNotice = noticeState[1];
-			useEffect(
-				function () {
-					if (!open || model.status !== "idle") {
-						return;
-					}
-					setModel({ status: "loading", settings: null, message: "" });
-					loadReviewSettings(fetch).then(function (result) {
-						if (result.status === "ready") {
-							setModel({ status: "ready", settings: result.settings, message: "" });
-							setForm({
-								enabled: result.settings.enabled !== false,
-								dryRun: result.settings.dryRun !== false,
-								dailyBudget: String(result.settings.dailyBudget),
-								batchSize: String(result.settings.batchSize),
-								staleDays: String(result.settings.staleDays),
-							});
-						} else if (result.status === "unavailable") {
-							setModel({ status: "unavailable", settings: null, message: "" });
-						} else {
-							setModel({ status: "error", settings: null, message: result.message });
-						}
-					});
-				},
-				[open],
-			);
+			useReviewSettingsLoad(open, model, { setModel: setModel, setForm: setForm });
 			if (model.status === "unavailable") {
 				return null;
 			}
-			var header = createElement(
-				"button",
-				{
-					type: "button",
-					className: "dce-head",
-					"aria-expanded": open ? "true" : "false",
-					onClick: function () {
-						setOpen(!open);
-					},
-				},
-				createElement(
-					"div",
-					{ className: "dce-head-text" },
-					createElement("div", { className: "dce-name" }, t("settingsTitle")),
-					createElement("div", { className: "dce-desc" }, t("settingsDesc")),
-				),
-				createElement(
-					"span",
-					{ className: "dce-chevron", "data-open": open ? "true" : "false" },
-					createElement(Chevron, null),
-				),
-			);
+			var header = settingsCardHeader(t, open, function () {
+				setOpen(!open);
+			});
 			if (!open) {
 				return createElement("div", { className: "dce-card", "data-open": "false" }, header);
 			}
@@ -1076,191 +1325,33 @@ window.__ModuleLoader__.load({
 				inner = createElement("div", { key: "inner", className: "dce-error" }, t("settingsLoadFailed") + model.message);
 			} else if (form !== null) {
 				var saved = model.settings;
-				var dirty =
-					form.enabled !== (saved.enabled !== false) ||
-					form.dryRun !== (saved.dryRun !== false) ||
-					form.dailyBudget !== String(saved.dailyBudget) ||
-					form.batchSize !== String(saved.batchSize) ||
-					form.staleDays !== String(saved.staleDays);
-				var setField = function (key, value) {
-					setForm(function (current) {
-						if (current === null) {
-							return current;
-						}
-						var next = {};
-						for (var field in current) {
-							if (Object.prototype.hasOwnProperty.call(current, field)) {
-								next[field] = current[field];
-							}
-						}
-						next[key] = value;
-						return next;
-					});
-					setNotice({ kind: "", message: "" });
-				};
-				var numberField = function (key, label) {
-					return createElement(
-						"label",
-						{ key: key, className: "dce-setting" },
-						createElement(
-							"span",
-							{ className: "dce-setting-text" },
-							createElement("span", { className: "dce-setting-name" }, label),
-						),
-						createElement("input", {
-							type: "number",
-							min: key === "batchSize" ? "1" : "0",
-							step: "1",
-							className: "dce-number",
-							value: form[key],
-							disabled: busy,
-							onChange: function (event) {
-								setField(key, event.target.value);
-							},
-						}),
-					);
-				};
-				var statusLine =
-					notice.kind === "error"
-						? createElement("div", { key: "status", className: "dce-error" }, t("settingsSaveFailed") + notice.message)
-						: notice.kind === "ok"
-							? createElement("div", { key: "status", className: "dce-ok" }, t("settingsSaved"))
-							: busy
-								? createElement("div", { key: "status", className: "dce-status" }, t("settingsSaving"))
-								: null;
-				inner = createElement(
-					"div",
-					{ key: "inner", className: "dce-workspace" },
-					createElement("div", { key: "hint", className: "dce-hint" }, t("settingsHint")),
-					createElement(
-						"label",
-						{ key: "enabled", className: "dce-setting" },
-						createElement(
-							"span",
-							{ className: "dce-setting-text" },
-							createElement("span", { className: "dce-setting-name" }, t("settingsEnabled")),
-							createElement("span", { className: "dce-setting-desc" }, t("settingsEnabledHint")),
-						),
-						createElement("input", {
-							type: "checkbox",
-							className: "dce-check",
-							checked: form.enabled,
-							disabled: busy,
-							onChange: function (event) {
-								setField("enabled", event.target.checked);
-							},
-						}),
-					),
-					createElement(
-						"label",
-						{ key: "dryRun", className: "dce-setting" },
-						createElement(
-							"span",
-							{ className: "dce-setting-text" },
-							createElement("span", { className: "dce-setting-name" }, t("settingsDryRun")),
-							createElement("span", { className: "dce-setting-desc" }, t("settingsDryRunHint")),
-						),
-						createElement("input", {
-							type: "checkbox",
-							className: "dce-check",
-							checked: form.dryRun,
-							disabled: busy,
-							onChange: function (event) {
-								setField("dryRun", event.target.checked);
-							},
-						}),
-					),
-					numberField("dailyBudget", t("settingsDailyBudget")),
-					numberField("batchSize", t("settingsBatchSize")),
-					numberField("staleDays", t("settingsStaleDays")),
-					createElement("div", { key: "numbersHint", className: "dce-hint" }, t("settingsNumbersHint")),
-					createElement(
-						"div",
-						{ key: "actions", className: "dce-actions" },
-						createElement(
-							"button",
-							{
-								type: "button",
-								className: "dce-fallback-btn",
-								disabled: busy || !dirty,
-								onClick: function () {
-									var patch = {
-										enabled: form.enabled,
-										dryRun: form.dryRun,
-										dailyBudget: Number(form.dailyBudget),
-										batchSize: Number(form.batchSize),
-										staleDays: Number(form.staleDays),
-									};
-									if (
-										!Number.isInteger(patch.dailyBudget) ||
-										patch.dailyBudget < 0 ||
-										!Number.isInteger(patch.batchSize) ||
-										patch.batchSize < 1 ||
-										!Number.isInteger(patch.staleDays) ||
-										patch.staleDays < 0
-									) {
-										setNotice({ kind: "error", message: t("settingsNumbersHint") });
-										return;
-									}
-									setBusy(true);
-									setNotice({ kind: "", message: "" });
-									saveReviewSettings(fetch, patch).then(function (result) {
-										setBusy(false);
-										if (result.status === "ready") {
-											setModel({ status: "ready", settings: result.settings, message: "" });
-											setForm({
-												enabled: result.settings.enabled !== false,
-												dryRun: result.settings.dryRun !== false,
-												dailyBudget: String(result.settings.dailyBudget),
-												batchSize: String(result.settings.batchSize),
-												staleDays: String(result.settings.staleDays),
-											});
-											setNotice({ kind: "ok", message: "" });
-										} else {
-											setNotice({ kind: "error", message: result.message });
-										}
-									});
-								},
-							},
-							busy ? t("settingsSaving") : t("settingsSave"),
-						),
-						createElement(
-							"button",
-							{
-								type: "button",
-								className: "dce-fallback-btn",
-								disabled: busy || !dirty,
-								onClick: function () {
-									setForm({
-										enabled: saved.enabled !== false,
-										dryRun: saved.dryRun !== false,
-										dailyBudget: String(saved.dailyBudget),
-										batchSize: String(saved.batchSize),
-										staleDays: String(saved.staleDays),
-									});
-									setNotice({ kind: "", message: "" });
-								},
-							},
-							t("settingsReset"),
-						),
-					),
-					statusLine,
-				);
+				var setField = makeSettingsFieldSetter(setForm, setNotice);
+				var store = { setModel: setModel, setForm: setForm, setBusy: setBusy, setNotice: setNotice };
+				inner = settingsFormBody(t, {
+					form: form,
+					saved: saved,
+					dirty: isSettingsDirty(form, saved),
+					busy: busy,
+					notice: notice,
+					setField: setField,
+					onSave: function () {
+						submitSettingsForm(t, fetch, form, store);
+					},
+					onReset: function () {
+						setForm(settingsFormOf(saved));
+						setNotice({ kind: "", message: "" });
+					},
+				});
 			}
-			var body = createElement(
-				"div",
-				{ key: "body", className: "dce-body" },
-				inner,
-			);
 			return createElement(
 				"div",
 				{ className: "dce-card", "data-open": "true" },
 				header,
-				body,
+				createElement("div", { key: "body", className: "dce-body" }, inner),
 			);
 		}
 
-		/**
+/**
 		 * The card: a collapsed-by-default framed disclosure (dshmarket
 		 * SettingsCard shape) whose open body is the ZCode-memory-viewer-shaped
 		 * read-only projection.
@@ -1459,6 +1550,9 @@ window.__ModuleLoader__.load({
 		exports.loadSkillContent = loadSkillContent;
 		exports.loadReviewSettings = loadReviewSettings;
 		exports.saveReviewSettings = saveReviewSettings;
+		exports.settingsFormOf = settingsFormOf;
+		exports.isSettingsDirty = isSettingsDirty;
+		exports.validateSettingsForm = validateSettingsForm;
 		exports.apply = function apply(ctx) {
 			var tRaw = null;
 			try {

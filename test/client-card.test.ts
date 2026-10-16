@@ -834,3 +834,29 @@ describe("review settings helpers", () => {
 		});
 	});
 });
+
+describe("settings form helpers", () => {
+	const SETTINGS = { enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 };
+
+	it("converts a snapshot to an editable form and detects dirtiness", async () => {
+		const { exports } = loadBundle(makeReact());
+		const toForm = exports.settingsFormOf as (settings: typeof SETTINGS) => Record<string, unknown>;
+		const isDirty = exports.isSettingsDirty as (form: Record<string, unknown>, saved: typeof SETTINGS) => boolean;
+		const form = toForm(SETTINGS);
+		expect(form).toEqual({ enabled: true, dryRun: true, dailyBudget: "100", batchSize: "10", staleDays: "30" });
+		expect(isDirty(form, SETTINGS)).toBe(false);
+		expect(isDirty({ ...form, dryRun: false }, SETTINGS)).toBe(true);
+		expect(isDirty({ ...form, batchSize: "0" }, SETTINGS)).toBe(true);
+	});
+
+	it("validates the form into a POST patch", async () => {
+		const { exports } = loadBundle(makeReact());
+		const validate = exports.validateSettingsForm as (form: Record<string, unknown>) => { ok: boolean; patch?: unknown };
+		const toForm = exports.settingsFormOf as (settings: typeof SETTINGS) => Record<string, unknown>;
+		const good = validate(toForm(SETTINGS));
+		expect(good).toEqual({ ok: true, patch: SETTINGS });
+		expect(validate({ ...toForm(SETTINGS), batchSize: "0" }).ok).toBe(false);
+		expect(validate({ ...toForm(SETTINGS), dailyBudget: "1.5" }).ok).toBe(false);
+		expect(validate({ ...toForm(SETTINGS), staleDays: "-1" }).ok).toBe(false);
+	});
+});
