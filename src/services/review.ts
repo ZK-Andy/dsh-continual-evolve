@@ -18,7 +18,8 @@
  * gates (`applyProposals` / `applySkillProposals` / `quarantine`).
  */
 import { runChain } from "./chain.js";
-import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
+import type { LlmRuntime } from "./llm-call.js";
+import { resolveCallRoute, type ModelSelection, type ResolvedRoute, type RouteResolver, type RouteSource } from "./model-route.js";
 import { cwdOf } from "./agent.js";
 import { todayUtc } from "./prompt-date.js";
 import type { PluginLog } from "./plugin-log.js";
@@ -34,9 +35,9 @@ export interface ReviewDeps {
 	store: MemoryStore;
 	llm: LlmRuntime | undefined;
 	/**
-	 * Route resolution for a direct call: the agent's explicit selection first,
-	 * the host default model second. Absent keeps the legacy agent-options-only
-	 * behavior (tests and older hosts).
+	 * Route resolution for a direct call: the session's current selection, its
+	 * last request header, the agent's creation-time options, the host default.
+	 * Absent keeps the legacy agent-options-only behavior (tests, older hosts).
 	 */
 	resolveRoute?: RouteResolver | undefined;
 }
@@ -253,7 +254,7 @@ interface ReviewSchedulerState {
 	running: boolean;
 	lastRunAt: number;
 	pendingWorkspace: string | undefined;
-	lastRoute: { provider: string; model: string; sessionId: string } | undefined;
+	lastRoute: { provider: string; model: string; sessionId: string; source: RouteSource } | undefined;
 }
 
 export function createReviewScheduler(
@@ -271,20 +272,24 @@ export function createReviewScheduler(
 			if (typeof id !== "string" || id.length === 0) {
 				return;
 			}
-			// A drain needs a live route. A session running on the host default
-			// model carries no explicit selection, so the default-model service
-			// fills it in; with neither, the boundary is only remembered and the
-			// next turn boundary reviews it. This is what keeps a review call
-			// from being sent with an empty provider or a dead session identity
-			// (both of which the provider answers with a bare stream error).
-			// Absent resolver (older host, tests) still reads the agent's explicit
-			// selection: the fallback is the legacy behavior, never "no route".
-			const route = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
+			// A drain needs a live route: the session's current selection first,
+			// then its last request header, the agent's creation-time options, the
+			// host default. With none, the boundary is only remembered and the next
+			// turn boundary reviews it — a review call is never sent with an empty
+			// provider or a dead session identity (both answered by a bare stream
+			// error). Absent resolver (older host, tests) still reads the agent's
+			// explicit selection: the fallback is the legacy behavior, never "no route".
+			const route: ResolvedRoute | undefined = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
 			if (route === undefined) {
 				state.pendingWorkspace = cwdOf(agent);
 				return;
 			}
-			state.lastRoute = { provider: route.provider, model: route.model, sessionId: id };
+			state.lastRoute = {
+				provider: route.selection.provider,
+				model: route.selection.model,
+				sessionId: id,
+				source: route.source,
+			};
 			drainReview(state, host, deps, config, cwdOf(agent));
 		}),
 	);
@@ -341,7 +346,7 @@ async function runDrain(
 	deps: ReviewDeps,
 	config: ReviewSchedulerConfig,
 	workspace: string | undefined,
-	route: { provider: string; model: string; sessionId: string } | undefined,
+	route: { provider: string; model: string; sessionId: string; source: RouteSource } | undefined,
 ): Promise<void> {
 	const settings = config.read();
 	const day = todayUtc();
@@ -360,6 +365,13 @@ async function runDrain(
 		const ordered = workspace === undefined
 			? candidates
 			: [...candidates.filter((c) => c.workspaceId === workspace), ...candidates.filter((c) => c.workspaceId !== workspace)];
+		// The trace's review half: whatever candidate the scheduler settled on is
+		// in the log before the first item pays for a verdict (2026-10-16). The
+		// log face never throws — a trace must not take a drain down.
+		host.log.info("route-resolved", `${route?.provider ?? "?"}/${route?.model ?? "?"} via ${route?.source ?? "none"} (review drain)`, {
+			workspaceId: workspace,
+			sessionId: route?.sessionId,
+		});
 		const summary = await runReviewBatch(deps, ordered.slice(0, settings.batchSize), {
 			day, budget: settings.dailyBudget, dryRun: settings.dryRun,
 			batchSize: settings.batchSize, staleDays: settings.staleDays,

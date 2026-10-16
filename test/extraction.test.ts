@@ -707,6 +707,7 @@ describe("runExtraction — unexpected failures leave a ledger row, never throw"
 		};
 		const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 		const warns: string[] = [];
+		const infos: string[] = [];
 		const host = {
 			on(event: string, handler: (...args: unknown[]) => void) {
 				const list = listeners.get(event) ?? [];
@@ -715,7 +716,7 @@ describe("runExtraction — unexpected failures leave a ledger row, never throw"
 				return () => undefined;
 			},
 			log: {
-				info: (): void => undefined,
+				info: (event: string, message: string): void => { infos.push(`${event}: ${message}`); },
 				warn: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
 				error: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
 			},
@@ -753,6 +754,7 @@ describe("createExtractionScheduler", () => {
 	function makeHost(depsOverrides: Partial<ExtractionDeps> = {}) {
 		const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 		const warns: string[] = [];
+		const infos: string[] = [];
 		const d = deps(depsOverrides);
 		const host = {
 			on(event: string, handler: (...args: unknown[]) => void) {
@@ -762,12 +764,12 @@ describe("createExtractionScheduler", () => {
 				return () => listeners.set(event, list.filter((h) => h !== handler));
 			},
 			log: {
-				info: (): void => undefined,
+				info: (event: string, message: string): void => { infos.push(`${event}: ${message}`); },
 				warn: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
 				error: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
 			},
 		};
-		return { listeners, warns, d, host };
+		return { listeners, warns, infos, d, host };
 	}
 
 	/** An LLM whose every stream waits on its own gate, so runs can overlap. */
@@ -816,7 +818,7 @@ describe("createExtractionScheduler", () => {
 
 	it("uses the injected route resolver when the session carries no explicit selection", async () => {
 		const { listeners, d, host } = makeHost();
-		d.resolveRoute = () => ({ provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" });
+		d.resolveRoute = () => ({ selection: { provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" }, source: "agent-options" });
 		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent: { id: "sess-1", session: { header: { cwd: WS } } } });
@@ -826,6 +828,20 @@ describe("createExtractionScheduler", () => {
 			}
 		});
 		expect(d.llm.calls[0]?.provider).toBe("dsh-opencode-go");
+	});
+
+	it("traces which candidate supplied the route", async () => {
+		const { listeners, d, host, infos } = makeHost();
+		d.resolveRoute = () => ({ selection: { provider: "p", model: "m" }, source: "session-selection" });
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
+		createExtractionScheduler(host, d);
+		listeners.get("agent/turn-stopping")![0]({ agent: { id: "sess-1", session: { header: { cwd: WS } } } });
+		await vi.waitFor(() => {
+			if (!infos.some((line) => line.startsWith("route-resolved"))) {
+				throw new Error("not traced yet");
+			}
+		});
+		expect(infos.find((line) => line.startsWith("route-resolved"))).toBe("route-resolved: p/m via session-selection (extract drain)");
 	});
 
 	it("sends nothing when neither the session nor the host has a route", async () => {

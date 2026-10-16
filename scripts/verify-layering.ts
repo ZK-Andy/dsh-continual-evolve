@@ -30,6 +30,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"services/extraction",
 		"services/extraction-surface",
 		"services/llm-call",
+		"services/model-route",
 		"services/plugin-log",
 		"services/review",
 		"store",
@@ -92,6 +93,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"services/extraction-ring",
 		"services/extraction-surface",
 		"services/llm-call",
+		"services/model-route",
 		"services/plugin-log",
 		"store",
 	],
@@ -103,6 +105,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"services/extraction-surface",
 		"services/llm-call",
 		"services/memory-rules",
+		"services/model-route",
 		"services/prompt-date",
 		"services/retention",
 		"services/subagent",
@@ -111,7 +114,7 @@ const EDGES: Record<string, readonly string[]> = {
 	],
 	"services/extraction-surface.ts": [],
 	"services/import-md.ts": ["services/memory-rules", "store"],
-	"services/llm-call.ts": [],
+	"services/llm-call.ts": ["services/model-route"],
 	"services/memory-apply.ts": [
 		"data/ledger",
 		"data/records",
@@ -120,6 +123,8 @@ const EDGES: Record<string, readonly string[]> = {
 		"store-types",
 	],
 	"services/memory-rules.ts": ["data/secret"],
+	// The route candidates a direct call resolves through (see `model-route.ts`).
+	"services/model-route.ts": [],
 	"services/plugin-log.ts": ["services/retention", "store"],
 	"services/prompt-apply.ts": [
 		"data/ledger",
@@ -137,6 +142,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"services/agent",
 		"services/chain",
 		"services/llm-call",
+		"services/model-route",
 		"services/plugin-log",
 		"services/prompt-date",
 		"services/review-candidates",
@@ -149,6 +155,7 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/review-ring.ts": [
 		"services/chain",
 		"services/llm-call",
+		"services/model-route",
 		"services/review",
 		"services/review-prompt",
 		"services/subagent",
@@ -172,7 +179,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"store-types",
 	],
 	"services/skill-rules.ts": ["data/secret", "services/memory-rules"],
-	"services/subagent.ts": ["services/llm-call"],
+	"services/subagent.ts": ["services/llm-call", "services/model-route"],
 	"services/subagent-defs.ts": [
 		"services/extraction-prompt",
 		"services/prompt-date",

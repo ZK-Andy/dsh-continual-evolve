@@ -207,9 +207,11 @@ describe("createReviewScheduler", () => {
 	function host() {
 		const handlers = new Map<string, (...args: never[]) => void>();
 		const warns: string[] = [];
+		const infos: string[] = [];
 		return {
 			handlers,
 			warns,
+			infos,
 			on: vi.fn((event: string, handler: (...args: never[]) => void): unknown => {
 				handlers.set(event, handler);
 				return (): void => {
@@ -217,7 +219,7 @@ describe("createReviewScheduler", () => {
 				};
 			}),
 			log: {
-				info: (): void => {},
+				info: (event: string, message: string): void => { infos.push(`${event}: ${message}`); },
 				warn: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
 				error: (event: string, message: string): void => { warns.push(`${event}: ${message}`); },
 			},
@@ -248,6 +250,25 @@ describe("createReviewScheduler", () => {
 		dispose();
 	});
 
+	it("traces which candidate supplied the route", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		const h = host();
+		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const dispose = createReviewScheduler(h, {
+			store, llm,
+			resolveRoute: () => ({ selection: { provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" }, source: "session-selection" }),
+		}, { enabled: true, read: () => settings(), minIntervalMs: 0 });
+
+		h.handlers.get("agent/turn-stopping")?.({ agent: { id: "sess-1", session: { header: { cwd: WS } } } } as never);
+		await flush();
+
+		expect(h.infos).toContain("route-resolved: dsh-opencode-go/deepseek-v4.1-flash via session-selection (review drain)");
+		dispose();
+	});
+
 	it("stays quiet on compaction and session close, because neither carries a live route", async () => {
 		const h = host();
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
@@ -273,7 +294,7 @@ describe("createReviewScheduler", () => {
 		const llm = fakeLlm({ gate: `{"worthReview": false, "reason": "略"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
 		const dispose = createReviewScheduler(h, {
 			store, llm,
-			resolveRoute: () => ({ provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" }),
+			resolveRoute: () => ({ selection: { provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" }, source: "agent-options" }),
 		}, { enabled: true, read: () => settings(), minIntervalMs: 0 });
 		// The session has no explicit selection at all — only the default model.
 		h.handlers.get("agent/turn-stopping")?.({ agent: { id: "sess-1", session: { header: { cwd: WS } } } } as never);

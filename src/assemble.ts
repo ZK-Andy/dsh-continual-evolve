@@ -7,7 +7,7 @@
  * receive the resolved config the entry built.
  */
 import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./services/extraction.js";
-import { resolveCallRoute, type RouteResolver } from "./services/llm-call.js";
+import { resolveCallRoute, type RouteResolver } from "./services/model-route.js";
 import {
 	createReviewScheduler,
 	type ReviewSchedulerHost,
@@ -26,12 +26,14 @@ export interface StoreState {
 }
 
 /**
- * Build the route resolver a scheduler uses for its direct calls: the agent's
- * explicit selection first, the host's default-model service second.
+ * Build the route resolver a scheduler uses for its direct calls: the
+ * session's current selection, its last request header, the agent's
+ * creation-time options, the host's default model — the host's own order of
+ * truth (`llm-call.ts` §The route).
  *
- * The default-model service is read through `ctx.get` on every call and never
- * joins an inject list — a host without it (or an older one) must keep working,
- * and its absence only means a session with no explicit selection has no route.
+ * Both host services are read through `ctx.get` on every call and never join
+ * an inject list — a host without them (or an older one) must keep working, and
+ * their absence only moves the answer down the chain.
  */
 function routeResolverOf(scoped: unknown, get: ((name: string) => unknown) | undefined): RouteResolver | undefined {
 	if (typeof get !== "function") {

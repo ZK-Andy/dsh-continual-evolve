@@ -9,7 +9,8 @@
  * attributed, which is what left the gate's failure rate unreadable.
  */
 import { type ChainLink, type ChainOutcome } from "./chain.js";
-import { observedUsageOf, type ModelSelection } from "./llm-call.js";
+import { observedUsageOf } from "./llm-call.js";
+import type { ModelSelection } from "./model-route.js";
 import { evolvePrompt, gatePrompt, type EvolveVerdict } from "./review-prompt.js";
 import { REVIEW_EVOLVE_BY_KIND, REVIEW_GATE_BY_KIND } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";

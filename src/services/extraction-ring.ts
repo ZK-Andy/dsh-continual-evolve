@@ -9,7 +9,8 @@
  * reported before it died.
  */
 import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
-import { observedUsageOf, type ModelSelection } from "./llm-call.js";
+import { observedUsageOf } from "./llm-call.js";
+import type { ModelSelection } from "./model-route.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
 import { CHEAP_INCREMENT_MAX, cheapPrompt, extractionPrompt, manifestLineOf, type ParsedAnswer } from "./extraction-prompt.js";
 import { todayUtc } from "./prompt-date.js";

@@ -5,11 +5,10 @@
  * Four disciplines live in one place because all four were learned the hard
  * way, and none of them is visible at a call site:
  *
- * - **The route.** `agent.options` carries an *explicit* selection only. A
- *   session running on the host's default model carries nothing there, so the
- *   route falls back to the host's `agentDefaultModel` service — the same
- *   value the host Agent loop itself runs on. A caller that still has no
- *   route refuses to send instead of streaming into a provider rejection.
+ * - **The route.** Imported from `./model-route.js`: four candidates in the
+ *   host's own order of truth, the session's current selection first. A caller
+ *   that ends up with no route refuses to send instead of streaming into a
+ *   provider rejection.
  * - **The reasoning effort.** An exact provider/model advertises the effort
  *   ids it accepts, and a request naming one it does not accept is rejected
  *   by capability validation before any provider I/O. The lowest *enabled*
@@ -29,6 +28,8 @@
  *   left failed calls with no model and no token account at all.
  */
 
+import type { ModelSelection } from "./model-route.js";
+
 /** The minimal LLM face a direct call needs (duck-typed host service). */
 export interface LlmStream {
 	stream(options: Record<string, unknown>): AsyncIterable<unknown>;
@@ -46,24 +47,6 @@ export interface LlmRuntime extends LlmStream {
 	/** Resolve one exact provider/model's capabilities; absent on older hosts and test fakes. */
 	resolveModelInfo?(provider: string, model: string): Promise<ModelInfo | undefined> | ModelInfo | undefined;
 }
-
-/** One concrete provider/model route for a direct call. */
-export interface ModelSelection {
-	provider: string;
-	model: string;
-	reasoningEffort?: string | undefined;
-}
-
-/** The host's default-model service, reached as `ctx.get("agentDefaultModel")`. */
-export interface DefaultModelService {
-	currentSelection(): unknown;
-}
-
-/** Read one sibling service off the host context (`ctx.get`). */
-export type ServiceGetter = (name: string) => unknown;
-
-/** Resolve one direct call's route from the agent plus the host default model. */
-export type RouteResolver = (agent: unknown) => ModelSelection | undefined;
 
 /** Effort ids that mean "reasoning off"; a model may advertise only these. */
 export const CLOSED_REASONING_EFFORTS: ReadonlySet<string> = new Set(["disabled", "off", "none"]);
@@ -157,69 +140,6 @@ export class SubagentCallError extends Error {
  */
 export function observedUsageOf(error: unknown): unknown {
 	return error instanceof SubagentCallError ? error.usage : undefined;
-}
-
-/**
- * The host's default model selection, when the host exposes that service.
- *
- * The service is read through `ctx.get` and never joins an inject list: a host
- * without it (or an older one) must keep working, and a failed read is simply
- * "no default", never a mount failure.
- *
- * @param get - The host context's sibling-service reader, when available.
- * @returns The default provider/model (plus effort), or `undefined` when unknown.
- */
-export function defaultRouteOf(get: ServiceGetter | undefined): ModelSelection | undefined {
-	if (get === undefined) {
-		return undefined;
-	}
-	let service: unknown;
-	try {
-		service = get("agentDefaultModel");
-	} catch {
-		// An absent service is not an error here: the caller falls back to refusing.
-		return undefined;
-	}
-	const currentSelection = (service as Partial<DefaultModelService> | undefined)?.currentSelection;
-	if (typeof currentSelection !== "function") {
-		return undefined;
-	}
-	try {
-		return selectionOf(currentSelection.call(service));
-	} catch {
-		// A throwing service is "no default" — the refusal path stays reachable.
-		return undefined;
-	}
-}
-
-/**
- * Resolve the route one direct call runs on: the agent's explicit selection
- * first, the host default second.
- *
- * @param agent - The host Agent the call belongs to (its `options` may be empty).
- * @param get - The host context's sibling-service reader, when available.
- * @returns The route to call with, or `undefined` when there is none to use.
- */
-export function resolveCallRoute(agent: unknown, get: ServiceGetter | undefined): ModelSelection | undefined {
-	const options = (agent as { options?: unknown } | undefined)?.options;
-	return selectionOf(options) ?? defaultRouteOf(get);
-}
-
-/** Narrow one candidate selection object; empty strings count as absent. */
-function selectionOf(value: unknown): ModelSelection | undefined {
-	if (typeof value !== "object" || value === null) {
-		return undefined;
-	}
-	const { provider, model, reasoningEffort } = value as { provider?: unknown; model?: unknown; reasoningEffort?: unknown };
-	if (typeof provider !== "string" || provider.length === 0) {
-		return undefined;
-	}
-	if (typeof model !== "string" || model.length === 0) {
-		return undefined;
-	}
-	return typeof reasoningEffort === "string" && reasoningEffort.length > 0
-		? { provider, model, reasoningEffort }
-		: { provider, model };
 }
 
 /** One completed direct call: its text, usage, terminal finish kind, and chosen effort. */

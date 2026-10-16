@@ -25,10 +25,12 @@ import { ERROR_REASON_MAX, errorText, runExtractionInner } from "./extraction-ri
 import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
 import type { LedgerEntry, MemoryStore } from "../store.js";
 import { cwdOf } from "./agent.js";
-import { resolveCallRoute, type LlmRuntime, type RouteResolver } from "./llm-call.js";
+import type { LlmRuntime } from "./llm-call.js";
+import { resolveCallRoute, type ResolvedRoute, type RouteResolver, type RouteSource } from "./model-route.js";
 import type { PluginLog } from "./plugin-log.js";
 
-export type { LlmStream, LlmRuntime, RouteResolver } from "./llm-call.js";
+export type { LlmStream, LlmRuntime } from "./llm-call.js";
+export type { RouteResolver } from "./model-route.js";
 
 /** Everything a run needs: the store, the session reader, and the LLM. */
 export interface ExtractionDeps {
@@ -36,9 +38,9 @@ export interface ExtractionDeps {
 	surface: SurfaceReader | undefined;
 	llm: LlmRuntime | undefined;
 	/**
-	 * Route resolution for a direct call: the agent's explicit selection first,
-	 * the host default model second. Absent keeps the legacy agent-options-only
-	 * behavior (tests and older hosts).
+	 * Route resolution for a direct call: the session's current selection, its
+	 * last request header, the agent's creation-time options, the host default.
+	 * Absent keeps the legacy agent-options-only behavior (tests, older hosts).
 	 */
 	resolveRoute?: RouteResolver | undefined;
 }
@@ -112,6 +114,8 @@ interface PendingTarget {
 	sessionId: string;
 	provider: string | undefined;
 	model: string | undefined;
+	/** Which candidate supplied the route, for the route trace. */
+	source: RouteSource | undefined;
 }
 
 /** One session's scheduling slot: a run in flight plus its newest boundary. */
@@ -199,12 +203,13 @@ function targetOf(deps: ExtractionDeps, agent: unknown): PendingTarget | null {
 	}
 	// Absent resolver (older host, tests) still reads the agent's explicit
 	// selection: the fallback is the legacy behavior, never "no route".
-	const route = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
+	const route: ResolvedRoute | undefined = deps.resolveRoute?.(agent) ?? resolveCallRoute(agent, undefined);
 	return {
 		agent,
 		sessionId: id,
-		provider: route?.provider,
-		model: route?.model,
+		provider: route?.selection.provider,
+		model: route?.selection.model,
+		source: route?.source,
 	};
 }
 
@@ -218,6 +223,14 @@ function drainScheduler(state: SchedulerState, sessionId: string, trigger: Ledge
 	const target = slot.pending;
 	slot.pending = null;
 	slot.running = true;
+	// The route trace: which candidate answered, so a store that fell back to
+	// `agent.options` (an unreachable projection, a stale header) is visible
+	// instead of looking like a working fix (2026-10-16). The log face never
+	// throws — a trace must not be able to take a drain down.
+	host.log.info("route-resolved", `${target.provider ?? "?"}/${target.model ?? "?"} via ${target.source ?? "none"} (extract drain)`, {
+		workspaceId: cwdOf(target.agent),
+		sessionId: target.sessionId,
+	});
 	void runExtraction(
 		deps,
 		{

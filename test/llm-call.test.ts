@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-	defaultRouteOf,
 	observedUsageOf,
-	resolveCallRoute,
 	selectLowestReasoningEffort,
 	selectMaxTokens,
 	streamOnce,
 	SubagentCallError,
 	type LlmRuntime,
 	type ModelInfo,
-	type ServiceGetter,
 } from "../src/services/llm-call.js";
+import { defaultRouteOf, resolveCallRoute, type ServiceGetter } from "../src/services/model-route.js";
 
 const ROUTE = { provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" };
 
@@ -114,19 +112,95 @@ describe("defaultRouteOf", () => {
 });
 
 describe("resolveCallRoute", () => {
-	it("prefers the agent's explicit selection over the host default", () => {
-		const get = getterOf({ agentDefaultModel: { currentSelection: () => ({ provider: "other", model: "other-model" }) } });
-		expect(resolveCallRoute({ options: { provider: "p", model: "m" } }, get)).toEqual({ provider: "p", model: "m" });
+	const DEFAULT_ROUTE = { provider: "host", model: "host-default" };
+	const agentWith = (session: unknown, options: unknown = undefined) => ({ session, options });
+
+	it("reads the session's current selection before anything else", () => {
+		const get = getterOf({
+			sessionProjections: {
+				stateOf: () => ({ pending: { provider: "p", model: "pending" }, lastUsed: { provider: "p", model: "used" } }),
+			},
+			agentDefaultModel: { currentSelection: () => DEFAULT_ROUTE },
+		});
+		const headers = { requestHeader: () => ({ config: { provider: "h", model: "header" } }) };
+
+		expect(resolveCallRoute(agentWith(headers, { provider: "old", model: "old" }), get)).toEqual({
+			selection: { provider: "p", model: "pending" },
+			source: "session-selection",
+		});
 	});
 
-	it("falls back to the host default when the session carries no explicit selection", () => {
-		const get = getterOf({ agentDefaultModel: { currentSelection: () => ROUTE } });
-		expect(resolveCallRoute({ options: {} }, get)).toEqual(ROUTE);
-		expect(resolveCallRoute(undefined, get)).toEqual(ROUTE);
+	it("uses the projection's lastUsed when nothing is pending", () => {
+		const get = getterOf({ sessionProjections: { stateOf: () => ({ pending: null, lastUsed: { provider: "p", model: "used" } }) } });
+
+		expect(resolveCallRoute(agentWith({}), get)).toEqual({ selection: { provider: "p", model: "used" }, source: "session-selection" });
 	});
 
-	it("reports no route when neither source has one", () => {
-		expect(resolveCallRoute({ options: { provider: "p", model: "" } }, getterOf({}))).toBeUndefined();
+	it("falls back to the session's last request header", () => {
+		const get = getterOf({ sessionProjections: { stateOf: () => ({ pending: null, lastUsed: null }) } });
+		const session = { requestHeader: () => ({ config: { provider: "h", model: "header" } }) };
+
+		expect(resolveCallRoute(agentWith(session, { provider: "old", model: "old" }), get)).toEqual({
+			selection: { provider: "h", model: "header" },
+			source: "request-header",
+		});
+	});
+
+	it("keeps the agent's creation-time options ahead of the host default", () => {
+		const get = getterOf({ agentDefaultModel: { currentSelection: () => DEFAULT_ROUTE } });
+
+		expect(resolveCallRoute(agentWith({}, { provider: "p", model: "m" }), get)).toEqual({
+			selection: { provider: "p", model: "m" },
+			source: "agent-options",
+		});
+	});
+
+	it("falls back to the host default when nothing session-scoped answers", () => {
+		const get = getterOf({ agentDefaultModel: { currentSelection: () => DEFAULT_ROUTE } });
+
+		expect(resolveCallRoute(agentWith({}, {}), get)).toEqual({ selection: DEFAULT_ROUTE, source: "host-default" });
+		expect(resolveCallRoute(undefined, get)).toEqual({ selection: DEFAULT_ROUTE, source: "host-default" });
+	});
+
+	it("skips a projection or a header that cannot answer", () => {
+		const throwingGet: ServiceGetter = (name) => {
+			if (name === "sessionProjections") {
+				throw new Error("no service");
+			}
+			return { currentSelection: () => DEFAULT_ROUTE };
+		};
+		const throwingHeader = {
+			requestHeader: () => {
+				throw new Error("no header");
+			},
+		};
+
+		expect(resolveCallRoute(agentWith(throwingHeader, {}), throwingGet)).toEqual({ selection: DEFAULT_ROUTE, source: "host-default" });
+		// A registry without stateOf, and a state that is not an object: same skip.
+		expect(resolveCallRoute(agentWith({}), getterOf({ sessionProjections: {} , agentDefaultModel: { currentSelection: () => DEFAULT_ROUTE } }))).toEqual({
+			selection: DEFAULT_ROUTE,
+			source: "host-default",
+		});
+		expect(
+			resolveCallRoute(agentWith({}), getterOf({ sessionProjections: { stateOf: () => "garbage" }, agentDefaultModel: { currentSelection: () => DEFAULT_ROUTE } })),
+		).toEqual({ selection: DEFAULT_ROUTE, source: "host-default" });
+		expect(
+			resolveCallRoute(
+				agentWith({}),
+				getterOf({
+					sessionProjections: {
+						stateOf: () => {
+							throw new Error("unregistered key");
+						},
+					},
+					agentDefaultModel: { currentSelection: () => DEFAULT_ROUTE },
+				}),
+			),
+		).toEqual({ selection: DEFAULT_ROUTE, source: "host-default" });
+	});
+
+	it("reports no route when no candidate answers", () => {
+		expect(resolveCallRoute(agentWith({}, { provider: "p", model: "" }), getterOf({}))).toBeUndefined();
 		expect(resolveCallRoute({}, undefined)).toBeUndefined();
 	});
 });

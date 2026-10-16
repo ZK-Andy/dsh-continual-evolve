@@ -14,7 +14,8 @@
  * told" is readable in one table (`subagent-defs.ts`) instead of being spread
  * across call sites, and a job that has no definition cannot be called.
  */
-import { SubagentCallError, streamOnce, type LlmRuntime, type ModelSelection } from "./llm-call.js";
+import { SubagentCallError, streamOnce, type LlmRuntime } from "./llm-call.js";
+import type { ModelSelection } from "./model-route.js";
 
 /** The per-call facts a definition's instruction may be built from. */
 export interface SubagentContext {
