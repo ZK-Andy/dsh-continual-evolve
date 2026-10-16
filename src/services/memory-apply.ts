@@ -14,7 +14,7 @@ import {
 	slugifyId,
 } from "./memory-rules.js";
 import type { LedgerEntry, LedgerFile, MemoryRecord } from "../store-types.js";
-import { writeMemoryLedger } from "../data/ledger.js";
+import { commitWithLedger, writeMemoryLedger } from "../data/ledger.js";
 import { recordOf, type MemoryRow } from "../data/records.js";
 import { type Repository } from "../data/repository.js";
 
@@ -82,8 +82,6 @@ export function applyProposals(
 		}
 	}
 	const applied = outcomes.every((outcome) => outcome.ok);
-	db.database.exec(applied ? "COMMIT" : "ROLLBACK");
-
 	const ledger: LedgerEntry = {
 		runId,
 		sessionId: ctx.sessionId,
@@ -101,7 +99,14 @@ export function applyProposals(
 	if (!applied) {
 		ledger.decision = `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
 	}
-	writeMemoryLedger(db.ledger, ledger);
+	if (applied) {
+		// Body and audit row commit together: a ledger write that fails rolls the
+		// body back instead of leaving an edit with no trace (2026-10-16).
+		commitWithLedger(db.database, () => writeMemoryLedger(db.ledger, ledger));
+	} else {
+		db.database.exec("ROLLBACK");
+		writeMemoryLedger(db.ledger, ledger);
+	}
 	return { outcomes, applied };
 }
 

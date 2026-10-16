@@ -5,8 +5,7 @@
  * here exactly once.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import { LEDGER_OCCURRENCES } from "./migrate.js";
-import { COALESCED_SKIP_REASONS, type LedgerEntry } from "../store-types.js";
+import { COALESCED_SKIP_REASONS, LEDGER_OCCURRENCES, type LedgerEntry } from "../store-types.js";
 
 /**
  * JSON-encode the optional ledger fields and insert the row.
@@ -208,6 +207,34 @@ export function prepareLedgerStmts(database: DatabaseSync): LedgerStmts {
 		),
 		pluginLogPrune: database.prepare("DELETE FROM plugin_log WHERE ts < ?"),
 	};
+}
+
+/**
+ * Write the audit row inside the caller's open transaction, then commit.
+ *
+ * The mutation and its audit row are one unit: a store that cannot record a
+ * change does not make it. That is the 2026-10-16 lesson — the audit insert
+ * hit a stale `CHECK` *after* the body had committed, so the edit landed with
+ * no trace and the ledger called the run a failure. The caller's rejected path
+ * keeps its post-rollback row: nothing landed, so there is nothing to undo.
+ *
+ * @param database - The handle holding the open transaction.
+ * @param writeLedger - The audit-row write to run before COMMIT.
+ * @throws Whatever the ledger write throws, after rolling the transaction back.
+ */
+export function commitWithLedger(database: DatabaseSync, writeLedger: () => void): void {
+	try {
+		writeLedger();
+		database.exec("COMMIT");
+	} catch (error) {
+		try {
+			database.exec("ROLLBACK");
+		} catch {
+			// A COMMIT that itself failed has already ended the transaction; the
+			// ledger error is the one the caller needs to see.
+		}
+		throw error;
+	}
 }
 
 /**

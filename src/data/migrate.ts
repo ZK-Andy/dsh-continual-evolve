@@ -1,13 +1,13 @@
 /**
- * Schema and migrations for the central store: the full DDL for fresh files
- * plus one idempotent ALTER per column added later. The plugin is the sole
- * writer of an existing user database, so each column needs exactly one
- * migration — add the next one here, never inline elsewhere.
+ * Schema and migrations for the central store: the full DDL for fresh files,
+ * one idempotent ALTER per column added later, and the shape guard that
+ * rebuilds a table whose `CHECK` whitelist drifted. The plugin is the sole
+ * writer of an existing user database, so each change needs exactly one
+ * migration — a column goes here, a value set goes in `./schema.js`.
  */
 import type { DatabaseSync } from "node:sqlite";
-
-/** Ledger column counting the wake-ups one coalesced row stands for. */
-export const LEDGER_OCCURRENCES = "occurrences";
+import { LEDGER_OCCURRENCES } from "../store-types.js";
+import { extractionLogDdl, rebuildDriftedTables } from "./schema.js";
 
 const SCHEMA_DDL = `
 PRAGMA journal_mode=WAL;
@@ -37,14 +37,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
 -- AFTER DELETE/UPDATE triggers would need (SQL logic error, verified on
 -- SQLite 3.53.4). The sole-writer design makes code-side sync reliable;
 -- patrol() reconciles any residue.
-CREATE TABLE IF NOT EXISTS extraction_log (
-  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
-  trigger TEXT CHECK (trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')),
-  decision TEXT, skip_reason TEXT,
-  status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
-  cheap_usage TEXT, cheap_error TEXT,
-  files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
-);
+${extractionLogDdl("extraction_log")};
 CREATE TABLE IF NOT EXISTS state (
   workspace_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY (workspace_id, key)
@@ -181,7 +174,9 @@ CREATE TABLE IF NOT EXISTS prompt_usage (
 `;
 
 /**
- * Apply the full schema, then every later column migration, in order.
+ * Apply the full schema, then every later column migration, then the shape
+ * guard — a store that predates a `CHECK` value-set change is rebuilt here,
+ * so the value set the code writes rows with is the one every store runs on.
  * @param database - The open database handle.
  */
 export function migrateDatabase(database: DatabaseSync): void {
@@ -192,6 +187,9 @@ export function migrateDatabase(database: DatabaseSync): void {
 	ensureExtractionCheapError(database);
 	ensureReviewProposed(database);
 	ensureReviewModel(database);
+	// Columns first, then shape: the rebuild copies the guard's column list,
+	// and the ALTERs above are what make an old table carry all of it.
+	rebuildDriftedTables(database);
 }
 
 /**

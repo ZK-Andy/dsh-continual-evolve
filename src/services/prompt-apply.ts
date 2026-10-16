@@ -10,7 +10,7 @@ import { isValidMemoryId } from "./memory-rules.js";
 import { promptFieldGateReasons, slugifyPromptId, type PromptFields, type PromptProposal } from "./prompt-rules.js";
 import type { ProposalContext } from "./memory-apply.js";
 import type { LedgerFile, PromptRecord, PromptProposalOutcome } from "../store-types.js";
-import { writePromptLedger } from "../data/ledger.js";
+import { commitWithLedger, writePromptLedger } from "../data/ledger.js";
 import { promptRecordOf, type PromptRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";
 
@@ -217,9 +217,8 @@ export function applyPromptBatch(
 		}
 	}
 	const applied = outcomes.every((outcome) => outcome.ok);
-	database.exec(applied ? "COMMIT" : "ROLLBACK");
 	const decision = applied ? ctx.decision : `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
-	writePromptLedger(promptLog, {
+	const ledger = {
 		runId,
 		sessionId: ctx.sessionId,
 		workspaceId: ctx.workspaceId,
@@ -227,6 +226,14 @@ export function applyPromptBatch(
 		decision,
 		status: applied ? "applied" : "rejected",
 		files: applied ? files : [],
-	});
+	};
+	if (applied) {
+		// Body and audit row commit together: a ledger write that fails rolls the
+		// body back instead of leaving an edit with no trace (2026-10-16).
+		commitWithLedger(database, () => writePromptLedger(promptLog, ledger));
+	} else {
+		database.exec("ROLLBACK");
+		writePromptLedger(promptLog, ledger);
+	}
 	return outcomes;
 }

@@ -35,6 +35,27 @@ export const COALESCED_SKIP_REASONS = new Set(["no-user-prose", "no-new-events"]
 /** Longest message kept; a runaway error string must not become a table row. */
 export const PLUGIN_LOG_MESSAGE_MAX = 2000;
 
+/**
+ * The extraction ledger's trigger whitelist: the values its `CHECK` accepts,
+ * the type its rows carry, and the list the schema guard compares a live store
+ * against. One home — the DDL text is generated from it (see
+ * `./data/schema.js`), so a new trigger cannot land in one place only.
+ */
+export const LEDGER_TRIGGERS = [
+	"turn-debounce",
+	"compaction",
+	"close-drain",
+	"explicit",
+	"import",
+	"item-review",
+] as const;
+
+/** One extraction-ledger trigger. */
+export type LedgerTrigger = (typeof LEDGER_TRIGGERS)[number];
+
+/** The ledger column counting the wake-ups one coalesced row stands for. */
+export const LEDGER_OCCURRENCES = "occurrences";
+
 /** What a single skill proposal produced. */
 export interface SkillProposalOutcome {
 	id: string;
@@ -150,7 +171,7 @@ export interface LedgerEntry {
 	runId?: string | undefined;
 	sessionId?: string | undefined;
 	workspaceId?: string | undefined;
-	trigger: "turn-debounce" | "compaction" | "close-drain" | "explicit" | "import" | "item-review";
+	trigger: LedgerTrigger;
 	decision?: string | undefined;
 	skipReason?: string | undefined;
 	status?: string | undefined;

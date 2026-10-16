@@ -37,8 +37,8 @@ const EDGES: Record<string, readonly string[]> = {
 		"surfaces/skill-provider",
 	],
 	"data/database.ts": [],
-	"data/ledger.ts": ["data/migrate", "store-types"],
-	"data/migrate.ts": [],
+	"data/ledger.ts": ["store-types"],
+	"data/migrate.ts": ["data/schema", "store-types"],
 	"data/patrol.ts": ["data/records", "data/repository", "data/review-accounts", "store-types"],
 	"data/records.ts": [],
 	"data/repository.ts": ["data/records", "data/resource-kinds"],
@@ -46,6 +46,8 @@ const EDGES: Record<string, readonly string[]> = {
 	// repository's ResourceKind contract it is written against.
 	"data/resource-kinds.ts": ["data/repository"],
 	"data/review-accounts.ts": ["data/records", "data/repository", "data/secret", "store-types"],
+	// Guarded table shapes: the DDL single source, the drift probe, and the rebuild.
+	"data/schema.ts": ["store-types"],
 	"data/secret.ts": [],
 	"index.ts": [
 		"assemble",

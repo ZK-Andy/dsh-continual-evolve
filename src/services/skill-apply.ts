@@ -11,14 +11,14 @@ import type { SkillFields, SkillProposal } from "./skill-rules.js";
 import { isValidMemoryId } from "./memory-rules.js";
 import { skillFieldGateReasons, slugifySkillId } from "./skill-rules.js";
 import type { LedgerFile, SkillFileWarning, SkillRecord, SkillProposalOutcome } from "../store-types.js";
-import { writeSkillLedger } from "../data/ledger.js";
+import { commitWithLedger, writeSkillLedger } from "../data/ledger.js";
 import { skillRecordOf, type SkillRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";
 
 /** A skill mutation's audit payload (action/record pinned, shape shared). */
 export type SkillLedgerFile = LedgerFile<SkillProposal["action"], SkillRecord>;
 
-/** A post-commit file operation (files sync after COMMIT, never fail the batch). */
+/** A file-projection operation a skill batch syncs (the database stays the source of truth). */
 export interface SkillFileIntent {
 	partition: string;
 	id: string;
@@ -306,9 +306,15 @@ export interface SkillFileOps {
 }
 
 /**
- * Run one skill batch: validate all proposals, apply atomically, sync files
- * post-commit, ledger. The database is the source of truth: files sync after
- * the commit and never fail the batch — patrol retries whatever refuses.
+ * Run one skill batch: validate all proposals, apply atomically, sync files,
+ * ledger — rows, the projection that reports on them, and the audit row all in
+ * one transaction. The file sync runs before the COMMIT because its warnings
+ * belong to the row that commits with the rows (2026-10-16: a body that
+ * commits without its audit row is the half-state this batch exists to
+ * prevent). The database still outranks the projection: a file operation
+ * never fails the batch (patrol reconciles whatever a later ROLLBACK leaves
+ * behind), and a throw from the projection layer — which its contract does not
+ * allow — is recorded as a warning rather than undoing landable rows.
  * @param skills - The skills repository (inside this batch's transaction).
  * @param database - The open database handle (for the transaction).
  * @param skillLog - The prepared skill_log insert.
@@ -339,10 +345,18 @@ export function applySkillBatch(
 		}
 	}
 	const applied = outcomes.every((outcome) => outcome.ok);
-	database.exec(applied ? "COMMIT" : "ROLLBACK");
+	const decision = applied ? ctx.decision : `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
 	const warnings: SkillFileWarning[] = [];
-	if (applied) {
-		for (const intent of intents) {
+	// One row shape for both paths: only `status`/`files` differ, and `warnings`
+	// fills in below (the projection reports after the rows are staged).
+	const entry = { runId, sessionId: ctx.sessionId, workspaceId: ctx.workspaceId, trigger: ctx.trigger, decision, warnings };
+	if (!applied) {
+		database.exec("ROLLBACK");
+		writeSkillLedger(skillLog, { ...entry, status: "rejected", files: [] });
+		return { outcomes, warnings };
+	}
+	for (const intent of intents) {
+		try {
 			const root = files.rootOf(intent.partition);
 			if (intent.op === "write") {
 				const row = skills.getRow(intent.partition, intent.id);
@@ -353,18 +367,18 @@ export function applySkillBatch(
 			} else {
 				warnings.push(...files.removeFile(root, intent.id));
 			}
+		} catch (error) {
+			// The projection's contract is warnings, not throws; a throw is still
+			// the projection's problem to report, never grounds to drop landable
+			// rows (patrol retries the file).
+			warnings.push({ id: intent.id, warning: `skill ${intent.id}: file sync threw, patrol will retry: ${failureHead(error)}` });
 		}
 	}
-	const decision = applied ? ctx.decision : `${ctx.decision ?? ""} first failure: ${outcomes.find((o) => !o.ok)?.reason ?? ""}`.trim();
-	writeSkillLedger(skillLog, {
-		runId,
-		sessionId: ctx.sessionId,
-		workspaceId: ctx.workspaceId,
-		trigger: ctx.trigger,
-		decision,
-		status: applied ? "applied" : "rejected",
-		files: applied ? ledgerFiles : [],
-		warnings,
-	});
+	commitWithLedger(database, () => writeSkillLedger(skillLog, { ...entry, status: "applied", files: ledgerFiles }));
 	return { outcomes, warnings };
+}
+
+/** One-line head of a thrown file-operation error. */
+function failureHead(error: unknown): string {
+	return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim();
 }
