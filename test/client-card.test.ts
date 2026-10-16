@@ -356,6 +356,10 @@ describe("client bundle", () => {
 		// Theme tokens still route through the alias layer.
 		expect(code).toContain("var(--dsw-alias-bg-layer-1");
 		expect(code).toContain("UI.Button");
+		// The settings switches ride the host Switch (dshmarket contract),
+		// falling back to the themed checkbox on old hosts.
+		expect(code).toContain("UI.Switch");
+		expect(code).toContain("primitives.Switch");
 		// The v0.12.1 [object Object] shape must not return.
 		expect(code).not.toMatch(/createElement\("strong"[^)]*\)\s*\+/);
 	});
@@ -377,6 +381,122 @@ describe("client bundle", () => {
 			expect(meta.meta.title.length).toBeGreaterThan(0);
 			expect(meta.meta.description.length).toBeGreaterThan(0);
 		}
+	});
+});
+
+describe("settings switch rows", () => {
+	const SETTINGS = { enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 };
+	const FORM = { enabled: true, dryRun: false, dailyBudget: "100", batchSize: "10", staleDays: "30" };
+
+	/** Render the settings card with a preset open+ready hook state. */
+	function renderSettingsForm(
+		harness: ReturnType<typeof makeHookReact>,
+		modules: Record<string, unknown>,
+	): { settingsCard: ElementLike; harness: ReturnType<typeof makeHookReact> } {
+		const { exports } = loadBundle(harness.react, modules);
+		const { ctx, registrations } = makeCtx();
+		(exports.apply as (ctx: unknown) => void)(ctx);
+		const page = registrations[0].render({}) as ElementLike;
+		const settingsCard = (page.children as ElementLike[])[0];
+		harness.begin("settings");
+		(settingsCard.type as (props: never) => unknown)(settingsCard.props as never);
+		const setters = harness.setters;
+		(setters[0] as (value: unknown) => void)(true);
+		(setters[1] as (value: unknown) => void)({ status: "ready", settings: SETTINGS, message: "" });
+		(setters[2] as (value: unknown) => void)({ ...FORM });
+		harness.begin("settings");
+		const rendered = (settingsCard.type as (props: never) => unknown)(settingsCard.props as never) as ElementLike;
+		return { settingsCard: rendered, harness };
+	}
+
+	/** Every label.dce-setting row in the rendered form. */
+	function settingRows(node: ElementLike): ElementLike[] {
+		const found: ElementLike[] = [];
+		const walk = (current: unknown): void => {
+			if (Array.isArray(current)) {
+				for (const child of current) {
+					walk(child);
+				}
+				return;
+			}
+			if (current === null || typeof current !== "object") {
+				return;
+			}
+			const element = current as ElementLike;
+			if (element.type === "label" && element.props?.className === "dce-setting") {
+				found.push(element);
+			}
+			walk(element.children);
+		};
+		walk(node);
+		return found;
+	}
+
+	it("passes UI through to the settings card", () => {
+		const FakeButton = function FakeButton(): null {
+			return null;
+		};
+		const FakeSwitch = function FakeSwitch(): null {
+			return null;
+		};
+		const harness = makeHookReact();
+		const { exports } = loadBundle(harness.react, {
+			"@deepseek-ai/dsh-client-ui-primitives": { Button: FakeButton, Switch: FakeSwitch },
+		});
+		const { ctx, registrations } = makeCtx();
+		(exports.apply as (ctx: unknown) => void)(ctx);
+		const page = registrations[0].render({}) as ElementLike;
+		const [settingsCard] = page.children as Array<{ props: Record<string, unknown> }>;
+		expect(settingsCard.props.UI).toMatchObject({ Button: FakeButton, Switch: FakeSwitch });
+	});
+
+	it("renders the host Switch with the dshmarket contract when available", () => {
+		const FakeButton = function FakeButton(): null {
+			return null;
+		};
+		const FakeSwitch = function FakeSwitch(): null {
+			return null;
+		};
+		const harness = makeHookReact();
+		const { settingsCard } = renderSettingsForm(harness, {
+			"@deepseek-ai/dsh-client-ui-primitives": { Button: FakeButton, Switch: FakeSwitch },
+		});
+		const rows = settingRows(settingsCard);
+		const switches = rows
+			.map((row) => (row.children as ElementLike[])[1])
+			.filter((element) => element.type === FakeSwitch);
+		expect(switches).toHaveLength(2);
+		const props = switches.map((element) => element.props as Record<string, unknown>);
+		expect(props.map((entry) => entry.checked)).toEqual([true, false]);
+		expect(props.map((entry) => entry.disabled)).toEqual([false, false]);
+		expect(typeof props[0].label).toBe("string");
+		expect(typeof props[1].label).toBe("string");
+		expect(props[0].label).not.toBe(props[1].label);
+		// Toggling flips the form field through the row callback.
+		(props[0].onChange as () => void)();
+		const form = harness.states[2] as Record<string, unknown>;
+		expect(form.enabled).toBe(false);
+	});
+
+	it("falls back to the themed checkbox when the host has no Switch", () => {
+		const FakeButton = function FakeButton(): null {
+			return null;
+		};
+		const harness = makeHookReact();
+		const { settingsCard } = renderSettingsForm(harness, {
+			"@deepseek-ai/dsh-client-ui-primitives": { Button: FakeButton },
+		});
+		const rows = settingRows(settingsCard);
+		const boxes = rows
+			.map((row) => (row.children as ElementLike[])[1])
+			.filter((element) => element.type === "input" && element.props?.type === "checkbox");
+		expect(boxes).toHaveLength(2);
+		for (const element of boxes) {
+			expect(element.type).toBe("input");
+			expect(element.props?.type).toBe("checkbox");
+			expect(element.props?.className).toBe("dce-check");
+		}
+		expect(boxes.map((element) => element.props?.checked)).toEqual([true, false]);
 	});
 });
 

@@ -1069,17 +1069,37 @@ window.__ModuleLoader__.load({
 			return { ok: true, patch: patch };
 		}
 
-		/** One checkbox row: label + hint on the left, switch on the right. */
-		function settingsSwitchRow(t, row) {
+		/**
+		 * One switch row: label + hint on the left, toggle on the right. The
+		 * host Switch when it has one (dshmarket contract), otherwise the
+		 * themed checkbox — an old host never blanks the settings dialog.
+		 */
+		function settingsSwitchRow(t, UI, row) {
+			var text = createElement(
+				"span",
+				{ className: "dce-setting-text" },
+				createElement("span", { className: "dce-setting-name" }, row.name),
+				createElement("span", { className: "dce-setting-desc" }, row.desc),
+			);
+			if (UI !== null && UI !== undefined && typeof UI.Switch !== "undefined" && UI.Switch !== null) {
+				return createElement(
+					"label",
+					{ key: row.key, className: "dce-setting" },
+					text,
+					createElement(UI.Switch, {
+						checked: row.checked,
+						onChange: function () {
+							row.onChange(!row.checked);
+						},
+						label: row.name,
+						disabled: row.disabled,
+					}),
+				);
+			}
 			return createElement(
 				"label",
 				{ key: row.key, className: "dce-setting" },
-				createElement(
-					"span",
-					{ className: "dce-setting-text" },
-					createElement("span", { className: "dce-setting-name" }, row.name),
-					createElement("span", { className: "dce-setting-desc" }, row.desc),
-				),
+				text,
 				createElement("input", {
 					type: "checkbox",
 					className: "dce-check",
@@ -1253,13 +1273,13 @@ window.__ModuleLoader__.load({
 			};
 		}
 
-		/** The open settings form: hint, rows, actions, status. No hooks inside. */
-		function settingsFormBody(t, vm) {
+	/** The open settings form: hint, rows, actions, status. No hooks inside. */
+		function settingsFormBody(t, UI, vm) {
 			return createElement(
 				"div",
 				{ key: "inner", className: "dce-workspace" },
 				createElement("div", { key: "hint", className: "dce-hint" }, t("settingsHint")),
-				settingsSwitchRow(t, {
+				settingsSwitchRow(t, UI, {
 					key: "enabled",
 					name: t("settingsEnabled"),
 					desc: t("settingsEnabledHint"),
@@ -1269,7 +1289,7 @@ window.__ModuleLoader__.load({
 						vm.setField("enabled", value);
 					},
 				}),
-				settingsSwitchRow(t, {
+				settingsSwitchRow(t, UI, {
 					key: "dryRun",
 					name: t("settingsDryRun"),
 					desc: t("settingsDryRunHint"),
@@ -1321,6 +1341,7 @@ window.__ModuleLoader__.load({
 		 */
 		function SettingsCard(props) {
 			var t = props.t;
+			var UI = props.UI;
 			injectCardStyle();
 			var openState = useState(false);
 			var open = openState[0];
@@ -1356,7 +1377,7 @@ window.__ModuleLoader__.load({
 				var saved = model.settings;
 				var setField = makeSettingsFieldSetter(setForm, setNotice);
 				var store = { setModel: setModel, setForm: setForm, setBusy: setBusy, setNotice: setNotice };
-				inner = settingsFormBody(t, {
+				inner = settingsFormBody(t, UI, {
 					form: form,
 					saved: saved,
 					dirty: isSettingsDirty(form, saved),
@@ -1715,12 +1736,14 @@ window.__ModuleLoader__.load({
 			if (primitives !== undefined && primitives !== null && typeof primitives.Button !== "undefined") {
 				// The scope selector prefers the host's own Menu and folder icon;
 				// each stays optional so a host with only Button still gets the
-				// hand-rolled list and a plain trigger.
+				// hand-rolled list and a plain trigger. Same for the settings
+				// Switch below (dshmarket contract: host's when it has one).
 				UI = {
 					Button: primitives.Button,
 					Menu: primitives.Menu,
 					Folder: primitives.IconFolderOpenOutlineRegular,
 					FileIcon: primitives.FileTypeIcon,
+					Switch: primitives.Switch,
 				};
 			}
 			ctx.slots.inject(SLOT, function () {
@@ -1740,7 +1763,7 @@ window.__ModuleLoader__.load({
 						return createElement(
 							"div",
 							{ className: "dce-page" },
-							createElement(SettingsCard, { key: "settings", t: t }),
+							createElement(SettingsCard, { key: "settings", t: t, UI: UI }),
 							createElement(MemoryCard, { key: "memory", t: t, UI: UI }),
 						);
 					},
