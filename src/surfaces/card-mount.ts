@@ -1,37 +1,18 @@
 /**
  * Card and settings-page mounting: the web-server routes plus the host
  * settings presentation policy. Split out of the plugin entry so the entry
- * keeps its line budget — this module owns every host-surface touch behind
+ * keeps its line budget — this module owns the host-surface touches behind
  * the card (nested injects, `ctx.get` sibling reads, `configEditor` writes).
+ * The volatile unpacking stays the entry's job: this module only receives a
+ * plain reader the entry builds (ADR 2026-10-13), and the host shapes come
+ * from the entry's local declarations.
  */
 import { mountCardRoutes, type CardWebServer } from "./card-routes.js";
 import type { ReviewSettingsSnapshot } from "./review-settings.js";
-import {
-	REVIEW_DEFAULT_BATCH_SIZE,
-	REVIEW_DEFAULT_DAILY_BUDGET,
-	REVIEW_DEFAULT_DRY_RUN,
-	REVIEW_DEFAULT_STALE_DAYS,
-} from "../review.js";
 import type { MemoryStore } from "../store.js";
 import type { PluginLog } from "../plugin-log.js";
 import { newestRegistryPath } from "../workspace-hint.js";
-import type { EvolveConfig } from "../index.js";
-
-/** The nested `inject` shape (cordis Context), mirroring the entry's local declaration. */
-interface NestedInjectHost {
-	inject(services: string[], callback: (scoped: unknown) => void): void;
-}
-
-/** The minimal host surface the card mount touches. */
-interface CardHost {
-	systemPrompt: {
-		section(section: {
-			name: string;
-			order: number;
-			text: string | ((context: { agent?: unknown }) => string);
-		}): void;
-	};
-}
+import type { HostContext, NestedInjectHost } from "../index.js";
 
 /**
  * Mount the card routes on the host web server through a nested inject, so
@@ -41,13 +22,18 @@ interface CardHost {
  * The card's opening workspace comes from the host registry, read through
  * `ctx.get` on every request (the FAQ #2 sibling-service rule — the service is
  * optional, so it must not join the inject list, which would gate the mount).
- * The review-settings route is global (no `root`): reads come from the live
- * volatile snapshot, writes merge through `configEditor.edit` so the profile
+ * The review-settings route is global (no `root`): reads come from the entry's
+ * live volatile reader, writes merge through `configEditor.edit` so the profile
  * patch stays the single source of truth. A host without `configEditor`
  * keeps the memory card; the settings POST then answers 503.
  */
-export function mountCardWhenAvailable(host: CardHost, store: MemoryStore, config: EvolveConfig, log: PluginLog): void {
-	const nested = host as CardHost & Partial<NestedInjectHost>;
+export function mountCardWhenAvailable(
+	host: HostContext,
+	store: MemoryStore,
+	readReviewSettings: () => ReviewSettingsSnapshot,
+	log: PluginLog,
+): void {
+	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
 		log.warn(
 			"card-not-mounted",
@@ -55,13 +41,6 @@ export function mountCardWhenAvailable(host: CardHost, store: MemoryStore, confi
 		);
 		return;
 	}
-	const readReviewSettings = (): ReviewSettingsSnapshot => ({
-		enabled: config.review?.enabled?.get() ?? true,
-		dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
-		dailyBudget: config.review?.dailyBudget?.get() ?? REVIEW_DEFAULT_DAILY_BUDGET,
-		batchSize: config.review?.batchSize?.get() ?? REVIEW_DEFAULT_BATCH_SIZE,
-		staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
-	});
 	// Saves commit in submission order (the default-model `saveSelection`
 	// precedent): a failed save rejects its caller without blocking later ones.
 	let pendingSave: Promise<void> = Promise.resolve();
@@ -103,8 +82,8 @@ function isPatchRecord(value: unknown): value is Record<string, unknown> {
  * a remount. Throws when the host has no writable path (the route maps that
  * to 503 with a hand-edit hint).
  */
-async function persistReviewSettings(host: CardHost, patch: Partial<ReviewSettingsSnapshot>): Promise<void> {
-	const context = host as CardHost & { get?: (name: string) => unknown; fiber?: { entry?: unknown } };
+async function persistReviewSettings(host: HostContext, patch: Partial<ReviewSettingsSnapshot>): Promise<void> {
+	const context = host as HostContext & { get?: (name: string) => unknown; fiber?: { entry?: unknown } };
 	const editor = (
 		typeof context.get === "function" ? context.get.call(host, "configEditor") : undefined
 	) as { edit?: unknown } | undefined;
@@ -130,8 +109,8 @@ async function persistReviewSettings(host: CardHost, patch: Partial<ReviewSettin
  * `settings` service keeps its default behavior — injection and tools are
  * unaffected.
  */
-export function mountSettingsPresentation(host: CardHost, log: PluginLog): void {
-	const nested = host as CardHost & Partial<NestedInjectHost>;
+export function mountSettingsPresentation(host: HostContext, log: PluginLog): void {
+	const nested = host as HostContext & Partial<NestedInjectHost>;
 	if (typeof nested.inject !== "function") {
 		return;
 	}

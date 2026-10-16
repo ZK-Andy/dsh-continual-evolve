@@ -30,6 +30,7 @@
  */
 import z from "@deepseek-ai/schemastery";
 import { mountCardWhenAvailable, mountSettingsPresentation } from "./surfaces/card-mount.js";
+import type { ReviewSettingsSnapshot } from "./surfaces/review-settings.js";
 import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./extraction.js";
 import { resolveCallRoute, type RouteResolver } from "./llm-call.js";
 import {
@@ -70,11 +71,11 @@ interface SectionContext {
  * that never provides `webServer` or `tools` never runs those callbacks, and
  * the plugin degrades instead of blocking on a missing service.
  */
-interface NestedInjectHost {
+export interface NestedInjectHost {
 	inject(services: string[], callback: (scoped: unknown) => void): void;
 }
 
-interface HostContext {
+export interface HostContext {
 	systemPrompt: {
 		section(section: {
 			name: string;
@@ -304,7 +305,16 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			mountReviewWhenAvailable(host, store, config, log);
 			mountSettingsPresentation(host, log);
 			if (config.memoryCard?.enabled !== false) {
-				mountCardWhenAvailable(host, store, config, log);
+				// The volatile unpacking stays the assembly root's job (ADR
+				// 2026-10-13): the card mount only receives a plain reader.
+				const readReviewSettings = (): ReviewSettingsSnapshot => ({
+					enabled: config.review?.enabled?.get() ?? true,
+					dryRun: config.review?.dryRun?.get() ?? REVIEW_DEFAULT_DRY_RUN,
+					dailyBudget: config.review?.dailyBudget?.get() ?? REVIEW_DEFAULT_DAILY_BUDGET,
+					batchSize: config.review?.batchSize?.get() ?? REVIEW_DEFAULT_BATCH_SIZE,
+					staleDays: config.review?.staleDays?.get() ?? REVIEW_DEFAULT_STALE_DAYS,
+				});
+				mountCardWhenAvailable(host, store, readReviewSettings, log);
 			}
 			log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
 		},

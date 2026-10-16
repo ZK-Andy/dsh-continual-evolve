@@ -16,7 +16,7 @@ Status: implemented
 
 1. 顶上是“评审设置”卡——全局，不随工作区切换，默认折叠；两个开关（`enabled/dryRun`）+三个数字（`dailyBudget/batchSize/staleDays`），显式保存/重置，`enabled` 行标“需重启生效”（挂载期判定，其余下一轮生效）。
 2. 下面“工作区记忆”卡原样不动（下拉、搜索、预览）。
-3. 后端：卡片 API 新增全局 `GET/POST review-settings`（不带 `root`，`src/surfaces/review-settings.ts`：严格校验、400/405/413/503/500 映射、64KB 上限、预解析 body 与 Node 流双形态）；读走内存 volatile 快照，写经 `configEditor.edit(entry, merge)` 原子写回 patch（`entry` 取自本 fiber，复用 default-model `saveSelection` 前例），串行排队；接线收进 `src/surfaces/card-mount.ts`（`index.ts` 只剩调用，保持 400 行预算）；`settings.configure({ auto: false })` 关宿主自动表单页；无 `webServer`/`settings`/`configEditor` 的宿主逐级降级。
+3. 后端：卡片 API 新增全局 `GET/POST review-settings`（不带 `root`，`src/surfaces/review-settings.ts`：严格校验、400/405/413/503/500 映射、64KB 上限、预解析 body 与 Node 流双形态）；读走内存 volatile 快照，写经 `configEditor.edit(entry, merge)` 原子写回 patch（`entry` 取自本 fiber，复用 default-model `saveSelection` 前例），串行排队；接线收进 `src/surfaces/card-mount.ts`（`index.ts` 只剩调用，保持 400 行预算；volatile `.get()` 解包留在组装根——`index.ts` 构造 reader 传进去，宿主形状复用组装根的本地声明）；`settings.configure({ auto: false })` 关宿主自动表单页；无 `webServer`/`settings`/`configEditor` 的宿主逐级降级。
 4. 前端：复用 `.dce-card` 框体、色板 token、原生兜底、中英 locale；`GET` 404 隐藏设置卡。
 5. 范围只含 `review.*`，分层 9 项不动。
 
