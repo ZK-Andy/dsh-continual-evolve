@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createPluginLog } from "../src/plugin-log.js";
-import { LEDGER_RETENTION_DAYS, pruneIfDue } from "../src/retention.js";
+import { createPluginLog } from "../src/services/plugin-log.js";
+import { LEDGER_RETENTION_DAYS, pruneIfDue } from "../src/services/retention.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;

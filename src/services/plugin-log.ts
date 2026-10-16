@@ -9,7 +9,7 @@
  * because a log line that can take a session down costs more than a lost line.
  */
 import { pruneIfDue } from "./retention.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 
 /** The partition a line belongs to, when the call site knows one. */
 export interface LogWhere {

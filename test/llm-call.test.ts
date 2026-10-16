@@ -10,7 +10,7 @@ import {
 	type LlmRuntime,
 	type ModelInfo,
 	type ServiceGetter,
-} from "../src/llm-call.js";
+} from "../src/services/llm-call.js";
 
 const ROUTE = { provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" };
 

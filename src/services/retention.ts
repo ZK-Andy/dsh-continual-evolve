@@ -9,7 +9,7 @@
  * The check is day-throttled and idempotent, so every writer can call it
  * cheaply and a long-running process prunes without a scheduler of its own.
  */
-import { GLOBAL_WORKSPACE, type MemoryStore } from "./store.js";
+import { GLOBAL_WORKSPACE, type MemoryStore } from "../store.js";
 
 /** Rows older than this many days are pruned. */
 export const LEDGER_RETENTION_DAYS = 30;

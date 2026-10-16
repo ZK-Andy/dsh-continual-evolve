@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { observedUsageOf, SubagentCallError, type LlmRuntime } from "../src/llm-call.js";
-import { cutFailureOf, subagentLoaderFor, type SubagentDefinition } from "../src/subagent.js";
+import { observedUsageOf, SubagentCallError, type LlmRuntime } from "../src/services/llm-call.js";
+import { cutFailureOf, subagentLoaderFor, type SubagentDefinition } from "../src/services/subagent.js";
 import {
 	EXTRACTION_MAX_TOKENS,
 	extractionGate,
@@ -9,7 +9,7 @@ import {
 	REVIEW_EVOLVE_BY_KIND,
 	REVIEW_GATE_BY_KIND,
 	SUBAGENT_DEFINITIONS,
-} from "../src/subagent-defs.js";
+} from "../src/services/subagent-defs.js";
 
 const ROUTE = { provider: "deepseek", model: "deepseek-chat" };
 const TODAY = "2026-10-14";
@@ -123,7 +123,7 @@ describe("cutFailureOf", () => {
 
 describe("subagent definitions", () => {
 	it("keeps the transport behind the loader: only the loader may import streamOnce", () => {
-		const src = new URL("../src/", import.meta.url);
+		const src = new URL("../src/services/", import.meta.url);
 		const callers = readdirSync(src)
 			.filter((name) => name.endsWith(".ts"))
 			.filter((name) => readFileSync(new URL(name, src), "utf8").includes("streamOnce"))

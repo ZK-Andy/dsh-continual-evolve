@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { todayUtc } from "../src/prompt-date.js";
-import { collectCandidates } from "../src/review-candidates.js";
+import { todayUtc } from "../src/services/prompt-date.js";
+import { collectCandidates } from "../src/services/review-candidates.js";
 import {
 	createReviewScheduler,
 	runReviewBatch,
 	type ReviewLlm,
 	type ReviewSettings,
-} from "../src/review.js";
+} from "../src/services/review.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";

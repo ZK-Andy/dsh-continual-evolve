@@ -9,7 +9,7 @@ import {
 	MAX_PROPOSALS_PER_RUN,
 	parseCheapAnswer,
 	parseExtractionAnswer,
-} from "../src/extraction-prompt.js";
+} from "../src/services/extraction-prompt.js";
 
 describe("EXTRACTION_SYSTEM_PROMPT", () => {
 	it("carries the taxonomy, the ADR boundary, and the closed output format", () => {

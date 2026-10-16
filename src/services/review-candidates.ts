@@ -6,7 +6,7 @@
  * the staleness window. One row whose last verdict never produced an item
  * decision is still queued — "reviewed but nothing happened" is not progress.
  */
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 import type { ReviewCandidate } from "./review.js";
 
 /**

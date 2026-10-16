@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeUsage, sumUsage, zeroUsage } from "../src/token-usage.js";
+import { normalizeUsage, sumUsage, zeroUsage } from "../src/services/token-usage.js";
 
 describe("normalizeUsage", () => {
 	it("normalizes every payload shape observed in the real ledger", () => {

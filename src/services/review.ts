@@ -19,12 +19,12 @@
  */
 import { runChain } from "./chain.js";
 import { resolveCallRoute, type LlmRuntime, type ModelSelection, type RouteResolver } from "./llm-call.js";
-import { cwdOf } from "./surfaces/memory-section.js";
+import { cwdOf } from "../surfaces/memory-section.js";
 import { todayUtc } from "./prompt-date.js";
 import type { PluginLog } from "./plugin-log.js";
 import { collectCandidates } from "./review-candidates.js";
 import { failureHead, assembleRing, type ReviewItem, type ReviewRing } from "./review-ring.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 import { zeroUsage } from "./token-usage.js";
 
 /** The LLM face review calls, aliased so each scheduler can name its own. */

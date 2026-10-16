@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evolvePrompt, gatePrompt, parseEvolveAnswer, parseGateAnswer, REVIEW_SKILL_SYSTEM_PROMPT } from "../src/review-prompt.js";
+import { evolvePrompt, gatePrompt, parseEvolveAnswer, parseGateAnswer, REVIEW_SKILL_SYSTEM_PROMPT } from "../src/services/review-prompt.js";
 
 describe("parseGateAnswer", () => {
 	it("parses bare and fenced verdict JSON, rejects noise", () => {

@@ -8,7 +8,7 @@ import {
 	isInternalAgent,
 	serializeIncrement,
 	seqOfCursor,
-} from "../src/extraction-surface.js";
+} from "../src/services/extraction-surface.js";
 
 function userMessage(seq: number, text: string, extra: Record<string, unknown> = {}): unknown {
 	return { seq, type: "user/message", data: { content: text, ...extra } };

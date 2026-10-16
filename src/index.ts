@@ -31,8 +31,8 @@
 import z from "@deepseek-ai/schemastery";
 import { mountCardWhenAvailable, mountSettingsPresentation } from "./surfaces/card-mount.js";
 import type { ReviewSettingsSnapshot } from "./surfaces/review-settings.js";
-import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./extraction.js";
-import { resolveCallRoute, type RouteResolver } from "./llm-call.js";
+import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./services/extraction.js";
+import { resolveCallRoute, type RouteResolver } from "./services/llm-call.js";
 import {
 	createReviewScheduler,
 	REVIEW_DEFAULT_BATCH_SIZE,
@@ -40,8 +40,8 @@ import {
 	REVIEW_DEFAULT_DRY_RUN,
 	REVIEW_DEFAULT_STALE_DAYS,
 	type ReviewSchedulerHost,
-} from "./review.js";
-import type { SurfaceReader } from "./extraction-surface.js";import {
+} from "./services/review.js";
+import type { SurfaceReader } from "./services/extraction-surface.js";import {
 	createFrozenMemorySection,
 	cwdOf,
 	DEFAULT_MAX_CHARS,
@@ -51,10 +51,10 @@ import type { SurfaceReader } from "./extraction-surface.js";import {
 } from "./surfaces/memory-section.js";
 import { registerEvolveTools } from "./surfaces/evolve-tools.js";
 import { mountCreatorSkillsWhenAvailable } from "./surfaces/skill-provider.js";
-import { importWorkspaceMd } from "./import-md.js";
+import { importWorkspaceMd } from "./services/import-md.js";
 import { openMemoryStore, type MemoryStore } from "./store.js";
-import { createPluginLog, type PluginLog } from "./plugin-log.js";
-import { pruneIfDue } from "./retention.js";
+import { createPluginLog, type PluginLog } from "./services/plugin-log.js";
+import { pruneIfDue } from "./services/retention.js";
 
 export const name = "continual-evolve";
 

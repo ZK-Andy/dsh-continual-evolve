@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { collectCandidates } from "../src/review-candidates.js";
-import { runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/review.js";
-import { failureHead, rewriteMagnitude } from "../src/review-ring.js";
+import { collectCandidates } from "../src/services/review-candidates.js";
+import { runReviewBatch, type ReviewCandidate, type ReviewLlm } from "../src/services/review.js";
+import { failureHead, rewriteMagnitude } from "../src/services/review-ring.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";

@@ -14,7 +14,7 @@ import { evolvePrompt, gatePrompt, type EvolveVerdict } from "./review-prompt.js
 import { REVIEW_EVOLVE_BY_KIND, REVIEW_GATE_BY_KIND } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import { normalizeUsage, zeroUsage, type UsageTotals } from "./token-usage.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryStore } from "../store.js";
 import type { ReviewCandidate, ReviewDeps, ReviewRunOptions, ReviewRunSummary } from "./review.js";
 
 /** A rewrite lands only when the body-length ratio stays within this bound. */

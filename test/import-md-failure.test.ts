@@ -25,7 +25,7 @@ beforeEach(async () => {
 
 describe("importWorkspaceMd when the rename aside fails", () => {
 	it("keeps the import, reports the failure, and sets the flag anyway", async () => {
-		const { importWorkspaceMd } = await import("../src/import-md.js");
+		const { importWorkspaceMd } = await import("../src/services/import-md.js");
 		mkdirSync(join(workspace, ".evolve", "memory"), { recursive: true });
 		writeFileSync(
 			join(workspace, ".evolve", "memory", "a.md"),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runChain, type ChainLink } from "../src/chain.js";
+import { runChain, type ChainLink } from "../src/services/chain.js";
 
 interface Item {
 	visited: string[];

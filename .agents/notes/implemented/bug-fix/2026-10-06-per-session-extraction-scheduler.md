@@ -8,7 +8,7 @@ v0.15.0 的提取调度器是**插件单例**：`pending` 单槽、`running` 单
 
 2026-10-06 在 dotnet-desktop 真机验收时，提取轨**一次都没跑成**。插桩探针加账本给出两条彼此独立的证据：
 
-1. **跨会话挤占**。任何 agent 的 `agent/turn-stopping` 都执行 `pending = target`（覆盖）并 `clearTimeout` 重置计时器，而 `isInternalAgent` 的过滤排在 `runExtraction` 里（[../../../../src/extraction.ts](../../../../src/extraction.ts)），入口太晚。实测 07:24–08:00 有 10 个子代理（轨迹 header：`origin:"subagent"`、`delegationDepth:1`、`parentSession=session-8843e3d4…`）连续把主会话的边界顶掉并推迟计时器，账本只留下 10 条 `close-drain` / `internal-agent` 墓碑；08:12 进程重启把计时器一并带走。
+1. **跨会话挤占**。任何 agent 的 `agent/turn-stopping` 都执行 `pending = target`（覆盖）并 `clearTimeout` 重置计时器，而 `isInternalAgent` 的过滤排在 `runExtraction` 里（[../../../../src/services/extraction.ts](../../../../src/services/extraction.ts)），入口太晚。实测 07:24–08:00 有 10 个子代理（轨迹 header：`origin:"subagent"`、`delegationDepth:1`、`parentSession=session-8843e3d4…`）连续把主会话的边界顶掉并推迟计时器，账本只留下 10 条 `close-drain` / `internal-agent` 墓碑；08:12 进程重启把计时器一并带走。
 2. **同会话自我重置**。连续对话时每一轮都重置计时器。探针实测 08:13:53 / 08:16:54 / 08:20:57 / 08:27:10 四次 arm、**零次 fire**——只要人在连续对话，提取永不触发。
 
 ZCode 的做法（工作区缓存 `.zcode-source/extraction.ts` 与 `.zcode-source/project-memory-extraction.ts`）是把 scheduler 挂在 **per-runtime** 上：`runtime.memoryExtractionScheduler ??= createMemoryExtractionScheduler(…)`，cursor/pending/running 全在会话自己的闭包里，并且**没有时间去抖**——每轮 `schedule`，运行中就合并进 `latestPending`，空闲则立即跑。

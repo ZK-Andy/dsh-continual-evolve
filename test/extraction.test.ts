@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runExtraction, type ExtractionDeps, type LlmStream } from "../src/extraction.js";
-import { todayUtc } from "../src/prompt-date.js";
+import { runExtraction, type ExtractionDeps, type LlmStream } from "../src/services/extraction.js";
+import { todayUtc } from "../src/services/prompt-date.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;
@@ -693,7 +693,7 @@ describe("runExtraction — unexpected failures leave a ledger row, never throw"
 	});
 
 	it("the scheduler ledgers an escaped run failure before warning", async () => {
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		let writes = 0;
 		const flaky: MemoryStore = {
 			...store,
@@ -803,7 +803,7 @@ describe("createExtractionScheduler", () => {
 
 	it("runs on the turn that scheduled it — no idle timer", async () => {
 		const { listeners, d, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
@@ -817,7 +817,7 @@ describe("createExtractionScheduler", () => {
 	it("uses the injected route resolver when the session carries no explicit selection", async () => {
 		const { listeners, d, host } = makeHost();
 		d.resolveRoute = () => ({ provider: "dsh-opencode-go", model: "deepseek-v4.1-flash" });
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent: { id: "sess-1", session: { header: { cwd: WS } } } });
 		await vi.waitFor(() => {
@@ -831,7 +831,7 @@ describe("createExtractionScheduler", () => {
 	it("sends nothing when neither the session nor the host has a route", async () => {
 		const { listeners, d, host } = makeHost();
 		d.resolveRoute = () => undefined;
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent: { id: "sess-1", session: { header: { cwd: WS } } } });
 		await new Promise((resolve) => setImmediate(resolve));
@@ -849,7 +849,7 @@ describe("createExtractionScheduler", () => {
 			},
 		};
 		const { listeners, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, { store, surface, llm });
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
@@ -875,7 +875,7 @@ describe("createExtractionScheduler", () => {
 	it("keeps sessions isolated: a busy session never delays another", async () => {
 		const llm = gatedLlm(answer);
 		const { listeners, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, { store, surface: events, llm });
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
@@ -897,7 +897,7 @@ describe("createExtractionScheduler", () => {
 
 	it("filters internal agents at the entry: no run and no ledger row", async () => {
 		const { listeners, d, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		const subagent = { ...agent, session: { header: { cwd: WS, origin: "subagent" } } };
 		listeners.get("agent/turn-stopping")![0]({ agent: subagent });
@@ -910,7 +910,7 @@ describe("createExtractionScheduler", () => {
 	it("never doubles a run that is already in flight (compaction)", async () => {
 		const llm = gatedLlm(answer);
 		const { listeners, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, { store, surface: events, llm });
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
@@ -926,7 +926,7 @@ describe("createExtractionScheduler", () => {
 
 	it("ignores lifecycle events when no boundary is pending", async () => {
 		const { listeners, d, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		listeners.get("session/event")![0]({ id: "sess-1" }, { type: "compaction/start" });
 		listeners.get("agent/disposed")![0]({ agent });
@@ -938,7 +938,7 @@ describe("createExtractionScheduler", () => {
 
 	it("tolerates lifecycle events for a drained session and for unknown ones", async () => {
 		const { listeners, d, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, d);
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
@@ -961,7 +961,7 @@ describe("createExtractionScheduler", () => {
 	it("drops a closing session's slot without doubling its run", async () => {
 		const llm = gatedLlm(answer);
 		const { listeners, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		createExtractionScheduler(host, { store, surface: events, llm });
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await vi.waitFor(() => {
@@ -978,7 +978,7 @@ describe("createExtractionScheduler", () => {
 
 	it("dispose removes the listeners", async () => {
 		const { listeners, d, host } = makeHost();
-		const { createExtractionScheduler } = await import("../src/extraction.js");
+		const { createExtractionScheduler } = await import("../src/services/extraction.js");
 		const dispose = createExtractionScheduler(host, d);
 		dispose();
 		expect(listeners.get("agent/turn-stopping")).toHaveLength(0);
