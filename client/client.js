@@ -131,7 +131,7 @@ window.__ModuleLoader__.load({
 			settingsDryRunHint: "打开时 verdict 只记账、不改库不隔离。",
 			settingsDailyBudget: "每日上限",
 			settingsBatchSize: "每批数量",
-			settingsStaleDays: "回炉天数",
+			settingsStaleDays: "重审天数",
 			settingsNumbersHint: "数字须为非负整数，每批数量至少为 1。",
 			settingsSave: "保存",
 			settingsReset: "重置",
