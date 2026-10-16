@@ -3,10 +3,11 @@
  * store accepts it — the same "模型提议，代码保证" boundary as memories
  * and skills, minus taxonomy and scope: prompts carry no type enum, live
  * only in their workspace partition (no global scope, no move), and take
- * create/update/delete. Sizes, id shape, and secret screening reuse the
- * shared gates in `./memory-rules.js`.
+ * create/update/delete. Sizes and id shape reuse the shared gates in
+ * `./memory-rules.js`; secret screening lives in `../data/secret.js`.
  */
-import { MEMORY_BODY_LIMIT, MEMORY_DESCRIPTION_LIMIT, MEMORY_TITLE_LIMIT, secretLeakReason, textFieldGate } from "./memory-rules.js";
+import { MEMORY_BODY_LIMIT, MEMORY_DESCRIPTION_LIMIT, MEMORY_TITLE_LIMIT, textFieldGate } from "./memory-rules.js";
+import { secretLeakReason } from "../data/secret.js";
 
 export { isValidMemoryId as isValidPromptId, slugifyId as slugifyPromptId } from "./memory-rules.js";
 

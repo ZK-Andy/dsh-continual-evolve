@@ -136,6 +136,33 @@ export interface LedgerStmts {
 }
 
 /**
+ * The prepared key-value state statements (extraction cursors and named
+ * store keys, partitioned per workspace). Preparation lives here with the
+ * other bookkeeping bundles so the store assembly holds no SQL.
+ */
+export interface StateStmts {
+	stateGet: StatementSync;
+	stateSet: StatementSync;
+	cursorGet: StatementSync;
+}
+
+/**
+ * Prepare the key-value state statements up front.
+ * @param database - The open database handle.
+ * @returns The prepared state statement bundle.
+ */
+export function prepareStateStmts(database: DatabaseSync): StateStmts {
+	return {
+		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
+		stateSet: database.prepare(
+			"INSERT INTO state (workspace_id, key, value) VALUES (?, ?, ?) " +
+				"ON CONFLICT (workspace_id, key) DO UPDATE SET value = excluded.value",
+		),
+		cursorGet: database.prepare("SELECT CAST(value AS INTEGER) AS seq FROM state WHERE workspace_id = ? AND key = ?"),
+	};
+}
+
+/**
  * Prepare every ledger and log statement up front.
  * @param database - The open database handle.
  * @returns The prepared ledger statement bundle.

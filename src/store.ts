@@ -11,7 +11,7 @@
  * `./data/records.js`, SQL bundles in `./data/resource-kinds.js`,
  * ledgers in `./data/ledger.js`, review accounts in
  * `./data/review-accounts.js`, skill writes in `./services/skill-apply.js`,
- * and file projection in `./surfaces/skill-projection.js`.
+ * and file projection in `./services/skill-files.js`.
  *
  * Requires `node:sqlite` (Node ≥ 22.5; the desktop host's EnsureNode runtime
  * guarantees v26). Unavailability is a typed error the entry point degrades
@@ -22,14 +22,14 @@ import { join, resolve } from "node:path";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { openDatabase } from "./data/database.js";
 import { migrateDatabase } from "./data/migrate.js";
-import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, writeMemoryLedger, type LedgerStmts } from "./data/ledger.js";
+import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, prepareStateStmts, writeMemoryLedger, type LedgerStmts, type StateStmts } from "./data/ledger.js";
 import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
 import { openRepositories, type Repository } from "./data/repository.js";
 import { createReviewAccounts, createUsageCounters, prepareReviewStmts, type ReviewAccountStmts } from "./data/review-accounts.js";
 import { runPatrol } from "./data/patrol.js";
 import { applySkillBatch } from "./services/skill-apply.js";
 import { applyPromptBatch } from "./services/prompt-apply.js";
-import { reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "./surfaces/skill-projection.js";
+import { reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "./services/skill-files.js";
 import { applyProposals } from "./services/memory-apply.js";
 import {
 	CURSOR_KEY_PREFIX,
@@ -74,11 +74,7 @@ export function defaultStorePath(): string {
 }
 
 /** The prepared statements one open store holds (state keys plus both bundles). */
-type StoreStatements = {
-	stateGet: StatementSync;
-	stateSet: StatementSync;
-	cursorGet: StatementSync;
-} & LedgerStmts & ReviewAccountStmts;
+type StoreStatements = StateStmts & LedgerStmts & ReviewAccountStmts;
 
 /** Open (creating on first use) the central store. */
 export async function openMemoryStore(explicitPath?: string): Promise<MemoryStore> {
@@ -88,12 +84,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	const { memories, skills, prompts } = openRepositories(database);
 
 	const stmts: StoreStatements = {
-		stateGet: database.prepare("SELECT value FROM state WHERE workspace_id = ? AND key = ?"),
-		stateSet: database.prepare(
-			"INSERT INTO state (workspace_id, key, value) VALUES (?, ?, ?) " +
-				"ON CONFLICT (workspace_id, key) DO UPDATE SET value = excluded.value",
-		),
-		cursorGet: database.prepare("SELECT CAST(value AS INTEGER) AS seq FROM state WHERE workspace_id = ? AND key = ?"),
+		...prepareStateStmts(database),
 		...prepareLedgerStmts(database),
 		...prepareReviewStmts(database),
 	};

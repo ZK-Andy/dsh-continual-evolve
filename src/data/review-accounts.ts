@@ -6,7 +6,7 @@
  * spread.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import { secretLeakReason } from "../services/memory-rules.js";
+import { secretLeakReason } from "./secret.js";
 import type { DailyDelta, DailyStats, MemoryStore, PatrolResult, ReviewLogEntry } from "../store-types.js";
 import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
 import type { Repository } from "./repository.js";

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 import { SKILL_GENERATED_MARKER } from "../src/services/skill-rules.js";
-import { isManagedSkillFile, reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "../src/surfaces/skill-projection.js";
+import { isManagedSkillFile, reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } from "../src/services/skill-files.js";
 import type { SkillRecord } from "../src/store-types.js";
 
 let roots: string[] = [];

@@ -19,10 +19,10 @@ import {
 	MEMORY_BODY_LIMIT,
 	MEMORY_DESCRIPTION_LIMIT,
 	MEMORY_TITLE_LIMIT,
-	secretLeakReason,
 	slugifyId,
 	textFieldGate,
 } from "./memory-rules.js";
+import { secretLeakReason } from "../data/secret.js";
 
 export { isValidMemoryId as isValidSkillId, slugifyId as slugifySkillId };
 
