@@ -7,7 +7,7 @@
 [![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-553%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-577%20passing-brightgreen)]()
 [![Coverage · statements](https://img.shields.io/badge/coverage_statements-97%25-brightgreen)]()
 [![Coverage · branches](https://img.shields.io/badge/coverage_branches-92%25-green)]()
 [![Coverage · functions](https://img.shields.io/badge/coverage_functions-100%25-brightgreen)]()
@@ -81,7 +81,7 @@ profile patch 示例：
 
 ```bash
 pnpm install && pnpm build   # 依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（548 例）
+pnpm test                    # vitest（577 例）
 pnpm test:coverage           # v8 覆盖率，CI 强制阈值
 pnpm lint                    # oxlint src test client
 pnpm check:pack              # 发布产物一致性（prepack 也会跑）
@@ -108,7 +108,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 ├── client/
 │   └── client.js          # 手写 client bundle：记忆 + 评审设置双卡片
 ├── locale/                # 宿主包元数据：显示名 + 描述双语（zh/en）
-├── test/                  # vitest 测试（43 个文件）
+├── test/                  # vitest 测试（45 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/                  # design.md（设计）· FAQ.md（踩坑）
 └── .agents/               # AI 协作层（AGENTS.md、技能、ADR 笔记）
