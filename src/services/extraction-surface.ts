@@ -124,9 +124,17 @@ export function eventsAfterCursor(events: readonly unknown[], cursor: string | u
 	});
 }
 
+/** Distinct tool names kept on the increment's metadata line. */
+export const INCREMENT_TOOL_NAMES_MAX = 20;
+/** Longest single tool name kept (host names are short; this bounds injection). */
+const INCREMENT_TOOL_NAME_MAX = 40;
+
 /**
- * Serialize only user/assistant text, keeping the bounded tail. Tool calls,
- * reasoning, and metadata never enter the prompt.
+ * Serialize only user/assistant text, keeping the bounded tail. Tool calls
+ * contribute their names and nothing else: arguments and paths never enter
+ * the prompt, but "a write happened this turn" is evidence the extraction
+ * model needs for the landing-point test, and it stays name-agnostic — the
+ * plugin never has to know which file a workspace uses for its rules.
  */
 export function serializeIncrement(events: readonly unknown[], maxChars: number = DEFAULT_INCREMENT_MAX_CHARS): string {
 	const lines: string[] = [];
@@ -148,7 +156,49 @@ export function serializeIncrement(events: readonly unknown[], maxChars: number 
 		}
 	}
 	const joined = lines.join("\n");
-	return joined.length <= maxChars ? joined : joined.slice(-maxChars);
+	const tools = toolsLine(events);
+	if (tools.length === 0) {
+		return joined.length <= maxChars ? joined : joined.slice(-maxChars);
+	}
+	if (maxChars <= tools.length) {
+		return tools.slice(0, maxChars);
+	}
+	const budget = maxChars - tools.length - 1;
+	const body = joined.length <= budget ? joined : joined.slice(-budget);
+	return body.length === 0 ? tools : `${tools}\n${body}`;
+}
+
+/**
+ * The turn's tool names as one metadata line, or "" when the turn called
+ * none. Duplicates collapse, order follows first appearance, each name is
+ * whitespace-collapsed and bounded.
+ * @param events - Trajectory rows for the increment.
+ * @returns The `tools-this-turn:` line, empty when no tool ran.
+ */
+function toolsLine(events: readonly unknown[]): string {
+	const names: string[] = [];
+	for (const raw of events) {
+		if (!raw || typeof raw !== "object") {
+			continue;
+		}
+		const row = raw as { type?: unknown; data?: { name?: unknown; tool?: unknown; toolName?: unknown } };
+		if (row.type !== "tool/call" && row.type !== "tool-call") {
+			continue;
+		}
+		const name = row.data?.name ?? row.data?.tool ?? row.data?.toolName;
+		if (typeof name !== "string") {
+			continue;
+		}
+		const cleaned = name.trim().replace(/\s+/g, " ").slice(0, INCREMENT_TOOL_NAME_MAX);
+		if (cleaned.length === 0 || names.includes(cleaned)) {
+			continue;
+		}
+		names.push(cleaned);
+		if (names.length >= INCREMENT_TOOL_NAMES_MAX) {
+			break;
+		}
+	}
+	return names.length === 0 ? "" : `tools-this-turn: ${names.join(", ")}`;
 }
 
 /** A DSH subagent header is an internal source when its origin says so. */

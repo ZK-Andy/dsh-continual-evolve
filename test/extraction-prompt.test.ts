@@ -33,6 +33,16 @@ describe("EXTRACTION_SYSTEM_PROMPT", () => {
 		expect(EXTRACTION_SYSTEM_PROMPT).toContain("主语测试");
 		expect(EXTRACTION_SYSTEM_PROMPT).toContain("去名测试");
 	});
+
+	it("routes a fact with a repo-file landing point away from memory, whatever the file is called", () => {
+		expect(EXTRACTION_SYSTEM_PROMPT).toContain("落点测试");
+		expect(EXTRACTION_SYSTEM_PROMPT).toContain("tools-this-turn");
+		expect(EXTRACTION_CHEAP_SYSTEM_PROMPT).toContain("落点测试");
+		// The rule keys on the landing act, never on a file name: naming any
+		// concrete workspace file here would make every new file a release.
+		expect(EXTRACTION_SYSTEM_PROMPT).not.toMatch(/AGENTS\.md|CLAUDE\.md|README|\.agents\/notes/);
+		expect(EXTRACTION_CHEAP_SYSTEM_PROMPT).not.toMatch(/AGENTS\.md|CLAUDE\.md|README|\.agents\/notes/);
+	});
 });
 
 describe("extractionPrompt", () => {

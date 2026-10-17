@@ -124,6 +124,46 @@ describe("serializeIncrement", () => {
 		const events = [{ seq: 1.5, type: "user/message", data: { content: "x" } }, { seq: "7", type: "user/message", data: { content: "y" } }];
 		expect(boundaryCursorOf(events)).toBe("index:2");
 	});
+
+	it("names the turn's tools without paths or arguments", () => {
+		const events = [
+			userMessage(1, "把这条写进某个仓库文件"),
+			{ seq: 2, type: "tool/call", data: { name: "read" } },
+			{ seq: 3, type: "tool-call", data: { tool: "edit", args: { path: "notes/anything.md" } } },
+			{ seq: 4, type: "tool/call", data: { name: "read" } },
+		];
+		const text = serializeIncrement(events, 4000);
+		expect(text.split("\n")[0]).toBe("tools-this-turn: read, edit");
+		expect(text).not.toContain("notes/anything.md");
+	});
+
+	it("keeps the tools line inside the ceiling when the tail is trimmed", () => {
+		const events = [userMessage(1, "0123456789"), { seq: 2, type: "tool/call", data: { name: "edit" } }];
+		const text = serializeIncrement(events, 40);
+		expect(text.startsWith("tools-this-turn: edit\n")).toBe(true);
+		expect(text.length).toBeLessThanOrEqual(40);
+	});
+
+	it("truncates an oversized tools line instead of blowing the ceiling", () => {
+		const events = [{ seq: 1, type: "tool/call", data: { name: "a".repeat(100) } }];
+		expect(serializeIncrement(events, 10)).toHaveLength(10);
+	});
+
+	it("survives junk rows and caps the tool list", () => {
+		const junk = [null, 42, { type: "tool/call", data: { name: 99 } }];
+		const synthetic = { seq: 3, type: "user/message", data: { source: { synthetic: true }, content: "合成注入" } };
+		const numericContent = { seq: 4, type: "user/message", data: { content: 7 } };
+		const tools = Array.from({ length: 25 }, (_, i) => ({ seq: i + 10, type: "tool/call", data: { name: `t${i}` } }));
+		const events = [...junk, synthetic, numericContent, ...tools];
+
+		const text = serializeIncrement(events, 4000);
+		expect(text.startsWith("tools-this-turn: t0, t1, ")).toBe(true);
+		expect(text).not.toContain("t20");
+		expect(text).not.toContain("合成注入");
+		expect(boundaryCursorOf(events)).toBe("seq:34");
+		expect(containsExplicitEvolveWrite(events)).toBe(false);
+		expect(evaluateSlice({ events, internalAgent: false }).skipReason).toBe("no-user-prose");
+	});
 });
 
 describe("isInternalAgent", () => {

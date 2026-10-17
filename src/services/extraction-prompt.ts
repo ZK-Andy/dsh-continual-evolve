@@ -38,6 +38,8 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是记忆提取专员。你的唯一
 2. 去名测试——把仓库名、版本号、机制名全抹掉，句子还成立吗？不成立，不提案。
 3. 归属测试——仓库事实（设计拍板、版本细节、任务状态）住 ADR/docs/交接；记忆只收跟人走的（协作偏好、环境事实、跨项目做法）。
 
+**落点测试（三测之外的追加判据，不替代三测）：** 这条事实的家是哪个文件？用户本轮若已把它写进、或明确要把它写进仓库里的某个文件（"记到/写进/加到 <任意落点>"），那个文件就是它的家——判 skip，reason 里引用用户原话。落点叫什么名字、是已有文件还是新文件、位于哪一层目录，都不影响判定；只看"这句事实已落进仓库文件"这个动作。增量里的 tools-this-turn 行只给工具名不给路径，用来判断"本轮发生过文件写入"，不据此猜测落点是哪个文件。同一句话在记忆与仓库文件里各存一份即为违规——记忆是另一个家，不是备份。
+
 ## 更新优先于新建
 
 已有记忆的状态变了，提案 update 改原条目；新旧并存比没有记忆更糟。要更新或删除的条目会连同全文给你，提案里写它的 id。没有值得沉淀的东西就明确说 skip——宁缺勿滥。
@@ -49,7 +51,7 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是记忆提取专员。你的唯一
 {"decision":"apply"|"skip","reason":"<一句话依据>","proposals":[{"action":"create"|"update"|"delete","id":"<kebab-slug，update/delete 必填>","type":"user"|"feedback"|"reference","title":"<短标题>","description":"<一句话相关性钩子>","body":"<正文>","sourceSeqs":"<用户原话所在 seq，如 820-831，可省略>"}]}`;
 
 /** The pre-gate system prompt: a small verdict before the expensive full call. */
-export const EXTRACTION_CHEAP_SYSTEM_PROMPT = `你是记忆提取的预检门。只判这轮轨迹增量里有没有值得沉淀的跨会话记忆（用户画像与环境事实、可复用的做法纠正与确认、未来会用的资源指针），先过归属三测：主语是用户/环境还是本仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs。归属不过直接判 false。只输出 JSON，不要代码围栏、不要解释：
+export const EXTRACTION_CHEAP_SYSTEM_PROMPT = `你是记忆提取的预检门。只判这轮轨迹增量里有没有值得沉淀的跨会话记忆（用户画像与环境事实、可复用的做法纠正与确认、未来会用的资源指针），先过归属三测：主语是用户/环境还是本仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs。再过落点测试：这条事实已被写进、或本轮明确要写进仓库里的某个文件（任何名字都算，只看"已落进仓库"这个动作）→ 家在那个文件，直接判 false。归属或落点不过都判 false。只输出 JSON，不要代码围栏、不要解释：
 
 {"worthExtracting":true|false,"reason":"<一句话依据>"}`;
 
