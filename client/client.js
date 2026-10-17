@@ -846,15 +846,29 @@ window.__ModuleLoader__.load({
 			return createElement(
 				"div",
 				{ key: "quarantined", className: "dce-warn" },
-				t("quarantined") + quarantined.map(function (entry) { return entry.id; }).join("、"),
+				t("quarantined") + quarantined.map(function (entry) {
+					return entry.scope === "global" ? entry.id + " · " + t("skillScopeGlobal") : entry.id;
+				}).join("、"),
 			);
+		}
+
+		/** A memory row's badge: the global marker and the export advice, whichever apply. */
+		function memoryBadge(t, file) {
+			var labels = [];
+			if (file.scope === "global") {
+				labels.push(t("skillScopeGlobal"));
+			}
+			if (file.suggestExport === true) {
+				labels.push(t("exportSuggestion"));
+			}
+			return labels.join(" · ");
 		}
 
 		/** The memory file list: stats, search, head, rows or the empty state. */
 		function memoryFilesBlock(t, UI, vm) {
 			var query = String(vm.query).trim().toLocaleLowerCase();
 			var files = vm.snapshot.files.filter(function (file) {
-				return matchQueryFields(file, ["id", "title", "description", "type"], query);
+				return matchQueryFields(file, ["id", "title", "description", "type", "scope"], query);
 			});
 			var parts = [
 				createElement("div", { key: "stats", className: "dce-stats" }, t("stats", { files: vm.snapshot.fileCount })),
@@ -883,7 +897,7 @@ window.__ModuleLoader__.load({
 								now: vm.now,
 								t: t,
 								UI: UI,
-								badge: file.suggestExport === true ? t("exportSuggestion") : "",
+								badge: memoryBadge(t, file),
 								expanded: vm.expandedFile === file.id,
 								preview: vm.preview,
 								onToggle: function () {

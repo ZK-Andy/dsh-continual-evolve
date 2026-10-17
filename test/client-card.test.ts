@@ -167,6 +167,29 @@ function findAllByRole(node: unknown, role: string): ElementLike[] {
 	return found;
 }
 
+/** Every element in the tree whose props carry this className. */
+function findAllByClassName(node: unknown, className: string): ElementLike[] {
+	const found: ElementLike[] = [];
+	const walk = (current: unknown): void => {
+		if (Array.isArray(current)) {
+			for (const child of current) {
+				walk(child);
+			}
+			return;
+		}
+		if (current === null || typeof current !== "object") {
+			return;
+		}
+		const element = current as ElementLike;
+		if (element.props?.className === className) {
+			found.push(element);
+		}
+		walk(element.children);
+	};
+	walk(node);
+	return found;
+}
+
 function makeCtx(locale?: {
 	register: (ns: string, dicts: unknown) => unknown;
 	bind: (ns: string) => (key: string) => string;
@@ -530,35 +553,35 @@ describe("card refresh wiring", () => {
 	});
 });
 
-describe("workspace scope selector", () => {
-	/** Render the open card over the given workspace entries, down to the block. */
-	function renderBlockTree(
-		harness: ReturnType<typeof makeHookReact>,
-		entries: Array<Record<string, unknown>>,
-		modules: Record<string, unknown> = {},
-		defaultRoot: string | null = null,
-	): ElementLike {
-		const { exports } = loadBundle(harness.react, modules);
-		const { ctx, registrations } = makeCtx();
-		(exports.apply as (ctx: unknown) => void)(ctx);
-		const page = registrations[0].render({}) as ElementLike;
-		// One entry, two stacked cards — drive the memory card below the global settings card.
-		const card = (page.children?.[1] ?? page) as ElementLike;
-		const render = (): ElementLike => {
-			harness.begin();
-			return (card.type as (props: unknown) => ElementLike)(card.props);
-		};
-		render();
-		harness.setters[0](true);
-		harness.setters[1]({ status: "ready", model: { workspaces: entries, defaultRoot: defaultRoot }, message: "" });
-		const tree = render();
-		// The scope menu lives inside the block component, one level below the
-		// element tree; render that level explicitly.
-		const block = findAllByName(tree, "WorkspaceBlock")[0] as ElementLike;
-		harness.begin("block");
-		return (block.type as (props: unknown) => ElementLike)(block.props);
-	}
+/** Render the open card over the given workspace entries, down to the block. */
+function renderBlockTree(
+	harness: ReturnType<typeof makeHookReact>,
+	entries: Array<Record<string, unknown>>,
+	modules: Record<string, unknown> = {},
+	defaultRoot: string | null = null,
+): ElementLike {
+	const { exports } = loadBundle(harness.react, modules);
+	const { ctx, registrations } = makeCtx();
+	(exports.apply as (ctx: unknown) => void)(ctx);
+	const page = registrations[0].render({}) as ElementLike;
+	// One entry, two stacked cards — drive the memory card below the global settings card.
+	const card = (page.children?.[1] ?? page) as ElementLike;
+	const render = (): ElementLike => {
+		harness.begin();
+		return (card.type as (props: unknown) => ElementLike)(card.props);
+	};
+	render();
+	harness.setters[0](true);
+	harness.setters[1]({ status: "ready", model: { workspaces: entries, defaultRoot: defaultRoot }, message: "" });
+	const tree = render();
+	// The scope menu lives inside the block component, one level below the
+	// element tree; render that level explicitly.
+	const block = findAllByName(tree, "WorkspaceBlock")[0] as ElementLike;
+	harness.begin("block");
+	return (block.type as (props: unknown) => ElementLike)(block.props);
+}
 
+describe("workspace scope selector", () => {
 	/** Render the scope menu component itself, closed or open. */
 	function renderMenu(harness: ReturnType<typeof makeHookReact>, tree: ElementLike, open: boolean): ElementLike {
 		const menu = findAllByName(tree, "WorkspaceScopeMenu")[0] as ElementLike;
@@ -713,6 +736,38 @@ describe("workspace scope selector", () => {
 		const cells = (rowButton.children as unknown[])[0] as ElementLike[];
 		expect(cells[0].props?.className).toBe("dce-file-icon");
 		expect(((cells[0].children as ElementLike[])[0] as ElementLike).type).toBe(FakeFileIcon);
+	});
+});
+
+describe("memory row badges", () => {
+	/** A snapshot with one local row, one promoted (global) row, and a global quarantine. */
+	function snapshotWithScopes(): Record<string, unknown> {
+		return {
+			exists: true,
+			fileCount: 2,
+			files: [
+				{ id: "local", title: "local", description: "", type: "user", status: "active", scope: "project", updatedAt: Date.now(), suggestExport: false },
+				{ id: "person", title: "person", description: "", type: "user", status: "active", scope: "global", updatedAt: Date.now(), suggestExport: true },
+			],
+			quarantined: [{ id: "leak", scope: "global", reason: "x" }],
+			lastPatrol: null,
+			readError: null,
+		};
+	}
+
+	it("marks the global row and folds the export advice into the same badge", () => {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(harness, [{ root: "/ws/a", label: "A", snapshot: snapshotWithScopes(), error: null }]);
+		const rows = findAllByName(tree, "FileRow");
+		expect(rows.map((row) => row.props?.badge)).toEqual(["", "全局 · 建议入仓文档"]);
+	});
+
+	it("tags a quarantined global row in the patrol line", () => {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(harness, [{ root: "/ws/a", label: "A", snapshot: snapshotWithScopes(), error: null }]);
+		const warn = findAllByClassName(tree, "dce-warn")[0] as ElementLike;
+		const text = (warn.children as unknown[])[0];
+		expect(String(text)).toContain("leak · 全局");
 	});
 });
 

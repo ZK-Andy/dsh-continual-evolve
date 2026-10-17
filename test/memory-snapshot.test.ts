@@ -110,6 +110,64 @@ describe("memorySnapshot", () => {
 	});
 });
 
+describe("memorySnapshot 全局分区可见性", () => {
+	it("keeps a promoted memory visible in its origin workspace, tagged global", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.exists).toBe(true);
+		// The origin row is archived by the promotion; only the global copy is
+		// left, and the card must still show it (the injection index does).
+		expect(snapshot.fileCount).toBe(1);
+		expect(snapshot.files.map((file) => [file.id, file.scope])).toEqual([["fedora-env", "global"]]);
+	});
+
+	it("a surviving local row shadows the global row of the same id", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		// Below the write gates: resurrect the archived origin row so both
+		// partitions hold the id. Read semantics say the local row wins.
+		const raw = new DatabaseSync(store.path);
+		raw.prepare("UPDATE memories SET status = 'active' WHERE workspace_id = ? AND id = 'fedora-env'").run(workspace);
+		raw.close();
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.files.map((file) => [file.id, file.scope])).toEqual([["fedora-env", "project"]]);
+	});
+
+	it("the global partition reads as a project view of its own", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		const global = memorySnapshot(store, "");
+		expect(global.files.map((file) => [file.id, file.scope])).toEqual([["fedora-env", "project"]]);
+	});
+
+	it("a workspace with no rows of its own still sees the global partition", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		const other = mkdtempSync(join(tmpdir(), "evolve-snapshot-other-"));
+		try {
+			const snapshot = memorySnapshot(store, other);
+			expect(snapshot.exists).toBe(true);
+			expect(snapshot.files.map((file) => [file.id, file.scope])).toEqual([["fedora-env", "global"]]);
+			// The preview route resolves the same merged visibility.
+			expect(memoryEntryContent(store, other, "fedora-env")).toMatchObject({ ok: true, content: "Fedora 44" });
+		} finally {
+			rmSync(other, { recursive: true, force: true });
+		}
+	});
+
+	it("marks a quarantined global row with the partition it came from", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		const raw = new DatabaseSync(store.path);
+		raw.prepare("UPDATE memories SET status = 'quarantined' WHERE workspace_id = '' AND id = 'fedora-env'").run();
+		raw.close();
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.files).toEqual([]);
+		expect(snapshot.quarantined).toEqual([{ id: "fedora-env", scope: "global", reason: expect.stringContaining("巡检异常") }]);
+	});
+});
+
 describe("memoryEntryContent", () => {
 	it("serves the body by id with its update time", () => {
 		expect(seed("note", "reference", "正文内容")).toBe(true);

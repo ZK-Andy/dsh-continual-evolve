@@ -8,10 +8,13 @@
  */
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "../store.js";
+import { GLOBAL_WORKSPACE, MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "../store.js";
 import { skillUsagePartition } from "../services/skill-rules.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
+
+/** Which partition a card row was read from: the open workspace, or the global (L0) one. */
+export type MemoryScopeTag = "project" | "global";
 
 /** One memory row the card renders. */
 export interface MemoryFileInfo {
@@ -21,6 +24,8 @@ export interface MemoryFileInfo {
 	type: string;
 	/** Row status; quarantined rows render in the patrol section, not here. */
 	status: string;
+	/** Where the row lives — promoted memories keep showing up in their origin workspace. */
+	scope: MemoryScopeTag;
 	/** Update time in epoch milliseconds (the card's "updated" line). */
 	updatedAt: number;
 	/** The reviewer advised moving this fact into the repo docs (advice only). */
@@ -38,9 +43,35 @@ export interface MemorySnapshot {
 	/** Active rows (the list the card renders). */
 	files: MemoryFileInfo[];
 	/** Rows quarantined by patrol — displayed as 巡检异常, never in the list. */
-	quarantined: { id: string; reason: string }[];
+	quarantined: { id: string; scope: MemoryScopeTag; reason: string }[];
 	/** The last patrol pass this process recorded (null before the first). */
 	lastPatrol: { ts: string; orphanFtsRows: number; quarantined: number } | null;
+}
+
+/**
+ * One partition's memory rows with the global (L0) partition merged in — the
+ * same visibility the injection index and `get` already apply, so the card
+ * cannot claim a workspace holds a memory the model never sees (or omit one it
+ * always does). A local row with the same id shadows the global one: the only
+ * ids both partitions hold are promoted ones, whose source row is archived and
+ * therefore absent here, so a surviving local row is the newer truth.
+ * @param store - The store to read.
+ * @param root - The partition the card has open.
+ * @returns The merged rows with the partition each came from.
+ */
+function mergedMemoryRows(store: MemoryStore, root: string): { record: MemoryRecord; scope: MemoryScopeTag }[] {
+	const local = store.listAll(root).map((record) => ({ record, scope: "project" as const }));
+	if (root === GLOBAL_WORKSPACE) {
+		return local;
+	}
+	const seen = new Set(local.map((entry) => entry.record.id));
+	const merged: { record: MemoryRecord; scope: MemoryScopeTag }[] = [...local];
+	for (const record of store.listAll(GLOBAL_WORKSPACE)) {
+		if (!seen.has(record.id)) {
+			merged.push({ record, scope: "global" });
+		}
+	}
+	return merged;
 }
 
 /**
@@ -62,7 +93,7 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 	};
 	let all;
 	try {
-		all = store.listAll(workspaceRoot);
+		all = mergedMemoryRows(store, workspaceRoot);
 		if (all.length === 0) {
 			return absent;
 		}
@@ -89,22 +120,24 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 		root: workspaceRoot,
 		exists: true,
 		readError: null,
-		fileCount: all.filter((record) => record.status === "active").length,
-		files: all.filter((record) => record.status === "active").map((record) => infoOf(record, store)),
+		fileCount: all.filter((entry) => entry.record.status === "active").length,
+		files: all.filter((entry) => entry.record.status === "active").map((entry) => infoOf(entry, store)),
 		quarantined: all
-			.filter((record) => record.status === "quarantined")
-			.map((record) => ({ id: record.id, reason: quarantineReasonOf(store, record) })),
+			.filter((entry) => entry.record.status === "quarantined")
+			.map((entry) => ({ id: entry.record.id, scope: entry.scope, reason: quarantineReasonOf(store, entry.record) })),
 		lastPatrol,
 	};
 }
 
-function infoOf(record: MemoryRecord, store: MemoryStore): MemoryFileInfo {
+function infoOf(entry: { record: MemoryRecord; scope: MemoryScopeTag }, store: MemoryStore): MemoryFileInfo {
+	const record = entry.record;
 	return {
 		id: record.id,
 		title: record.title,
 		description: record.description,
 		type: record.type,
 		status: record.status,
+		scope: entry.scope,
 		updatedAt: Date.parse(record.updatedAt) || 0,
 		// The review's advice exits are read-only suggestions: the card is the
 		// only place a human learns "this belongs in the repo docs".
