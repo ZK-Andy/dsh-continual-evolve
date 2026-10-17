@@ -28,8 +28,6 @@ export interface TieringStmts {
 	rejectCount: StatementSync;
 	/** Rows naming an item as the thing they correct (blocks automatic archive). */
 	correctedBy: StatementSync;
-	/** Complete (non-failure) verdict rows of one item. */
-	verdictCount: StatementSync;
 	usageElsewhere: StatementSync;
 	setProbation: StatementSync;
 	clearProbation: StatementSync;
@@ -53,7 +51,10 @@ export function prepareTieringStmts(database: DatabaseSync): TieringStmts {
 		promotionCandidates: database.prepare(
 			"SELECT workspace_id, id FROM memories WHERE status = 'active' AND scope = 'person' AND " +
 				"(SELECT COUNT(*) FROM review_log r WHERE r.workspace_id IS memories.workspace_id " +
-				"AND r.item_kind = 'memory' AND r.item_id = memories.id AND r.verdict <> 'skip') = 1",
+				"AND r.item_kind = 'memory' AND r.item_id = memories.id AND r.verdict <> 'skip') = 1 " +
+				// A promoted row is not a candidate: its probe is probation due,
+				// not a second record-time judgement.
+				"AND probation_until IS NULL",
 		),
 		rejectCount: database.prepare(
 			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = 'memory' AND item_id = ? " +
@@ -61,9 +62,6 @@ export function prepareTieringStmts(database: DatabaseSync): TieringStmts {
 		),
 		correctedBy: database.prepare(
 			"SELECT COUNT(*) AS n FROM memories WHERE workspace_id IS ? AND status = 'active' AND corrects = ?",
-		),
-		verdictCount: database.prepare(
-			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = 'memory' AND item_id = ? AND verdict <> 'skip'",
 		),
 		// Cross-partition use: a served body counts under the caller's partition,
 		// so this is exactly "did another project actually use it" — the
@@ -257,19 +255,6 @@ export function promotionCandidates(stmts: TieringStmts): { workspaceId: string;
 	return rows.map((row) => ({ workspaceId: row.workspace_id, id: row.id }));
 }
 
-/**
- * The number of complete verdicts one item carries (failures excluded): the
- * candidate funnel stops after the second independent judgement.
- * @param stmts - The tiering statements.
- * @param workspaceId - The item's partition.
- * @param id - The item id.
- * @returns The verdict count.
- */
-export function verdictCountOf(stmts: TieringStmts, workspaceId: string, id: string): number {
-	const row = stmts.verdictCount.get(workspaceId, id) as { n: number } | undefined;
-	return Number(row?.n ?? 0);
-}
-
 /** Roll back, keeping the original failure as the error worth reporting. */
 function rollback(database: DatabaseSync): void {
 	try {
@@ -324,6 +309,7 @@ export function createTieringMethods(
 			try {
 				return archiveGateReason(memories, stmts, workspaceId, id);
 			} catch {
+				/* v8 ignore next — a store fault here is not reachable from tests. */
 				// A gate that cannot read its evidence must not authorize a move.
 				return "归档判据不可读，先不自动归档";
 			}

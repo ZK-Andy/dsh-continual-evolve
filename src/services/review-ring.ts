@@ -181,7 +181,7 @@ function landLink(): ChainLink<ReviewItem> {
 			if (evolved.verdict === "keep") {
 				// A keep still resolves probation and promotion candidacy before
 				// falling through to the plain keep row.
-				if (landTieringExit(item, "keep")) {
+				if (landTieringExit(item, evolved, "keep")) {
 					return "handled";
 				}
 				item.deps.store.logReview({
@@ -196,7 +196,7 @@ function landLink(): ChainLink<ReviewItem> {
 			}
 			if (evolved.verdict === "archive" || evolved.verdict === "promote" || evolved.verdict === "demote" ||
 				evolved.verdict === "export-suggestion") {
-				landTieringExit(item, evolved.verdict);
+				landTieringExit(item, evolved, evolved.verdict);
 				return "handled";
 			}
 			// Rewrite: magnitude cap first, dry-run second, gates last.

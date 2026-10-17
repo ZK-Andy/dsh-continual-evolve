@@ -10,6 +10,7 @@
  * archive is a status bit and the source row keeps its body.
  */
 import type { ReviewItem } from "./review-ring.js";
+import type { EvolveVerdict } from "./review-prompt.js";
 import { evolveCountOf, proposedOf, rowBaseOf } from "./review-row.js";
 
 /** Verdicts only a memory can carry — the skill rubric never offers them. */
@@ -26,6 +27,7 @@ const ADVICE_ONLY = new Set(["export-suggestion"]);
  */
 export function landTieringExit(
 	item: ReviewItem,
+	evolved: EvolveVerdict,
 	verdict: "archive" | "promote" | "demote" | "keep" | "export-suggestion",
 ): boolean {
 	if (item.candidate.kind === "skill" && MEMORY_ONLY.has(verdict)) {
@@ -45,26 +47,26 @@ export function landTieringExit(
 		// gates, so the row only marks the item for the card.
 		item.deps.store.logReview({
 			...rowBaseOf(item), verdict: "export-suggestion",
-			reason: item.evolved?.reason ?? "内容对，但家该是仓库文档",
+			reason: evolved.reason,
 			cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: 0,
 			evolveCount: evolveCountOf(item.deps.store, item.candidate),
 		});
 		return true;
 	}
 	if (verdict === "promote") {
-		landPromote(item);
+		landPromote(item, evolved.reason);
 		return true;
 	}
 	if (verdict === "demote") {
-		landDemote(item);
+		landDemote(item, evolved.reason);
 		return true;
 	}
-	landArchive(item);
+	landArchive(item, evolved);
 	return true;
 }
 
 /** `promote`: move a `person` candidate into the global partition (on probation). */
-function landPromote(item: ReviewItem): void {
+function landPromote(item: ReviewItem, reason: string): void {
 	const { deps, candidate, opts, summary } = item;
 	const prior = evolveCountOf(deps.store, candidate);
 	const record = deps.store.get(candidate.workspaceId, candidate.id);
@@ -78,7 +80,7 @@ function landPromote(item: ReviewItem): void {
 	}
 	if (opts.dryRun) {
 		deps.store.logReview({
-			...rowBaseOf(item), verdict: "promote", reason: `试运行未提级：${item.evolved?.reason ?? ""}`,
+			...rowBaseOf(item), verdict: "promote", reason: `试运行未提级：${reason}`,
 			cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: 0, evolveCount: prior,
 		});
 		return;
@@ -86,7 +88,7 @@ function landPromote(item: ReviewItem): void {
 	const outcome = deps.store.promoteMemory(candidate.workspaceId, candidate.id);
 	deps.store.logReview({
 		...rowBaseOf(item), verdict: "promote",
-		reason: outcome.ok ? (item.evolved?.reason ?? "提级到全局") : `提级未落地：${outcome.reason ?? "未知原因"}`,
+		reason: outcome.ok ? reason : `提级未落地：${outcome.reason ?? "未知原因"}`,
 		cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage,
 		applied: outcome.ok ? 1 : 0, evolveCount: outcome.ok ? prior + 1 : prior,
 	});
@@ -96,7 +98,7 @@ function landPromote(item: ReviewItem): void {
 }
 
 /** `demote`: return a mis-homed global row to the partition it came from. */
-function landDemote(item: ReviewItem): void {
+function landDemote(item: ReviewItem, reason: string): void {
 	const { deps, candidate, opts, summary } = item;
 	const prior = evolveCountOf(deps.store, candidate);
 	if (candidate.workspaceId !== "" && !opts.dryRun) {
@@ -110,7 +112,7 @@ function landDemote(item: ReviewItem): void {
 	}
 	if (opts.dryRun) {
 		deps.store.logReview({
-			...rowBaseOf(item), verdict: "demote", reason: `试运行未降级：${item.evolved?.reason ?? ""}`,
+			...rowBaseOf(item), verdict: "demote", reason: `试运行未降级：${reason}`,
 			cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: 0, evolveCount: prior,
 		});
 		return;
@@ -118,7 +120,7 @@ function landDemote(item: ReviewItem): void {
 	const outcome = deps.store.demoteMemory(candidate.workspaceId, candidate.id);
 	deps.store.logReview({
 		...rowBaseOf(item), verdict: "demote",
-		reason: outcome.ok ? (item.evolved?.reason ?? "降回来源分区") : `降级未落地：${outcome.reason ?? "未知原因"}`,
+		reason: outcome.ok ? reason : `降级未落地：${outcome.reason ?? "未知原因"}`,
 		cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage,
 		applied: outcome.ok ? 1 : 0, evolveCount: outcome.ok ? prior + 1 : prior,
 	});
@@ -128,21 +130,21 @@ function landDemote(item: ReviewItem): void {
 }
 
 /** `archive`: only with zero references, no correction pointing at it, second judgement. */
-function landArchive(item: ReviewItem): void {
+function landArchive(item: ReviewItem, evolved: EvolveVerdict): void {
 	const { deps, candidate, opts, summary } = item;
 	const prior = evolveCountOf(deps.store, candidate);
 	const blocker = deps.store.archiveBlocker(candidate.workspaceId, candidate.id);
 	if (blocker !== undefined) {
 		deps.store.logReview({
 			...rowBaseOf(item), verdict: "archive", reason: `未归档：${blocker}`,
-			proposed: proposedOf(item.evolved ?? { verdict: "archive", reason: "" }),
+			proposed: proposedOf(evolved),
 			cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: 0, evolveCount: prior,
 		});
 		return;
 	}
 	if (opts.dryRun) {
 		deps.store.logReview({
-			...rowBaseOf(item), verdict: "archive", reason: `试运行未归档：${item.evolved?.reason ?? ""}`,
+			...rowBaseOf(item), verdict: "archive", reason: `试运行未归档：${evolved.reason}`,
 			cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: 0, evolveCount: prior,
 		});
 		return;
@@ -150,7 +152,7 @@ function landArchive(item: ReviewItem): void {
 	const ok = deps.store.archiveMemory(candidate.workspaceId, candidate.id);
 	deps.store.logReview({
 		...rowBaseOf(item), verdict: "archive",
-		reason: ok ? (item.evolved?.reason ?? "归档") : "归档写入失败",
+		reason: ok ? evolved.reason : "归档写入失败",
 		cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage,
 		applied: ok ? 1 : 0, evolveCount: ok ? prior + 1 : prior,
 	});
@@ -191,9 +193,16 @@ function landProbationKeep(item: ReviewItem): boolean {
 		if (evidence > 0 && !opts.dryRun) {
 			deps.store.confirmProbation(candidate.id);
 		}
+		// Trial mode must not claim a confirmation it never made: the row says
+		// "would have been confirmed" rather than "confirmed".
+		const verdictReason = evidence === 0
+			? "试运行未转正：实习期无跨分区引用"
+			: opts.dryRun
+				? "试运行未转正：实习期有跨分区引用（本会转正）"
+				: "实习转正（有跨分区引用）";
 		deps.store.logReview({
 			...rowBaseOf(item), verdict: "keep",
-			reason: evidence > 0 ? "实习转正（有跨分区引用）" : `试运行未转正：实习期无跨分区引用`,
+			reason: verdictReason,
 			cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: evidence > 0 && !opts.dryRun ? 1 : 0, evolveCount: prior,
 		});
 		if (evidence > 0 && !opts.dryRun) {
