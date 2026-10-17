@@ -110,7 +110,7 @@ Layout:
 ├── client/
 │   └── client.js          # hand-written client bundle: memory + review-settings cards
 ├── locale/                # host package metadata: localized display name + description (zh/en)
-├── test/                  # vitest suite (47 files)
+├── test/                  # vitest suite (48 files)
 ├── lib/                   # build output (tsc)
 ├── docs/                  # design.md (design) · FAQ.md (real-world pitfalls)
 └── .agents/               # AI collaboration layer (AGENTS.md, skills, ADR notes)

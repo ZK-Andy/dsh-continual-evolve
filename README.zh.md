@@ -109,7 +109,7 @@ pnpm check:pack              # 发布产物一致性（prepack 也会跑）
 ├── client/
 │   └── client.js          # 手写 client bundle：记忆 + 评审设置双卡片
 ├── locale/                # 宿主包元数据：显示名 + 描述双语（zh/en）
-├── test/                  # vitest 测试（47 个文件）
+├── test/                  # vitest 测试（48 个文件）
 ├── lib/                   # 构建产物（tsc）
 ├── docs/                  # design.md（设计）· FAQ.md（踩坑）
 └── .agents/               # AI 协作层（AGENTS.md、技能、ADR 笔记）
