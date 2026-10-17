@@ -5,6 +5,7 @@ Status: proposed
 > 放置路径：`.agents/notes/proposed/architecture/2026-10-13-memory-tiering-and-promotion.md`
 > 讨论来源：2026-10-13 会话（评审质量 → 画像在哪 → 分层 → 提级机制）。
 > 实施时机：dry-run 收口后；本文即实施单。
+> 批次与裁决：与事件驱动评审同批（B 版），队列档位与四裁决见 [review-and-tiering-batch-rollout](2026-10-17-review-and-tiering-batch-rollout.md)。
 
 ## Problem
 

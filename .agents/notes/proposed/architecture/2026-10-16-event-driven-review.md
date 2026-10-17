@@ -5,6 +5,7 @@ Status: proposed
 > 放置路径：`.agents/notes/proposed/architecture/2026-10-16-event-driven-review.md`
 > 讨论来源：2026-10-16 会话（正式跑验收通过后，用户质疑 30 天全量重审的规模成本，拍板事件驱动方向，拒绝临时方案）。
 > 实施时机：与 `2026-10-13-memory-tiering-and-promotion.md` 同一批（提级/退休落地时一并做，不单独排期）。
+> 批次与裁决：队列决策表、四裁决与 A/B 两版顺序见 [review-and-tiering-batch-rollout](2026-10-17-review-and-tiering-batch-rollout.md)。
 
 ## Problem
 
