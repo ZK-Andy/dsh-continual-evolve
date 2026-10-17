@@ -188,7 +188,11 @@ async function runDrain(
 			);
 			return;
 		}
-		const candidates = collectCandidates(deps.store, { staleDays: settings.staleDays, limit: settings.batchSize * 2 });
+		const candidates = collectCandidates(deps.store, {
+			staleDays: settings.staleDays,
+			batchSize: settings.batchSize,
+			limit: settings.batchSize * 2,
+		});
 		const ordered = workspace === undefined
 			? candidates
 			: [...candidates.filter((c) => c.workspaceId === workspace), ...candidates.filter((c) => c.workspaceId !== workspace)];

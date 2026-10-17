@@ -91,7 +91,7 @@ function throwingLlm(): ReviewLlm {
 const OPTS = { day: "2026-10-12", budget: 100, dryRun: false, provider: "p", model: "m", sessionId: "sess-1" };
 
 function candidateOf(id: string, body = "Fedora 44"): ReviewCandidate {
-	return { workspaceId: WS, kind: "memory", id, priority: 0, title: "user env", description: "钩子", body };
+	return { workspaceId: WS, kind: "memory", id, priority: 0, source: "new", title: "user env", description: "钩子", body };
 }
 
 describe("rewriteMagnitude", () => {
@@ -309,7 +309,7 @@ describe("runReviewBatch", () => {
 			gate: `{"worthReview": true, "reason": "看看"}`,
 			evolve: `{"verdict": "rewrite", "reason": "精简", "body": ${JSON.stringify(body.replace("**Why:** ", ""))}}`,
 		});
-		const candidate: ReviewCandidate = { workspaceId: WS, kind: "memory", id, priority: 0, title: "部署经验", description: "部署前检查", body, memoryType: "feedback" };
+		const candidate: ReviewCandidate = { workspaceId: WS, kind: "memory", id, priority: 0, source: "new", title: "部署经验", description: "部署前检查", body, memoryType: "feedback" };
 		const summary = await runReviewBatch({ store, llm }, [candidate], OPTS);
 		expect(summary).toMatchObject({ approved: 1, applied: 0 });
 		expect(store.get(WS, id)?.body).toBe(body);

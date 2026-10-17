@@ -124,7 +124,7 @@ describe("skill candidates", () => {
 		);
 		expect(outcomes[0]?.ok).toBe(true);
 		const found = collectCandidates(store, { limit: 10 });
-		expect(found.find((c) => c.id === "deploy")).toMatchObject({ kind: "skill", scope: "project", priority: 0 });
+		expect(found.find((c) => c.id === "deploy")).toMatchObject({ kind: "skill", scope: "project", priority: 0, source: "new" });
 		expect(found.find((c) => c.id === "shared")).toMatchObject({ scope: "global" });
 	});
 
@@ -164,7 +164,7 @@ describe("skill candidates", () => {
 		});
 		const summary = await runReviewBatch(
 			{ store, llm },
-			[{ workspaceId: WS, kind: "skill", id: "ghost", priority: 0, title: "Ghost", description: "h", body: "1. build ghost" }],
+			[{ workspaceId: WS, kind: "skill", id: "ghost", priority: 0, source: "new", title: "Ghost", description: "h", body: "1. build ghost" }],
 			{ day: "2026-10-12", budget: 100, dryRun: false, provider: "p", model: "m", sessionId: "s" },
 		);
 		expect(summary).toMatchObject({ approved: 1, applied: 0 });

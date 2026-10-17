@@ -118,8 +118,9 @@ export const Config = z.object({
 	 * remount, so the scheduler re-reads them per drain instead of capturing
 	 * them at mount. `dryRun` ledgers verdicts without landing them (trial
 	 * mode, default on); `dailyBudget` caps reviewed items per UTC day
-	 * (default 100); `staleDays` is how long a reviewed item stays out of the
-	 * queue before it comes back (default 30).
+	 * (default 100); `staleDays` is the longest exemption window — past it an
+	 * item becomes eligible for the bounded stale sample, and consecutive
+	 * keeps double the window (30→60→120, capped).
 	 */
 	review: z.object({
 		enabled: z.boolean().volatile(),

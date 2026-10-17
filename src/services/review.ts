@@ -39,12 +39,20 @@ export interface ReviewDeps {
 	resolveRoute?: RouteResolver | undefined;
 }
 
+/**
+ * Which tier put a candidate in front of the reviewer — the account's own
+ * vocabulary for `review_daily`'s per-source counters.
+ */
+export type CandidateSource = "new" | "event" | "clock" | "sample";
+
 export interface ReviewCandidate {
 	workspaceId: string;
 	kind: "memory" | "skill";
 	id: string;
-	/** 0 = new, 1 = corrects-linked requeue, 2 = stale requeue. */
+	/** 0 = new, 1 = event/clock requeue, 2 = stale sample. */
 	priority: number;
+	/** The tier that queued it (the rollup's per-source account). */
+	source: CandidateSource;
 	title: string;
 	description: string;
 	body: string;
@@ -110,8 +118,8 @@ interface BatchRun {
 	ring: ReviewRing | undefined;
 	summary: ReviewRunSummary;
 	skipReasons: string[];
-	newItems: number;
-	requeued: number;
+	/** The rollup's per-source requeue account (the total is their sum). */
+	counts: Record<CandidateSource, number>;
 	position: number;
 }
 
@@ -128,7 +136,7 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	const run: BatchRun = {
 		deps, opts, batch, runId, route, ring,
 		summary: { reviewed: 0, approved: 0, applied: 0, dropped: 0, backlog: 0, cheapToken: 0, evolveToken: 0, routeRejected: false },
-		skipReasons: [], newItems: 0, requeued: 0, position: 0,
+		skipReasons: [], counts: { new: 0, event: 0, clock: 0, sample: 0 }, position: 0,
 	};
 	// The run's account is written whatever happens to the loop: a fault that
 	// escapes one item (or the loop itself) is rethrown *after* the rollup is
@@ -148,7 +156,11 @@ export async function runReviewBatch(deps: ReviewDeps, candidates: readonly Revi
 	} finally {
 		run.summary.backlog = Math.max(0, candidates.length - run.summary.reviewed - run.summary.dropped);
 		deps.store.mergeDaily(opts.day, opts.budget, {
-			newItems: run.newItems, requeued: run.requeued, approved: run.summary.approved, applied: run.summary.applied,
+			newItems: run.counts.new,
+			requeuedLink: run.counts.event,
+			requeuedClock: run.counts.clock,
+			requeuedSampled: run.counts.sample,
+			approved: run.summary.approved, applied: run.summary.applied,
 			cheapToken: run.summary.cheapToken, evolveToken: run.summary.evolveToken,
 			backlog: run.summary.backlog, dropped: run.summary.dropped,
 			skipReasons: run.skipReasons.length > 0 ? run.skipReasons : undefined,
@@ -170,11 +182,7 @@ async function reviewOneCandidate(run: BatchRun, candidate: ReviewCandidate): Pr
 			return true;
 		}
 		summary.reviewed += 1;
-		if (candidate.priority === 0) {
-			run.newItems += 1;
-		} else {
-			run.requeued += 1;
-		}
+		run.counts[candidate.source] += 1;
 		if (route === undefined || ring === undefined) {
 			deps.store.logReview({
 				runId, workspaceId: candidate.workspaceId, itemKind: candidate.kind, itemId: candidate.id,
