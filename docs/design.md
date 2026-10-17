@@ -18,8 +18,9 @@
 ├── skill_log                    # 技能账本：每次变更内嵌 before/after 全文 + 文件投影告警
 ├── skill_usage                  # 技能存在心跳：按 id 取回正文 +1（聚合，无无界增长）
 ├── memory_usage                 # 记忆存在心跳：同技能纪律（按 id 取回正文 +1）
-├── review_log                   # 内容评审 verdict 明细：每条一 verdict（keep/rewrite/quarantine/skip）+ 跑在哪个模型 + 便宜/贵用量 + 落盘标志 + 未落盘时的拟改稿，随账本轮转
-├── review_daily                 # 日 rollup（一行一天）：预算 vs 实审 vs 积压 vs 丢弃 + token 按便宜/贵分账
+├── review_log                   # 内容评审 verdict 明细：每条一 verdict（keep/rewrite/quarantine/skip，记忆另有 archive/promote/demote/export-suggestion）+ 跑在哪个模型 + 便宜/贵用量 + 落盘标志 + 未落盘时的拟改稿，随账本轮转
+├── item_events                  # 评审的牵连事件：新落盘相似 / corrects 指向 / 纠错反馈同主题（与正文同事务写入；「事件晚于最近一条完整判词」即待办）
+├── review_daily                 # 日 rollup（一行一天）：预算 vs 实审 vs 积压 vs 丢弃 + token 按便宜/贵分账 + 再审来源（牵连/时钟/抽样）分列
 ├── plugin_log                   # 插件自有日志：level + 稳定事件名 + 原文 + 归属（宿主 logger 无承接方，运维事实落这里，业务事实仍归上面各领域账本）
 └── state                        # 提取游标（seq:<n>，按工作区+会话分隔）、巡检状态与裁剪水位（prune:last）
 ```
@@ -33,6 +34,7 @@
 - **读技能**：项目优先——同 id 时项目行遮蔽全局行（读、检索、列表、卡片一致）；全局行只能显式指定范围更新或删除。手动搬家是搬家不是复制：全局建行 + 物化，同时项目行归档 + 项目文件删除，永远只有一份 active。
 - **子代理与装载器**（`src/subagent.ts` + `src/subagent-defs.ts` + `src/prompt-date.ts` + `src/chain.ts`）：插件所有 LLM 调用只有一个入口——装载器 `loader.run(定义, prompt)`。一份子代理定义 = 一个策略（身份、完整 system 提示词、预算兜底、应答解析器），六份定义（评审四岗位 + 提取两岗位）声明在一张表里，feature 代码不写提示词也不 import 传输层（有结构性回归锁死）。直调不带时钟（一条 user 消息 + 一份 system，没有 runtime context），而 rubric 要判「准确/不过时」、提取要求把相对日期写成绝对日期——所以定义表的 system 可以是构建式 `(context) => string`，装载器按本次调用的 `today`（`SubagentCall.today`）解析，六份定义一律在 system 末尾带同一行基准（`todayUtc()` 是唯一取钟点，评审用它已有的 `opts.day`；时钟只进 system、不进贴着正文的 user prompt）。执行骨架是模板方法：装配 → 调用 → 解析 → 记账固定；流程推进是责任链（评审环 门 → 昂贵门 → 落盘；提取环 预检门 → 提案调用），链路由环境类组装、无终局环节即 fail loud。传输层 `src/llm-call.ts` 统一解析路由、推理档位与输出预算（取模型自己广告的 per-request 上限，定义值只兜底），并把失败前已观测到的 usage/finish/route 挂在 `SubagentCallError` 上——失败行与成功行一样可归因。
 - **内容质量自进化轨**（`src/review*.ts` + `src/token-usage.ts`，与提取轨并行、不共享游标与提示词，只共享库写门）：便宜门模型先判某条记忆/技能值不值得细看，批了才跑贵改写（归属三测打头：主语是用户/环境还是某仓库的某版机制、去名后还成立吗、仓库事实住 ADR/docs；记忆再按准确/可用/可复用/不重复/不过时五维、技能按触发精度/可执行完备/不重复三维（「可复用」按分区判：项目分区技能按该项目内跨任务可用判，跨项目可用只对全局分区技能判；绑定本仓库路径/门禁/流程的项目技能不算缺陷，只有全局分区却绑某仓库才算放错家），只输出 keep/rewrite/quarantine 结构化 verdict，放错家进 quarantine）。记忆与技能各装各的说明书（四个岗位四份提示词——一份服务不了两者：记忆要求抹掉仓库名仍成立，项目技能本来就该绑仓库）。同一套归属三测守在提取 prompt 门口。调用失败记错误原文进 verdict 行，连同跑在哪个模型与该调用已烧掉的 usage 一并落账；输出预算取模型自己广告的上限（截断前已解析出的 verdict 仍算数），一条 verdict 都没产出的调用不让条目记为已评审、下轮可重试。新写即审；重审由**事件驱动**——新落盘与既有条目字面相近、`corrects` 指向、用户纠错的 feedback 三类落盘时在 `item_events` 记一行牵连事件，条目随即回到队列最前；日历降级为兜底抽样（`review.staleDays` 默认 30 天是「最长免审期」，超过即有资格被抽中，抽样名额取批量的五分之一），连续两次 keep 且其间无事件则免审期翻倍（30→60→120 封顶）；删除永不自动落盘（只改写与隔离），超 30% 幅度改写自动转隔离；日上限 100 条（新写 > 牵连/时钟 > 抽样，尾部丢弃；`review_daily` 按来源分列记账）。用量经 `normalizeUsage` 归一并按便宜/贵分账；`review_log` 记每条终态（含 model 列）、`review_daily` 一天合一行。默认试运行（`review.dryRun` 开）：只记 verdict 不落盘，未落盘的拟改稿全文随行进 `proposed` 列（试运行要看的是「改成什么样」，不只是「为什么改」）。
+- **记忆分层与提级**（`src/data/tiering.ts` + `src/services/review-tiering.ts` + `src/store.ts` 的记忆读面）：L0（跟人走，住 `""` 分区）与 L1（项目）两级，L2（会话/任务状态）不进库。记忆读面把全局分区合并进每个工作区视图、**L0 排在前**，同 id 时活动的本地行遮蔽全局行（归档行不遮蔽——提级后的源行正是归档）。提级是**两级试用**：提取时三测全过打 `scope=person`（仍住原分区）→ 评审的第二次独立判定说 promote 才移动；移动是单事务（全局建行 + 项目行归档 + 目标分区补判词行），进全局带 `probation_until = +30d` 与 `origin_workspace`。实习行照常注入并标「（试用中）」：到期由队列时钟档送去复审，按**非来源分区**的引用数决定转正／退回来源分区／隔离。四个出口：archive（保留历史、不再注入，门槛＝零引用＋第二次独立淘汰判定＋未被 corrects 指向）、promote、demote、export-suggestion（只出建议，卡片显形「建议入仓文档」，绝不自动写用户仓库）。物理删除永远人工；`evolve_write(kind=memory, action=move-to-global)` 是手动兜底。
 - **回滚靠账本**：undo = 取账本 before 快照重写；终极兜底是会话轨迹本身（记忆是轨迹的投影，`source_seqs` 可回放溯源）。
 - **巡检**：每次提取应用后随跑——孤儿 FTS 行清除、active 行 secret 扫描 → 命中行 `status='quarantined'`（隐藏不删，卡片显形；被隔离技能的物化文件一并撤下）+ 技能文件对账（缺失/漂移重写、无主托管文件删除）。
 - **卡片：记忆 + 评审设置**（`src/surfaces/memory-snapshot.ts` + `src/surfaces/card-routes.ts` + `src/surfaces/review-settings.ts` + `src/surfaces/card-mount.ts` + `client/client.js`）：官方插件管理内同一入口两块上下排卡，形态对齐市场设置卡。上面是全局评审设置卡（`review.*` 两开关三数字，显式保存经 `configEditor.edit` 写回 profile patch，`enabled` 需重启其余下一轮生效；`settings.configure({ auto: false })` 关掉宿主自动表单页，卡片是唯一设置入口；无服务宿主降级隐藏）。下面是记忆只读卡，内容对齐 ZCode 记忆选项卡——工作区下拉（= 库内记忆、技能与提示词补充分区的并集，目录已删的分区失联不显示不阻塞；全局技能随打开的工作区附带显示）、搜索、相对更新时间、按 id 的内容预览（5 MiB 上限）、技能区（项目技能 + 可见全局技能，全局行打标记）、提示词补充区与巡检异常警告。宿主缺 `webServer`/slot 自动降级。显示名/描述走 `locale/*.json` 双语通道。
@@ -44,7 +46,7 @@
 - **工作区 md 文件（10-04 形态）**：文件透明但写入不设防——索引漂移、frontmatter 腐坏、secret 泄漏全靠写后人工兜底；机械门禁优先于文件透明性（拆解 ADR 自己的判据）。
 - **中央 md 库或 JSON store**：跨文件无事务、门禁靠约定拼合、破坏人机共读；SQLite spike 全绿后（FTS5 trigram 中文检索实测通过、约束即门禁）无独有优势。
 - **双写者（主会话顺手写 + 后台兜底）**：兜底即双 owner；取证证明主会话顺手写不可靠。
-- **层级（global/project/local）**：ZCode 按工作区分库，工作区多大记忆覆盖面就多大；实测 global 存量只有 4 条。
+- **层级（global/project/local，10-04 那版）**：ZCode 按工作区分库，工作区多大记忆覆盖面就多大；实测 global 存量只有 4 条且没有晋升路径——手工维护的分区是死区。现在的 L0 不是那个分区：它只能由**两次独立判定 + 30 天实习**进入，并被「转正／退回」的出水管持续淘汰。
 - **治理机器（审批/版本/benchmark）**：为不存在的多人场景付费；账本 + 软隔离以千分之一的机制量覆盖了同样的风险面。
 
 ## 配置

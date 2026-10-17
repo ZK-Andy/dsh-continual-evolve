@@ -104,6 +104,7 @@ window.__ModuleLoader__.load({
 			skillStats: "{files} 个技能",
 			skillsEmpty: "该工作区还没有技能——明确告诉模型沉淀为技能即可，重启后生效。",
 			skillScopeGlobal: "全局",
+			exportSuggestion: "建议入仓文档",
 			skillPreviewDeleted: "该技能已被删除或搬家，请刷新列表。",
 			skillViewed: "查看 {count} 次",
 			scopeLabel: "选择工作区",
@@ -155,6 +156,7 @@ window.__ModuleLoader__.load({
 			skillStats: "{files} skills",
 			skillsEmpty: "No skills in this workspace yet — ask the model to save one as a skill, then restart.",
 			skillScopeGlobal: "global",
+			exportSuggestion: "move to repo docs",
 			skillPreviewDeleted: "This skill was deleted or moved — refresh the list.",
 			skillViewed: "viewed {count} times",
 			scopeLabel: "Choose workspace",
@@ -881,6 +883,7 @@ window.__ModuleLoader__.load({
 								now: vm.now,
 								t: t,
 								UI: UI,
+								badge: file.suggestExport === true ? t("exportSuggestion") : "",
 								expanded: vm.expandedFile === file.id,
 								preview: vm.preview,
 								onToggle: function () {

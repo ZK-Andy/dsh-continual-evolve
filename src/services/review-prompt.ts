@@ -34,7 +34,7 @@ export const REVIEW_SKILL_CHEAP_SYSTEM_PROMPT =
 
 /** Memory rubric: accurate, usable, reusable, non-duplicate, fresh, right-home. */
 export const REVIEW_MEMORY_SYSTEM_PROMPT =
-	"你是记忆库的内容评审。先过归属三测（主语是用户/环境还是某仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs）：归属不过直接 quarantine 并注明放错家。再按五维判：①准确（事实可信、无幻觉）；②可用（Why/How 具体、可执行，反馈类必须带 Why 与 How to apply）；③可复用（未来会话用得上）；④不重复（与候选旧条比，有重复就指出来）；⑤不过时（未被纠正链取代）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\", \"corrects\"?: \"被取代的同区条目id\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/完全过时/放错家。禁删除，禁编造引用。";
+	"你是记忆库的内容评审。先过归属三测（主语是用户/环境还是某仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs）：归属不过直接 quarantine 并注明放错家。再按五维判：①准确（事实可信、无幻觉）；②可用（Why/How 具体、可执行，反馈类必须带 Why 与 How to apply）；③可复用（未来会话用得上）；④不重复（与候选旧条比，有重复就指出来）；⑤不过时（未被纠正链取代）。只输出 JSON：{\"verdict\": \"keep|rewrite|quarantine|archive|promote|demote|export-suggestion\", \"reason\": \"一句话\", \"title\"?: \"改写后标题\", \"description\"?: \"改写后钩子\", \"body\"?: \"改写后正文全文\", \"corrects\"?: \"被取代的同区条目id\"}。verdict 说明：keep=不动；rewrite=给出改写后全文三件；quarantine=涉密/有害/过时；archive=内容本身没错但压根不该长期存在（一次性的过程、当轮可推导的空话、早已被仓库文档覆盖）——它可逆、保留历史；promote=这条是**人物的画像/跨项目做法**（主语是我或环境、抹掉仓库名仍成立）且当前住在项目分区，值得成为全局记忆；export-suggestion=内容没错、但它的家是**仓库文档**（项目机制、命令、门禁这类读仓库文件就够的事）——只出建议不搬，也不隔离；demote=这条**绑定了某个仓库**（路径、门禁、版本、某项目状态）却住在全局分区，应退回项目分区；scope 字段给了你判据：scope=person 是候选、scope=global 的行才可能该 demote。禁删除，禁编造引用。";
 
 /**
  * Skill rubric: trigger precision, executability, reuse, non-duplicate — with
@@ -51,8 +51,13 @@ export interface GateVerdict {
 	reason: string;
 }
 
+/** The verdicts the memory rubric may return, including the tiering exits. */
+export const MEMORY_VERDICTS = ["keep", "rewrite", "quarantine", "archive", "promote", "demote", "export-suggestion"] as const;
+/** The verdicts the skill rubric may return (skills have no layers to move). */
+export const SKILL_VERDICTS = ["keep", "rewrite", "quarantine"] as const;
+
 export interface EvolveVerdict {
-	verdict: "keep" | "rewrite" | "quarantine";
+	verdict: "keep" | "rewrite" | "quarantine" | "archive" | "promote" | "demote" | "export-suggestion";
 	reason: string;
 	title?: string | undefined;
 	description?: string | undefined;
@@ -107,11 +112,14 @@ export function parseGateAnswer(text: string): GateVerdict | null {
 /** Parse the evolve answer; `null` when the model did not return verdict JSON. */
 export function parseEvolveAnswer(text: string): EvolveVerdict | null {
 	const parsed = parseJsonObject(text);
-	if (parsed === null || (parsed.verdict !== "keep" && parsed.verdict !== "rewrite" && parsed.verdict !== "quarantine")) {
+	const known = [...MEMORY_VERDICTS] as readonly unknown[];
+	if (parsed === null || !known.includes(parsed.verdict)) {
+		// Skills never see the tiering exits in their rubric; the landing link
+		// refuses them per item rather than dropping a whole answer here.
 		return null;
 	}
 	const verdict: EvolveVerdict = {
-		verdict: parsed.verdict,
+		verdict: parsed.verdict as EvolveVerdict["verdict"],
 		reason: typeof parsed.reason === "string" && parsed.reason.length > 0 ? parsed.reason.slice(0, 300) : "无理由",
 	};
 	if (typeof parsed.title === "string" && parsed.title.length > 0) {

@@ -65,13 +65,29 @@ export interface DailyDelta {
 	skipReasons?: string[] | undefined;
 }
 
+/**
+ * The verdict whitelist: what `review_log`'s `CHECK` accepts and what a row
+ * carries. One home — the DDL text is generated from it (`data/schema.ts`),
+ * so a new verdict cannot land in one place only. `archive` / `promote` /
+ * `demote` are the tiering exits and `export-suggestion` the half-automatic
+ * one: "this belongs in the repo's docs" is advice for a human, never an
+ * automatic write into the user's repository
+ * (`2026-10-13-memory-tiering-and-promotion` §出水管).
+ */
+export const REVIEW_VERDICTS = [
+	"keep", "rewrite", "quarantine", "skip", "archive", "promote", "demote", "export-suggestion",
+] as const;
+
+/** One verdict a review row can carry. */
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+
 /** One per-item content-review verdict (the `item-review` account's row). */
 export interface ReviewLogEntry {
 	runId?: string | undefined;
 	workspaceId?: string | undefined;
 	itemKind: "memory" | "skill";
 	itemId: string;
-	verdict: "keep" | "rewrite" | "quarantine" | "skip";
+	verdict: ReviewVerdict;
 	reason?: string | undefined;
 	/** The model this verdict ran on; `undefined` only when the run had no route at all. */
 	model?: string | undefined;
@@ -98,6 +114,8 @@ export interface ReviewAccountStmts {
 	reviewLast: StatementSync;
 	reviewEvolved: StatementSync;
 	reviewPrune: StatementSync;
+	/** The latest complete verdict of one item — the card's advice marker. */
+	reviewLatestVerdict: StatementSync;
 	dailyGet: StatementSync;
 	dailyUpsert: StatementSync;
 	dailyConsume: StatementSync;
@@ -122,6 +140,9 @@ export function prepareReviewStmts(database: DatabaseSync): ReviewAccountStmts {
 			"SELECT COUNT(*) AS n FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND applied = 1",
 		),
 		reviewPrune: database.prepare("DELETE FROM review_log WHERE ts < ?"),
+		reviewLatestVerdict: database.prepare(
+			`SELECT verdict FROM review_log WHERE workspace_id IS ? AND item_kind = ? AND item_id = ? AND NOT ${INCOMPLETE_REVIEW_SQL} ORDER BY rowid DESC LIMIT 1`,
+		),
 		dailyGet: database.prepare("SELECT * FROM review_daily WHERE day = ?"),
 		dailyUpsert: database.prepare(
 			"INSERT INTO review_daily (day, budget, reviewed, new_items, requeued, approved, applied, cheap_token, evolve_token, backlog, dropped, skip_top, skip_counts) " +
@@ -146,6 +167,7 @@ type ReviewAccountMethods = Pick<
 	| "mergeDaily"
 	| "quarantine"
 	| "reviewStateOf"
+	| "latestVerdict"
 >;
 
 /**
@@ -164,6 +186,14 @@ export function createReviewAccounts(
 		...buildReviewLogWriter(stmts),
 		...buildDailyAccounts(stmts),
 		...buildReviewState(stmts, memories, skills),
+		latestVerdict(workspaceId, kind, id) {
+			try {
+				const row = stmts.reviewLatestVerdict.get(workspaceId, kind, id) as { verdict: string } | undefined;
+				return row?.verdict;
+			} catch {
+				return undefined;
+			}
+		},
 	};
 }
 

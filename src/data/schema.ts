@@ -18,6 +18,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { ITEM_EVENT_KINDS } from "./item-events.js";
+import { REVIEW_VERDICTS } from "./review-accounts.js";
 import { LEDGER_OCCURRENCES, LEDGER_TRIGGERS } from "../store-types.js";
 
 /** The extraction ledger's columns in DDL order: the rebuild's explicit copy list. */
@@ -86,6 +87,46 @@ export function itemEventsDdl(name: string): string {
 ) STRICT`;
 }
 
+/** The review ledger's columns in DDL order: the rebuild's explicit copy list. */
+export const REVIEW_LOG_COLUMNS = [
+	"run_id",
+	"ts",
+	"workspace_id",
+	"item_kind",
+	"item_id",
+	"verdict",
+	"reason",
+	"proposed",
+	"model",
+	"cheap_usage",
+	"evolve_usage",
+	"applied",
+	"evolve_count",
+] as const;
+
+/**
+ * The review ledger's DDL, parameterized by table name so the fresh-file path
+ * and the rebuild share one text. Both whitelists are generated from their
+ * single homes (`REVIEW_VERDICTS` here, the item-kind pair inline).
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function reviewLogDdl(name: string): string {
+	const whitelist = REVIEW_VERDICTS.map((verdict) => `'${verdict}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
+  item_id TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN (${whitelist})),
+  reason TEXT,
+  proposed TEXT,
+  model TEXT,
+  cheap_usage TEXT, evolve_usage TEXT,
+  applied INTEGER NOT NULL DEFAULT 0,
+  evolve_count INTEGER NOT NULL DEFAULT 0
+)`;
+}
+
 /** One `CHECK` whitelist as the code declares it. */
 export interface CheckedColumn {
 	readonly column: string;
@@ -116,6 +157,12 @@ export const GUARDED_TABLES: readonly GuardedTable[] = [
 		ddl: itemEventsDdl,
 		columns: ITEM_EVENTS_COLUMNS,
 		checks: [{ column: "event", values: ITEM_EVENT_KINDS }],
+	},
+	{
+		table: "review_log",
+		ddl: reviewLogDdl,
+		columns: REVIEW_LOG_COLUMNS,
+		checks: [{ column: "verdict", values: REVIEW_VERDICTS }],
 	},
 ];
 

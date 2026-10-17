@@ -14,6 +14,7 @@ import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.j
 import type { MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
 import type { ItemEventEntry, ReviewSettled } from "./data/item-events.js";
 import type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
+import type { TieringOutcome } from "./data/tiering.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
 export type { MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
@@ -22,6 +23,8 @@ export { ITEM_EVENT_KINDS } from "./data/item-events.js";
 export type { ItemEventEntry, ItemEventKind, ReviewSettled } from "./data/item-events.js";
 /** The review accounts' shapes live with the tables they describe (`data/review-accounts.ts`); re-exported for importers. */
 export type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
+/** The promotion/demotion outcome shape (`data/tiering.ts`). */
+export type { TieringOutcome } from "./data/tiering.js";
 
 /** State-table keys owned by the store (partitioned per workspace, `""` = global). */
 export const CURSOR_KEY_PREFIX = "seq:";
@@ -339,6 +342,8 @@ export interface MemoryStore {
 	 * rewrite count, undefined when never reviewed (a new item).
 	 */
 	reviewStateOf(workspaceId: string, kind: "memory" | "skill", id: string): { lastTs: string | null; evolveCount: number } | undefined;
+	/** The latest complete verdict of one item (the card's advice marker). */
+	latestVerdict(workspaceId: string, kind: "memory" | "skill", id: string): string | undefined;
 	/**
 	 * Append linkage events, one row each. Called inside the caller's
 	 * transaction so a landed row and the linkages it causes commit together.
@@ -355,4 +360,26 @@ export interface MemoryStore {
 	 * drift, and pruning already resets it conservatively.
 	 */
 	reviewSettled(workspaceId: string, kind: "memory" | "skill", id: string): ReviewSettled;
+	/**
+	 * Move one memory into the global partition: global row on probation +
+	 * source row archived, one transaction. The reverse of {@link demoteMemory}.
+	 */
+	promoteMemory(workspaceId: string, id: string): TieringOutcome;
+	/** Move one global memory back to the partition it was promoted from. */
+	demoteMemory(workspaceId: string, id: string): TieringOutcome;
+	/** Archive one memory (status bit only; the row and its history stay). */
+	archiveMemory(workspaceId: string, id: string): boolean;
+	/**
+	 * Why automatic archive must not land (still referenced, still corrected,
+	 * or only one verdict judged it), `undefined` when it may.
+	 */
+	archiveBlocker(workspaceId: string, id: string): string | undefined;
+	/** End a row's probation window: the promoted row earned its place. */
+	confirmProbation(id: string): void;
+	/** How many partitions other than the origin actually used a global row. */
+	probationEvidence(memoryId: string, originWorkspace: string): number;
+	/** Memories whose probation window has come due — the queue's clock tier. */
+	probationQueue(): { workspaceId: string; id: string }[];
+	/** `person` memories waiting for their second, independent judgement. */
+	promotionQueue(): { workspaceId: string; id: string }[];
 }

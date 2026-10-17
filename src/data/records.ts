@@ -14,6 +14,9 @@ export interface MemoryRow {
 	description: string;
 	body: string;
 	status: string;
+	scope: string;
+	probation_until: string | null;
+	origin_workspace: string | null;
 	source_session: string | null;
 	source_seqs: string | null;
 	source_run: string | null;
@@ -39,6 +42,12 @@ export interface MemoryRecord {
 	sourceRun: string | null;
 	/** Id of the memory this row corrects/supersedes in the same workspace, `null` when standalone. */
 	corrects: string | null;
+	/** Layer marker: `project` (default) or `person` (a promotion candidate). */
+	scope: "project" | "person";
+	/** End of the global probation window, `null` when the row is not on probation. */
+	probationUntil: string | null;
+	/** For a promoted (global) row: the partition it came from, `null` otherwise. */
+	originWorkspace: string | null;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -61,6 +70,9 @@ export function recordOf(row: MemoryRow): MemoryRecord {
 		sourceSeqs: row.source_seqs,
 		sourceRun: row.source_run,
 		corrects: row.corrects ?? null,
+		scope: row.scope === "person" ? "person" : "project",
+		probationUntil: row.probation_until ?? null,
+		originWorkspace: row.origin_workspace ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};

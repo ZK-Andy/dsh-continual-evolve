@@ -38,6 +38,8 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是记忆提取专员。你的唯一
 2. 去名测试——把仓库名、版本号、机制名全抹掉，句子还成立吗？不成立，不提案。
 3. 归属测试——仓库事实（设计拍板、版本细节、任务状态）住 ADR/docs/交接；记忆只收跟人走的（协作偏好、环境事实、跨项目做法）。
 
+**三测全过之后写 scope：** 提案里加 "scope":"person"——它标记「这条跟人走」，是全局记忆的候选，两个条件不满足就不要写：主语是用户或环境（不是仓库），且抹掉仓库名后句子仍成立。任一不满足、或你拿不准，省略 scope（等同 "project"）。scope 只是标记，不改变这条记忆住在哪个工作区；是否真进全局由后续复核决定。
+
 **落点测试（三测之外的追加判据，不替代三测）：** 这条事实的家是哪个文件？用户本轮若已把它写进、或明确要把它写进仓库里的某个文件（"记到/写进/加到 <任意落点>"），那个文件就是它的家——判 skip，reason 里引用用户原话。落点叫什么名字、是已有文件还是新文件、位于哪一层目录，都不影响判定；只看"这句事实已落进仓库文件"这个动作。增量里的 tools-this-turn 行只给工具名不给路径，用来判断"本轮发生过文件写入"，不据此猜测落点是哪个文件。同一句话在记忆与仓库文件里各存一份即为违规——记忆是另一个家，不是备份。
 
 ## 更新优先于新建
@@ -48,7 +50,7 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是记忆提取专员。你的唯一
 
 只输出一个 JSON 对象，不要代码围栏、不要解释：
 
-{"decision":"apply"|"skip","reason":"<一句话依据>","proposals":[{"action":"create"|"update"|"delete","id":"<kebab-slug，update/delete 必填>","type":"user"|"feedback"|"reference","title":"<短标题>","description":"<一句话相关性钩子>","body":"<正文>","sourceSeqs":"<用户原话所在 seq，如 820-831，可省略>"}]}`;
+{"decision":"apply"|"skip","reason":"<一句话依据>","proposals":[{"action":"create"|"update"|"delete","id":"<kebab-slug，update/delete 必填>","type":"user"|"feedback"|"reference","title":"<短标题>","description":"<一句话相关性钩子>","body":"<正文>","scope":"person"|"project"（三测全过写 person，否则省略）,"sourceSeqs":"<用户原话所在 seq，如 820-831，可省略>"}]}`;
 
 /** The pre-gate system prompt: a small verdict before the expensive full call. */
 export const EXTRACTION_CHEAP_SYSTEM_PROMPT = `你是记忆提取的预检门。只判这轮轨迹增量里有没有值得沉淀的跨会话记忆（用户画像与环境事实、可复用的做法纠正与确认、未来会用的资源指针），先过归属三测：主语是用户/环境还是本仓库的某版机制；抹掉仓库名版本号机制名后还成立吗；仓库事实住 ADR/docs。再过落点测试：这条事实已被写进、或本轮明确要写进仓库里的某个文件（任何名字都算，只看"已落进仓库"这个动作）→ 家在那个文件，直接判 false。归属或落点不过都判 false。只输出 JSON，不要代码围栏、不要解释：
@@ -146,6 +148,8 @@ export interface RawProposal {
 	description?: string | undefined;
 	body?: string | undefined;
 	sourceSeqs?: string | undefined;
+	/** The ownership marker the promotion funnel watches (`person` = candidate). */
+	scope?: string | undefined;
 }
 
 export interface ParsedAnswer {
@@ -216,6 +220,10 @@ export function parseExtractionAnswer(text: string): ParsedAnswer {
 			description: typeof item.description === "string" ? item.description : undefined,
 			body: typeof item.body === "string" ? item.body : undefined,
 			sourceSeqs: typeof item.sourceSeqs === "string" ? item.sourceSeqs : undefined,
+			// Sanitized here, not at the gate: an invented scope (say "global")
+			// would reject the whole batch, and one bad marker is no reason to
+			// drop the rest of a good answer.
+			scope: item.scope === "person" ? "person" : undefined,
 		});
 		if (proposals.length >= MAX_PROPOSALS_PER_RUN) {
 			break;

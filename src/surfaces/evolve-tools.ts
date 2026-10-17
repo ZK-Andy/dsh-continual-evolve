@@ -101,7 +101,7 @@ const EVOLVE_WRITE_PARAMETERS = {
 			type: "string",
 			enum: ["create", "update", "delete", "move-to-global"],
 			description:
-				"create 新建；update 更新已有条目（只给要改的字段）；delete 删除；move-to-global 把本项目技能手动搬到全局（仅 skill 可用）。",
+				"create 新建；update 更新已有条目（只给要改的字段）；delete 删除；move-to-global 把本项目条目手动搬到全局（技能与记忆可用；记忆进全局后 30 天实习，有跨项目引用才转正）。",
 		},
 		scope: {
 			type: "string",
@@ -247,7 +247,7 @@ export function registerEvolveTools(tools: ToolsService, store: MemoryStore): ()
 		tools.register(
 			textTool(
 				"evolve_read",
-				"读取一条管理对象：按 id 取完整正文，或按关键词检索（kind=memory 只看本工作区；kind=skill 看本项目与全局，同名时项目遮蔽全局；kind=prompt 只看本工作区）。",
+				"读取一条管理对象：按 id 取完整正文，或按关键词检索（kind=memory 看本工作区与全局分区，同名时本工作区遮蔽全局；kind=skill 看本项目与全局，同名时项目遮蔽全局；kind=prompt 只看本工作区）。",
 				EVOLVE_READ_PARAMETERS,
 				async (args, exec) => {
 					if (!isEvolveKind(args.kind)) {

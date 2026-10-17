@@ -17,6 +17,8 @@ import { cutFailureOf, subagentLoaderFor, type SubagentCall, type SubagentLoader
 import { normalizeUsage, zeroUsage, type UsageTotals } from "./token-usage.js";
 import type { MemoryStore } from "../store.js";
 import type { ReviewCandidate, ReviewDeps, ReviewRunOptions, ReviewRunSummary } from "./review.js";
+import { evolveCountOf, proposedOf, rowBaseOf } from "./review-row.js";
+import { landTieringExit } from "./review-tiering.js";
 
 /** A rewrite lands only when the body-length ratio stays within this bound. */
 export const REWRITE_MAGNITUDE_CAP = 0.3;
@@ -46,15 +48,6 @@ export interface ReviewItem {
 	 * once per candidate.
 	 */
 	faultCode?: string | undefined;
-}
-
-/** The row fields every terminal path shares. */
-interface ReviewRowBase {
-	runId: string;
-	workspaceId: string;
-	itemKind: "memory" | "skill";
-	itemId: string;
-	model: string;
 }
 
 /**
@@ -186,6 +179,11 @@ function landLink(): ChainLink<ReviewItem> {
 				throw new Error(`review landing reached without a verdict for ${item.candidate.kind} ${item.candidate.id}`);
 			}
 			if (evolved.verdict === "keep") {
+				// A keep still resolves probation and promotion candidacy before
+				// falling through to the plain keep row.
+				if (landTieringExit(item, "keep")) {
+					return "handled";
+				}
 				item.deps.store.logReview({
 					...rowBaseOf(item), verdict: "keep", reason: evolved.reason,
 					cheapUsage: item.gate.usage, evolveUsage: item.evolveUsage, applied: 0,
@@ -194,6 +192,11 @@ function landLink(): ChainLink<ReviewItem> {
 			}
 			if (evolved.verdict === "quarantine") {
 				landQuarantine(item, evolved, evolved.reason);
+				return "handled";
+			}
+			if (evolved.verdict === "archive" || evolved.verdict === "promote" || evolved.verdict === "demote" ||
+				evolved.verdict === "export-suggestion") {
+				landTieringExit(item, evolved.verdict);
 				return "handled";
 			}
 			// Rewrite: magnitude cap first, dry-run second, gates last.
@@ -262,41 +265,6 @@ function landRewrite(item: ReviewItem, evolved: EvolveVerdict): void {
 	if (ok) {
 		summary.applied += 1;
 	}
-}
-
-function rowBaseOf(item: ReviewItem): ReviewRowBase {
-	return {
-		runId: item.runId,
-		workspaceId: item.candidate.workspaceId,
-		itemKind: item.candidate.kind,
-		itemId: item.candidate.id,
-		model: item.route.model,
-	};
-}
-
-function evolveCountOf(store: MemoryStore, candidate: ReviewCandidate): number {
-	return store.reviewStateOf(candidate.workspaceId, candidate.kind, candidate.id)?.evolveCount ?? 0;
-}
-
-/**
- * The rewrite payload a non-landing row keeps: exactly the fields the model
- * supplied, or `undefined` when it proposed no text at all.
- */
-function proposedOf(evolved: EvolveVerdict): Record<string, string> | undefined {
-	const payload: Record<string, string> = {};
-	if (evolved.title !== undefined) {
-		payload.title = evolved.title;
-	}
-	if (evolved.description !== undefined) {
-		payload.description = evolved.description;
-	}
-	if (evolved.body !== undefined) {
-		payload.body = evolved.body;
-	}
-	if (evolved.corrects !== undefined) {
-		payload.corrects = evolved.corrects;
-	}
-	return Object.keys(payload).length === 0 ? undefined : payload;
 }
 
 /** Similar existing items (hooks only) for the model's duplication check. */

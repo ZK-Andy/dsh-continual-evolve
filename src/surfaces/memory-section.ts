@@ -65,14 +65,21 @@ export function fitIndex(index: string, maxChars: number): IndexFit {
 	return { text, dropped: index.length - text.length };
 }
 
-/** One index line: hook only — bodies are an `evolve_read` call away. */
+/**
+ * One index line: hook only — bodies are an `evolve_read` call away. A row on
+ * probation says so: a trial memory is visible on purpose (an unseen memory
+ * cannot earn the cross-project use that confirms it), and the marker is what
+ * keeps the reader honest about its status.
+ */
 export function indexLineOf(record: {
 	id: string;
 	title: string;
 	description: string;
 	type: string;
+	probationUntil?: string | null | undefined;
 }): string {
-	return `- [${record.id}] ${record.title} — ${record.description}（${record.type}）`;
+	const probation = record.probationUntil === undefined || record.probationUntil === null ? "" : "（试用中）";
+	return `- [${record.id}] ${record.title} — ${record.description}（${record.type}）${probation}`;
 }
 
 /** Options for {@link memorySectionText}. */

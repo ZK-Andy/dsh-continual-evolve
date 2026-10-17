@@ -63,6 +63,8 @@ interface CollectContext {
 	staleMs: number;
 	/** `workspace\0kind\0id` of every item a linkage event is waiting on. */
 	linked: Set<string>;
+	/** The same keys for the clock tiers: probation due, promotion candidates. */
+	clock: Set<string>;
 }
 
 /**
@@ -81,6 +83,7 @@ export function collectCandidates(store: MemoryStore, opts: CandidateQueueOption
 		now,
 		staleMs: (opts.staleDays ?? 30) * DAY_MS,
 		linked: linkedKeys(store),
+		clock: clockKeys(store),
 	};
 	const tiers: Tiers = { fresh: [], linked: [], sampled: [] };
 	for (const partition of partitionsOf(store)) {
@@ -129,6 +132,29 @@ function linkedKeys(store: MemoryStore): Set<string> {
 }
 
 /**
+ * The clock-tier keys: memories due for their probation review, and `person`
+ * candidates waiting for their second judgement. Independent of `staleDays`
+ * and of the sampling quota by design (`2026-10-17-…-rollout` §R3).
+ * @param store - The central store.
+ * @returns The `workspace\0kind\0id` keys of clock-queued memories.
+ */
+function clockKeys(store: MemoryStore): Set<string> {
+	const keys = new Set<string>();
+	const add = (rows: readonly { workspaceId: string; id: string }[]): void => {
+		for (const row of rows) {
+			keys.add(`${row.workspaceId}\u0000memory\u0000${row.id}`);
+		}
+	};
+	try {
+		add(store.probationQueue());
+		add(store.promotionQueue());
+	} catch {
+		// An unreadable tiering table drops the clock tiers, never the queue.
+	}
+	return keys;
+}
+
+/**
  * Fill the tiers from one partition's memories. A row named by a `corrects`
  * link counts as linked even without an event row — links written before the
  * event table shipped would otherwise be invisible to this queue forever.
@@ -161,6 +187,12 @@ function memoryTier(store: MemoryStore, tiers: Tiers, workspaceId: string, ctx: 
 		const key = `${workspaceId}\u0000memory\u0000${record.id}`;
 		if (ctx.linked.has(key) || correctsTargets.has(record.id)) {
 			tiers.linked.push({ ...base, priority: 1, source: "event" });
+			continue;
+		}
+		// Clock tiers outrank the settle exemption (rollout ADR §R1): a due
+		// probation or a promotion candidate is owed a judgment on schedule.
+		if (ctx.clock.has(key)) {
+			tiers.linked.push({ ...base, priority: 1, source: "clock" });
 			continue;
 		}
 		pushSample(tiers, { ...base, priority: 2, source: "sample" }, record.updatedAt, ctx, () =>
@@ -201,6 +233,10 @@ function skillTier(
 		const key = `${partition}\u0000skill\u0000${record.id}`;
 		if (ctx.linked.has(key)) {
 			tiers.linked.push({ ...base, priority: 1, source: "event" });
+			continue;
+		}
+		if (ctx.clock.has(key)) {
+			tiers.linked.push({ ...base, priority: 1, source: "clock" });
 			continue;
 		}
 		pushSample(tiers, { ...base, priority: 2, source: "sample" }, record.updatedAt, ctx, () =>

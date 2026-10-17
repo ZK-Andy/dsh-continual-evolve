@@ -23,6 +23,28 @@ export interface MemoryReadFields {
 	limit?: unknown;
 }
 
+/**
+ * The manual promotion fallback (`2026-10-13-memory-tiering-and-promotion`
+ * §阶段三): the same shape as a skill's move-to-global — build the global row,
+ * archive the project row, one transaction — and it lands on probation unless
+ * the user asks for an immediate confirmation, which there is no argument for
+ * here: a human moving it *is* the judgement.
+ * @param store - The open central store.
+ * @param workspaceId - The calling session's workspace partition.
+ * @param id - The memory to move.
+ * @returns The human-facing result text.
+ */
+function moveToGlobal(store: MemoryStore, workspaceId: string, id: string | undefined): string {
+	if (id === undefined || id.length === 0) {
+		return "写入被门禁拒绝，记忆未落盘：move-to-global 需要 id。";
+	}
+	const outcome = store.promoteMemory(workspaceId, id);
+	if (!outcome.ok) {
+		return `提级未落地：${outcome.reason ?? "未知原因"}`;
+	}
+	return `已把记忆 \`${id}\` 提到全局分区（30 天实习期，期间所有工作区可见；有跨项目引用即转正，否则退回本工作区）。`;
+}
+
 function fieldsOf(args: MemoryWriteFields): {
 	action: string;
 	id: string | undefined;
@@ -52,7 +74,7 @@ function fieldsOf(args: MemoryWriteFields): {
 export function writeMemoryRecord(store: MemoryStore, workspaceId: string, sessionId: string | undefined, args: MemoryWriteFields): string {
 	const fields = fieldsOf(args);
 	if (fields.action === "move-to-global") {
-		return "写入被门禁拒绝，记忆未落盘：move-to-global 仅支持技能，记忆无全局分区。";
+		return moveToGlobal(store, workspaceId, fields.id);
 	}
 	const [outcome] = store.applyProposals({ workspaceId, trigger: "explicit", sessionId }, [
 		{

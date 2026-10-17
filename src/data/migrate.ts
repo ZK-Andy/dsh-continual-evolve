@@ -7,7 +7,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { LEDGER_OCCURRENCES } from "../store-types.js";
-import { extractionLogDdl, itemEventsDdl, rebuildDriftedTables } from "./schema.js";
+import { extractionLogDdl, itemEventsDdl, rebuildDriftedTables, reviewLogDdl } from "./schema.js";
 
 const SCHEMA_DDL = `
 PRAGMA journal_mode=WAL;
@@ -24,6 +24,9 @@ PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
   source_seqs TEXT,
   source_run TEXT,
   corrects TEXT,
+  scope TEXT NOT NULL DEFAULT 'project',
+  probation_until TEXT,
+  origin_workspace TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, id)
@@ -90,18 +93,7 @@ CREATE TABLE IF NOT EXISTS memory_usage (
 -- Per-item content-review verdicts (the item-review trigger's account):
 -- one row per reviewed item per run, with the model it ran on so a failure
 -- rate can be attributed instead of guessed at. Pruned with the ledgers.
-CREATE TABLE IF NOT EXISTS review_log (
-  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
-  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
-  item_id TEXT NOT NULL,
-  verdict TEXT NOT NULL CHECK (verdict IN ('keep','rewrite','quarantine','skip')),
-  reason TEXT,
-  proposed TEXT,
-  model TEXT,
-  cheap_usage TEXT, evolve_usage TEXT,
-  applied INTEGER NOT NULL DEFAULT 0,
-  evolve_count INTEGER NOT NULL DEFAULT 0
-);
+${reviewLogDdl("review_log")};
 -- The review queue's event tier (ADR 2026-10-17-review-and-tiering-batch-rollout):
 -- one row per linkage that puts an item back in front of review. A log, not a
 -- consumed queue — the row is audit, and "newer than the item's latest complete
@@ -200,6 +192,9 @@ export function migrateDatabase(database: DatabaseSync): void {
 	ensureReviewProposed(database);
 	ensureReviewModel(database);
 	ensureReviewDailySources(database);
+	ensureMemoriesScope(database);
+	ensureMemoriesProbation(database);
+	ensureMemoriesOrigin(database);
 	// Columns first, then shape: the rebuild copies the guard's column list,
 	// and the ALTERs above are what make an old table carry all of it.
 	rebuildDriftedTables(database);
@@ -282,6 +277,45 @@ function ensureReviewModel(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE review_log ADD COLUMN model TEXT");
+}
+
+/**
+ * Add the memories `scope` marker to a store created before promotion
+ * candidates existed. Existing rows are `project`: nothing was ever marked
+ * `person` before this column did.
+ */
+function ensureMemoriesScope(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "scope")) {
+		return;
+	}
+	database.exec("ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'project'");
+}
+
+/**
+ * Add the memories `probation_until` column to a store created before the
+ * global probation window existed. Nullable: only rows that were promoted
+ * carry it.
+ */
+function ensureMemoriesProbation(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "probation_until")) {
+		return;
+	}
+	database.exec("ALTER TABLE memories ADD COLUMN probation_until TEXT");
+}
+
+/**
+ * Add the memories `origin_workspace` column to a store created before
+ * promotion existed. Only a promoted (global) row carries it: demotion needs
+ * to know where the row came from without re-judging anything.
+ */
+function ensureMemoriesOrigin(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "origin_workspace")) {
+		return;
+	}
+	database.exec("ALTER TABLE memories ADD COLUMN origin_workspace TEXT");
 }
 
 /**

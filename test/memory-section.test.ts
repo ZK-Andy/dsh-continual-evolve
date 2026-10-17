@@ -70,6 +70,24 @@ describe("fitIndex", () => {
 });
 
 describe("memorySectionText", () => {
+	it("puts global rows first and marks a probation row", async () => {
+		store.applyProposals({ workspaceId: "", trigger: "explicit" }, [
+			{ action: "create", id: "g-l0", type: "user", title: "全局偏好", description: "钩子", body: "正文" },
+		]);
+		store.applyProposals({ workspaceId: workspace, trigger: "explicit" }, [
+			{ action: "create", id: "p-l1", type: "user", title: "项目事实", description: "钩子", body: "正文" },
+			{ action: "create", id: "p-l2", type: "user", title: "另一条项目事实", description: "钩子", body: "正文" },
+		]);
+		// Promote one project row: it moves into L0 on probation, so the next
+		// render must place it in the global block with the trial marker.
+		expect(store.promoteMemory(workspace, "p-l1").ok).toBe(true);
+		const text = memorySectionText(agentAt(workspace), { store });
+		expect(text.indexOf("g-l0")).toBeLessThan(text.indexOf("p-l2"));
+		expect(text.indexOf("p-l1")).toBeLessThan(text.indexOf("p-l2"));
+		expect(text).toContain("（试用中）");
+		expect(text.match(/- \[p-l1\]/g)?.length).toBe(1);
+	});
+
 	it("renders nothing without a workspace or a store", async () => {
 		expect(memorySectionText(undefined, { store })).toBe("");
 		expect(memorySectionText({ session: { header: {} } }, { store })).toBe("");

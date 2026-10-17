@@ -20,6 +20,17 @@ export { secretLeakReason };
 export const MEMORY_TYPES = ["user", "feedback", "reference"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
+/**
+ * Where a memory's knowledge belongs (`2026-10-13-memory-tiering-and-promotion`):
+ * `project` is the default (this workspace's facts), `person` marks a row the
+ * extraction or review judged to be about the user or their machine — the
+ * promotion candidate that may later move to the global partition. A row's
+ * scope is a proposal, never a placement: it still lives in its source
+ * partition until a promotion transaction moves it.
+ */
+export const MEMORY_SCOPES = ["project", "person"] as const;
+export type MemoryScope = (typeof MEMORY_SCOPES)[number];
+
 /** Record lifecycle statuses. `quarantined` is set by patrol, never shown. */
 export const MEMORY_STATUSES = ["active", "quarantined", "archived"] as const;
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
@@ -108,6 +119,12 @@ export interface MemoryProposal {
 	 * correction-chasing. Append/replace only — no unlink path.
 	 */
 	corrects?: string | undefined;
+	/**
+	 * Where the fact belongs. Omitted means "unchanged" on update and
+	 * `project` on create; `person` only marks a promotion candidate and
+	 * changes nothing about where the row lives.
+	 */
+	scope?: string | undefined;
 }
 
 /** The merged field values a create/update would write (delete checks none). */
@@ -116,6 +133,8 @@ export interface ProposedFields {
 	title: string;
 	description: string;
 	body: string;
+	/** The row's layer marker (`project` / `person`). */
+	scope: MemoryScope;
 }
 
 /**
@@ -128,6 +147,9 @@ export function fieldGateReasons(fields: ProposedFields): string[] {
 	const reasons: string[] = [];
 	if (!MEMORY_TYPES.includes(fields.type)) {
 		reasons.push(`type must be one of ${MEMORY_TYPES.join("/")}`);
+	}
+	if (!MEMORY_SCOPES.includes(fields.scope)) {
+		reasons.push(`scope must be one of ${MEMORY_SCOPES.join("/")}`);
 	}
 	for (const reason of [
 		textFieldGate(fields.title, "title must not be empty", MEMORY_TITLE_LIMIT, `title exceeds ${MEMORY_TITLE_LIMIT} characters`),

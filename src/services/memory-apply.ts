@@ -10,6 +10,7 @@ import {
 	fieldGateReasons,
 	isValidMemoryId,
 	type MemoryProposal,
+	type MemoryScope,
 	type MemoryType,
 	slugifyId,
 } from "./memory-rules.js";
@@ -124,7 +125,7 @@ interface MemoryApplyJob {
 	proposal: MemoryProposal;
 	id: string;
 	existing: MemoryRecord | undefined;
-	fields: { type: MemoryType; title: string; description: string; body: string };
+	fields: { type: MemoryType; title: string; description: string; body: string; scope: MemoryScope };
 	link: string | null;
 	files: MemoryLedgerFile[];
 }
@@ -199,6 +200,7 @@ function createMemory(job: MemoryApplyJob): ProposalOutcome {
 		fields.title,
 		fields.description,
 		fields.body,
+		fields.scope,
 		ctx.sessionId ?? null,
 		proposal.sourceSeqs ?? null,
 		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
@@ -230,6 +232,7 @@ function updateMemory(job: MemoryApplyJob): ProposalOutcome {
 		fields.title,
 		fields.description,
 		fields.body,
+		fields.scope,
 		link,
 		db.now(),
 		ctx.workspaceId,
@@ -303,7 +306,7 @@ function mergedFields(
 	proposal: MemoryProposal,
 	existing: MemoryRecord | undefined,
 	action: "create" | "update",
-): { fields: { type: MemoryType; title: string; description: string; body: string } } | { reason: string } {
+): { fields: { type: MemoryType; title: string; description: string; body: string; scope: MemoryScope } } | { reason: string } {
 	const pick = (value: string | undefined, fallback: string): string =>
 		typeof value === "string" ? value : fallback;
 	if (action === "create") {
@@ -317,6 +320,9 @@ function mergedFields(
 				title: proposal.title,
 				description: proposal.description,
 				body: proposal.body,
+				// Cast narrows the proposal's free-form string to the taxonomy; the
+				// field gate right after rejects anything outside it.
+				scope: (typeof proposal.scope === "string" ? proposal.scope : "project") as MemoryScope,
 			},
 		};
 	}
@@ -329,6 +335,9 @@ function mergedFields(
 			title: pick(proposal.title, existing.title),
 			description: pick(proposal.description, existing.description),
 			body: pick(proposal.body, existing.body),
+			// Omitted scope keeps the stored one: an update that only touches
+			// text must not silently reset a promotion candidate to `project`.
+			scope: (typeof proposal.scope === "string" ? proposal.scope : existing.scope) as MemoryScope,
 		},
 	};
 }

@@ -13,3 +13,11 @@ export {
 	type ItemEventStmts,
 } from "./item-events.js";
 export { createUsageCounters } from "./usage-accounts.js";
+export {
+	createTieringMethods,
+	prepareTieringStmts,
+	PROBATION_DAYS,
+	type TieringMethods,
+	type TieringOutcome,
+	type TieringStmts,
+} from "./tiering.js";

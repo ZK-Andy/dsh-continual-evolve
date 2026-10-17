@@ -118,10 +118,15 @@ describe("evolve_write / evolve_read over memories", () => {
 		expect(text).toContain("How to apply:");
 	});
 
-	it("rejects move-to-global for memories", async () => {
-		expect(await run("evolve_write", { kind: "memory", action: "move-to-global", id: "uni-mem" })).toContain(
-			"move-to-global 仅支持技能",
-		);
+	it("moves a memory to the global partition on demand", async () => {
+		await run("evolve_write", { kind: "memory", action: "create", id: "uni-mem", type: "user", title: "t", description: "d", body: "b" });
+		const text = await run("evolve_write", { kind: "memory", action: "move-to-global", id: "uni-mem" });
+		expect(text).toContain("全局分区");
+		expect(text).toContain("实习");
+		// The promoted copy is what a read returns: the source row is history.
+		const read = await run("evolve_read", { kind: "memory", id: "uni-mem" });
+		expect(read).toContain("id: uni-mem");
+		expect(read).toContain("状态: active");
 	});
 
 	it("deletes memories and answers empty workspaces", async () => {

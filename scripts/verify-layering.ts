@@ -39,7 +39,6 @@ const EDGES: Record<string, readonly string[]> = {
 		"surfaces/skill-provider",
 	],
 	// The account layer's single import site for the store assembly.
-	"data/accounts.ts": ["data/item-events", "data/review-accounts", "data/usage-accounts"],
 	"data/database.ts": [],
 	"data/ledger.ts": ["store-types"],
 	"data/migrate.ts": ["data/schema", "store-types"],
@@ -51,7 +50,7 @@ const EDGES: Record<string, readonly string[]> = {
 	"data/resource-kinds.ts": ["data/repository"],
 	"data/review-accounts.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	// Guarded table shapes: the DDL single source, the drift probe, and the rebuild.
-	"data/schema.ts": ["data/item-events", "store-types"],
+	"data/schema.ts": ["data/item-events", "data/review-accounts", "store-types"],
 	// The review queue's event tier, its writer, and the derived settled streak.
 	"data/item-events.ts": ["data/review-accounts"],
 	// Usage counters: one aggregate row per kind, bumped by served bodies only.
@@ -187,11 +186,19 @@ const EDGES: Record<string, readonly string[]> = {
 		"services/model-route",
 		"services/review",
 		"services/review-prompt",
+		"services/review-row",
+		"services/review-tiering",
 		"services/subagent",
 		"services/subagent-defs",
 		"services/token-usage",
 		"store",
 	],
+	// The verdict-row helpers both landing paths share (no ring import cycle).
+	"services/review-row.ts": ["services/review-prompt", "services/review", "store"],
+	// The tiering exits: archive / promote / demote / probation resolution.
+	"services/review-tiering.ts": ["services/review-prompt", "services/review-ring", "services/review-row"],
+	"data/tiering.ts": ["data/records", "data/repository"],
+	"data/accounts.ts": ["data/item-events", "data/review-accounts", "data/tiering", "data/usage-accounts"],
 	"services/skill-apply.ts": [
 		"data/ledger",
 		"data/records",
@@ -234,6 +241,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"data/item-events",
 		"data/records",
 		"data/review-accounts",
+		"data/tiering",
 		"services/memory-apply",
 		"services/memory-rules",
 		"services/prompt-rules",

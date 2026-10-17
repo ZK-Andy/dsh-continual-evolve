@@ -69,6 +69,19 @@ describe("extractionPrompt", () => {
 });
 
 describe("parseExtractionAnswer", () => {
+	it("keeps the person scope marker and drops an invented one", () => {
+		const answer = parseExtractionAnswer(JSON.stringify({
+			decision: "apply",
+			reason: "ok",
+			proposals: [
+				{ action: "create", id: "a", type: "user", title: "t", description: "d", body: "b", scope: "person" },
+				{ action: "create", id: "b", type: "user", title: "t", description: "d", body: "b", scope: "global" },
+			],
+		}));
+		expect(answer.proposals[0]?.scope).toBe("person");
+		expect(answer.proposals[1]?.scope).toBeUndefined();
+	});
+
 	it("parses a plain and a fenced apply answer", () => {
 		const answer = {
 			decision: "apply",

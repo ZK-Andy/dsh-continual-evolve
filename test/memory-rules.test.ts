@@ -77,10 +77,16 @@ describe("secretLeakReason", () => {
 });
 
 describe("fieldGateReasons", () => {
-	const ok = { type: "user" as const, title: "t", description: "d", body: "b" };
+	const ok = { type: "user" as const, title: "t", description: "d", body: "b", scope: "project" as const };
 
 	it("passes a well-formed record", () => {
 		expect(fieldGateReasons(ok)).toEqual([]);
+	});
+
+	it("blocks an unknown scope", () => {
+		expect(
+			fieldGateReasons({ ...ok, scope: "global" as never }).some((r) => r.includes("scope")),
+		).toBe(true);
 	});
 
 	it("blocks empty and oversized fields", () => {

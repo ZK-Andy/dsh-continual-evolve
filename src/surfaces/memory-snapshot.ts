@@ -23,6 +23,8 @@ export interface MemoryFileInfo {
 	status: string;
 	/** Update time in epoch milliseconds (the card's "updated" line). */
 	updatedAt: number;
+	/** The reviewer advised moving this fact into the repo docs (advice only). */
+	suggestExport: boolean;
 }
 
 /** The full read-only snapshot the card renders for one workspace root. */
@@ -88,7 +90,7 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 		exists: true,
 		readError: null,
 		fileCount: all.filter((record) => record.status === "active").length,
-		files: all.filter((record) => record.status === "active").map(infoOf),
+		files: all.filter((record) => record.status === "active").map((record) => infoOf(record, store)),
 		quarantined: all
 			.filter((record) => record.status === "quarantined")
 			.map((record) => ({ id: record.id, reason: quarantineReasonOf(store, record) })),
@@ -96,7 +98,7 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 	};
 }
 
-function infoOf(record: MemoryRecord): MemoryFileInfo {
+function infoOf(record: MemoryRecord, store: MemoryStore): MemoryFileInfo {
 	return {
 		id: record.id,
 		title: record.title,
@@ -104,6 +106,9 @@ function infoOf(record: MemoryRecord): MemoryFileInfo {
 		type: record.type,
 		status: record.status,
 		updatedAt: Date.parse(record.updatedAt) || 0,
+		// The review's advice exits are read-only suggestions: the card is the
+		// only place a human learns "this belongs in the repo docs".
+		suggestExport: store.latestVerdict(record.workspaceId, "memory", record.id) === "export-suggestion",
 	};
 }
 
