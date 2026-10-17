@@ -5,6 +5,7 @@ Status: proposed
 > 放置路径：`.agents/notes/proposed/architecture/2026-10-17-review-and-tiering-batch-rollout.md`
 > 讨论来源：2026-10-17 会话（用户问两份提案能否一批做，拍板「执行」）。
 > 上游提案：[事件驱动评审](2026-10-16-event-driven-review.md) 与 [记忆分层与两级试用提级](2026-10-13-memory-tiering-and-promotion.md)；本文只裁决两者的共享面、实施顺序与批次边界，不复述各自设计。
+> 进度：A1–A4 已随 **v0.17.0** 落地（2026-10-17，`0e6bd8b`+`b6978b6`）；B1–B5 待做，两份上游提案在该批全部落地前保持 proposed。
 
 ## Problem
 
