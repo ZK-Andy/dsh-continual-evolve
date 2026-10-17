@@ -38,10 +38,12 @@ const EDGES: Record<string, readonly string[]> = {
 		"surfaces/evolve-tools",
 		"surfaces/skill-provider",
 	],
+	// The account layer's single import site for the store assembly.
+	"data/accounts.ts": ["data/item-events", "data/review-accounts", "data/usage-accounts"],
 	"data/database.ts": [],
 	"data/ledger.ts": ["store-types"],
 	"data/migrate.ts": ["data/schema", "store-types"],
-	"data/patrol.ts": ["data/records", "data/repository", "data/review-accounts", "store-types"],
+	"data/patrol.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	"data/records.ts": [],
 	"data/repository.ts": ["data/records", "data/resource-kinds"],
 	// Type-only back edge (erased at compile): the descriptor file names the
@@ -49,7 +51,11 @@ const EDGES: Record<string, readonly string[]> = {
 	"data/resource-kinds.ts": ["data/repository"],
 	"data/review-accounts.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	// Guarded table shapes: the DDL single source, the drift probe, and the rebuild.
-	"data/schema.ts": ["store-types"],
+	"data/schema.ts": ["data/item-events", "store-types"],
+	// The review queue's event tier, its writer, and the derived settled streak.
+	"data/item-events.ts": ["data/review-accounts"],
+	// Usage counters: one aggregate row per kind, bumped by served bodies only.
+	"data/usage-accounts.ts": ["data/records", "data/repository", "store-types"],
 	"data/secret.ts": [],
 	"index.ts": [
 		"assemble",
@@ -124,9 +130,12 @@ const EDGES: Record<string, readonly string[]> = {
 		"data/ledger",
 		"data/records",
 		"data/repository",
+		"services/memory-linkage",
 		"services/memory-rules",
 		"store-types",
 	],
+	// The linkage a landed memory write causes (queue events, not gate work).
+	"services/memory-linkage.ts": ["data/records", "data/repository", "store-types"],
 	"services/memory-rules.ts": ["data/secret"],
 	// The route candidates a direct call resolves through (see `model-route.ts`).
 	"services/model-route.ts": [],
@@ -208,13 +217,13 @@ const EDGES: Record<string, readonly string[]> = {
 	],
 	"services/token-usage.ts": [],
 	"store.ts": [
+		"data/accounts",
 		"data/database",
 		"data/ledger",
 		"data/migrate",
 		"data/patrol",
 		"data/records",
 		"data/repository",
-		"data/review-accounts",
 		"services/memory-apply",
 		"services/prompt-apply",
 		"services/skill-apply",
@@ -222,7 +231,9 @@ const EDGES: Record<string, readonly string[]> = {
 		"store-types",
 	],
 	"store-types.ts": [
+		"data/item-events",
 		"data/records",
+		"data/review-accounts",
 		"services/memory-apply",
 		"services/memory-rules",
 		"services/prompt-rules",

@@ -7,7 +7,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { LEDGER_OCCURRENCES } from "../store-types.js";
-import { extractionLogDdl, rebuildDriftedTables } from "./schema.js";
+import { extractionLogDdl, itemEventsDdl, rebuildDriftedTables } from "./schema.js";
 
 const SCHEMA_DDL = `
 PRAGMA journal_mode=WAL;
@@ -102,14 +102,26 @@ CREATE TABLE IF NOT EXISTS review_log (
   applied INTEGER NOT NULL DEFAULT 0,
   evolve_count INTEGER NOT NULL DEFAULT 0
 );
+-- The review queue's event tier (ADR 2026-10-17-review-and-tiering-batch-rollout):
+-- one row per linkage that puts an item back in front of review. A log, not a
+-- consumed queue — the row is audit, and "newer than the item's latest complete
+-- verdict" is the pending test. Pruned with the ledgers.
+${itemEventsDdl("item_events")};
+CREATE INDEX IF NOT EXISTS idx_item_events_item ON item_events(workspace_id, item_kind, item_id, ts);
+CREATE INDEX IF NOT EXISTS idx_item_events_ts ON item_events(ts);
 -- One rollup row per UTC day: the hard-cap account (budget vs reviewed vs
 -- backlog vs dropped) plus the token account split by cheap/evolve purpose.
+-- requeued is the total; the three source columns say why an item came back
+-- (event linkage / calendar clock / stale sampling) and always sum to it.
 CREATE TABLE IF NOT EXISTS review_daily (
   day TEXT NOT NULL PRIMARY KEY,
   budget INTEGER NOT NULL,
   reviewed INTEGER NOT NULL DEFAULT 0,
   new_items INTEGER NOT NULL DEFAULT 0,
   requeued INTEGER NOT NULL DEFAULT 0,
+  requeued_link INTEGER NOT NULL DEFAULT 0,
+  requeued_sampled INTEGER NOT NULL DEFAULT 0,
+  requeued_clock INTEGER NOT NULL DEFAULT 0,
   approved INTEGER NOT NULL DEFAULT 0,
   applied INTEGER NOT NULL DEFAULT 0,
   cheap_token INTEGER NOT NULL DEFAULT 0,
@@ -187,6 +199,7 @@ export function migrateDatabase(database: DatabaseSync): void {
 	ensureExtractionCheapError(database);
 	ensureReviewProposed(database);
 	ensureReviewModel(database);
+	ensureReviewDailySources(database);
 	// Columns first, then shape: the rebuild copies the guard's column list,
 	// and the ALTERs above are what make an old table carry all of it.
 	rebuildDriftedTables(database);
@@ -269,4 +282,21 @@ function ensureReviewModel(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE review_log ADD COLUMN model TEXT");
+}
+
+/**
+ * Add the rollup's per-source requeue counters to a store created before the
+ * queue stopped being one undifferentiated tier. `review_daily` is STRICT, so
+ * each column arrives with the default the fresh DDL declares — an old row
+ * reads as "no source recorded", never as null. Same single-migration
+ * discipline as the columns above.
+ */
+function ensureReviewDailySources(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('review_daily')").all() as { name: string }[];
+	const present = new Set(columns.map((column) => column.name));
+	for (const column of ["requeued_link", "requeued_sampled", "requeued_clock"]) {
+		if (!present.has(column)) {
+			database.exec(`ALTER TABLE review_daily ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+		}
+	}
 }

@@ -12,9 +12,16 @@ import type { PromptProposal } from "./services/prompt-rules.js";
 import type { SkillProposal } from "./services/skill-rules.js";
 import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.js";
 import type { MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
+import type { ItemEventEntry, ReviewSettled } from "./data/item-events.js";
+import type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
 export type { MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
+/** The queue's event shapes live with the table they describe (`data/item-events.ts`). */
+export { ITEM_EVENT_KINDS } from "./data/item-events.js";
+export type { ItemEventEntry, ItemEventKind, ReviewSettled } from "./data/item-events.js";
+/** The review accounts' shapes live with the tables they describe (`data/review-accounts.ts`); re-exported for importers. */
+export type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
 
 /** State-table keys owned by the store (partitioned per workspace, `""` = global). */
 export const CURSOR_KEY_PREFIX = "seq:";
@@ -74,6 +81,7 @@ export type LedgerTrigger = (typeof LEDGER_TRIGGERS)[number];
 /** The ledger column counting the wake-ups one coalesced row stands for. */
 export const LEDGER_OCCURRENCES = "occurrences";
 
+
 /** What a single skill proposal produced. */
 export interface SkillProposalOutcome {
 	id: string;
@@ -121,63 +129,7 @@ export interface LedgerFile<Action extends string = string, Snapshot = unknown> 
 	sourceSeqs?: string | undefined;
 }
 
-/** One per-item content-review verdict (the `item-review` account's row). */
-export interface ReviewLogEntry {
-	runId?: string | undefined;
-	workspaceId?: string | undefined;
-	itemKind: "memory" | "skill";
-	itemId: string;
-	verdict: "keep" | "rewrite" | "quarantine" | "skip";
-	reason?: string | undefined;
-	/** The model this verdict ran on; `undefined` only when the run had no route at all. */
-	model?: string | undefined;
-	/** Normalized usage JSON of the cheap gate call, `undefined` when skipped before any call. */
-	cheapUsage?: unknown;
-	/** Normalized usage JSON of the evolve call, `undefined` unless rewritten. */
-	evolveUsage?: unknown;
-	/** Whether the rewrite landed (1) or the row is verdict-only (0). */
-	applied?: number | undefined;
-	/** How many times this item has evolved including this run. */
-	evolveCount?: number | undefined;
-	/**
-	 * The rewrite the model proposed when the row did NOT land it (trial mode),
-	 * as `{title, description, body, corrects}`. Without it a dry run ledgers
-	 * only why it would change an item, never into what — and the "into what"
-	 * is the part a human has to judge before turning the trial off.
-	 */
-	proposed?: unknown;
-}
 
-/** One day of the hard-cap account (UTC `YYYY-MM-DD`, budget = 100). */
-export interface DailyStats {
-	day: string;
-	budget: number;
-	reviewed: number;
-	newItems: number;
-	requeued: number;
-	approved: number;
-	applied: number;
-	cheapToken: number;
-	evolveToken: number;
-	backlog: number;
-	dropped: number;
-	/** JSON array of the top skip reasons, `null` when none. */
-	skipTop: string | null;
-}
-
-/** Additive counters merged into today's rollup by one run. */
-export interface DailyDelta {
-	newItems?: number | undefined;
-	requeued?: number | undefined;
-	approved?: number | undefined;
-	applied?: number | undefined;
-	cheapToken?: number | undefined;
-	evolveToken?: number | undefined;
-	/** Queue depth after the run (set, not added). */
-	backlog?: number | undefined;
-	dropped?: number | undefined;
-	skipReasons?: string[] | undefined;
-}
 
 /**
  * One ledger row (audit + rollback via embedded before/after snapshots).
@@ -387,4 +339,20 @@ export interface MemoryStore {
 	 * rewrite count, undefined when never reviewed (a new item).
 	 */
 	reviewStateOf(workspaceId: string, kind: "memory" | "skill", id: string): { lastTs: string | null; evolveCount: number } | undefined;
+	/**
+	 * Append linkage events, one row each. Called inside the caller's
+	 * transaction so a landed row and the linkages it causes commit together.
+	 */
+	recordItemEvents(entries: readonly ItemEventEntry[]): void;
+	/**
+	 * The event tier of the review queue: items whose latest linkage event is
+	 * newer than their latest complete verdict. One query per drain.
+	 */
+	reviewEventQueue(): { workspaceId: string; kind: "memory" | "skill"; id: string }[];
+	/**
+	 * Consecutive keeps since the last reset — a linkage event or any non-keep
+	 * verdict. Derived from the verdict rows, never stored: two writers would
+	 * drift, and pruning already resets it conservatively.
+	 */
+	reviewSettled(workspaceId: string, kind: "memory" | "skill", id: string): ReviewSettled;
 }

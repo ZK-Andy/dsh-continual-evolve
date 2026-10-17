@@ -4,10 +4,10 @@
  * leaks, reconcile skill files, and persist the patrol account itself.
  * File side-effects arrive as callbacks (the data layer never imports the
  * presentation layer); the store assembly passes the real projection
- * functions. Row shapes live in `./records.js`, secret screening in
- * `./review-accounts.js`.
+ * functions. Row shapes live in `./records.js`; secret screening lives here
+ * with the pass that runs it.
  */
-import { quarantineSecrets } from "./review-accounts.js";
+import { secretLeakReason } from "./secret.js";
 import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
 import type { Repository } from "./repository.js";
 import { GLOBAL_WORKSPACE, PATROL_STATE_KEY, type PatrolResult, type SkillFileWarning } from "../store-types.js";
@@ -74,4 +74,47 @@ export function runPatrol(
 	files.reconcile(skills, result);
 	setState(GLOBAL_WORKSPACE, PATROL_STATE_KEY, JSON.stringify(result));
 	return result;
+}
+
+/**
+ * Run the secret screen over every active row of the three kinds and
+ * quarantine what leaks. File side-effects stay with the caller: a
+ * quarantined skill must stop loading immediately, so the caller drops
+ * its managed file through the callback (hand-written files stay, with
+ * an error counted so the residue stays visible).
+ * @param memories - The memories repository.
+ * @param skills - The skills repository.
+ * @param prompts - The prompts repository.
+ * @param result - The patrol result accumulating counts.
+ * @param onSkillQuarantined - Drops one quarantined skill's managed file.
+ */
+export function quarantineSecrets(
+	memories: Repository<MemoryRow>,
+	skills: Repository<SkillRow>,
+	prompts: Repository<PromptRow>,
+	result: PatrolResult,
+	onSkillQuarantined: (workspaceId: string, id: string) => void,
+): void {
+	for (const row of memories.activeRowList()) {
+		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
+		if (reason !== undefined) {
+			memories.quarantineRow(row.workspace_id, row.id);
+			result.quarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
+		}
+	}
+	for (const row of skills.activeRowList()) {
+		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
+		if (reason !== undefined) {
+			skills.quarantineRow(row.workspace_id, row.id);
+			result.skillQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
+			onSkillQuarantined(row.workspace_id, row.id);
+		}
+	}
+	for (const row of prompts.activeRowList()) {
+		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
+		if (reason !== undefined) {
+			prompts.quarantineRow(row.workspace_id, row.id);
+			result.promptQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
+		}
+	}
 }

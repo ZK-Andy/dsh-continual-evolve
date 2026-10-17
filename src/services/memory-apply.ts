@@ -13,7 +13,8 @@ import {
 	type MemoryType,
 	slugifyId,
 } from "./memory-rules.js";
-import type { LedgerEntry, LedgerFile, MemoryRecord } from "../store-types.js";
+import type { ItemEventEntry, LedgerEntry, LedgerFile, MemoryRecord } from "../store-types.js";
+import { createLinkages, updateLinkages } from "./memory-linkage.js";
 import { commitWithLedger, writeMemoryLedger } from "../data/ledger.js";
 import { recordOf, type MemoryRow } from "../data/records.js";
 import { type Repository } from "../data/repository.js";
@@ -56,6 +57,12 @@ export interface ApplyDatabase {
 	memories: Repository<MemoryRow>;
 	/** The pre-prepared extraction ledger statement (owned by `data/ledger.ts`). */
 	ledger: StatementSync;
+	/**
+	 * Append review-queue linkage events. Called inside the batch's own
+	 * transaction, so the row and the linkages it causes commit together.
+	 * Absent in unit tests that exercise the gate alone.
+	 */
+	events?: ((entries: readonly ItemEventEntry[]) => void) | undefined;
 }
 
 /**
@@ -206,6 +213,7 @@ function createMemory(job: MemoryApplyJob): ProposalOutcome {
 		after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow),
 		sourceSeqs: proposal.sourceSeqs,
 	});
+	db.events?.(createLinkages({ workspaceId: ctx.workspaceId, memories: db.memories }, id, fields, link));
 	return { id, action, ok: true };
 }
 
@@ -229,6 +237,8 @@ function updateMemory(job: MemoryApplyJob): ProposalOutcome {
 	]);
 	db.memories.syncFts(ctx.workspaceId, id);
 	files.push({ id, action, before: existing, after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow) });
+	// A plain text update (the review's own rewrite included) links nobody.
+	db.events?.(updateLinkages({ workspaceId: ctx.workspaceId, memories: db.memories }, id, link));
 	return { id, action, ok: true };
 }
 

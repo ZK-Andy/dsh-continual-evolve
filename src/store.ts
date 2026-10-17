@@ -25,7 +25,16 @@ import { migrateDatabase } from "./data/migrate.js";
 import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, prepareStateStmts, writeMemoryLedger, type LedgerStmts, type StateStmts } from "./data/ledger.js";
 import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
 import { openRepositories, type Repository } from "./data/repository.js";
-import { createReviewAccounts, createUsageCounters, prepareReviewStmts, type ReviewAccountStmts } from "./data/review-accounts.js";
+import {
+	createItemEventMethods,
+	createReviewAccounts,
+	createUsageCounters,
+	itemEventWriter,
+	prepareItemEventStmts,
+	prepareReviewStmts,
+	type ItemEventStmts,
+	type ReviewAccountStmts,
+} from "./data/accounts.js";
 import { runPatrol } from "./data/patrol.js";
 import { applySkillBatch } from "./services/skill-apply.js";
 import { applyPromptBatch } from "./services/prompt-apply.js";
@@ -34,12 +43,14 @@ import { applyProposals } from "./services/memory-apply.js";
 import {
 	CURSOR_KEY_PREFIX,
 	PLUGIN_LOG_MESSAGE_MAX,
+	type ItemEventEntry,
 	type MemoryStore,
 } from "./store-types.js";
 
 export type {
 	DailyDelta,
 	DailyStats,
+	ItemEventEntry,
 	LedgerEntry,
 	MemoryProposal,
 	MemoryRecord,
@@ -77,7 +88,7 @@ export function defaultStorePath(): string {
 }
 
 /** The prepared statements one open store holds (state keys plus both bundles). */
-type StoreStatements = StateStmts & LedgerStmts & ReviewAccountStmts;
+type StoreStatements = StateStmts & LedgerStmts & ReviewAccountStmts & ItemEventStmts;
 
 /** Open (creating on first use) the central store. */
 export async function openMemoryStore(explicitPath?: string): Promise<MemoryStore> {
@@ -90,16 +101,18 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		...prepareStateStmts(database),
 		...prepareLedgerStmts(database),
 		...prepareReviewStmts(database),
+		...prepareItemEventStmts(database),
 	};
 
 	const store: MemoryStore = {
 		path,
-		...buildMemoryMethods(memories, database, stmts),
+		...buildMemoryMethods(memories, database, stmts, itemEventWriter(stmts)),
 		...buildSkillMethods(skills, database, stmts.skillLog),
 		...buildPromptMethods(prompts, database, stmts.promptLog),
 		...buildCommonMethods(memories, skills, prompts, database, stmts),
 		...createUsageCounters(memories, skills, prompts),
 		...createReviewAccounts(stmts, memories, skills),
+		...createItemEventMethods(stmts),
 	};
 	return store;
 }
@@ -112,6 +125,7 @@ function buildMemoryMethods(
 		StoreStatements,
 		"stateGet" | "stateSet" | "stateListPrefix" | "stateDelete" | "cursorGet" | "latestSkip" | "bumpSkip" | "ledger"
 	>,
+	events: (entries: readonly ItemEventEntry[]) => void,
 ): Pick<
 	MemoryStore,
 	| "get"
@@ -143,7 +157,11 @@ function buildMemoryMethods(
 			return memories.searchRows(workspaceId, query, limit).map(recordOf);
 		},
 		applyProposals(ctx, proposals) {
-			return applyProposals({ database, now: () => new Date().toISOString(), memories, ledger: stmts.ledger }, ctx, proposals).outcomes;
+			return applyProposals(
+				{ database, now: () => new Date().toISOString(), memories, ledger: stmts.ledger, events },
+				ctx,
+				proposals,
+			).outcomes;
 		},
 		logSkipped(entry) {
 			if (coalesceSkipRun(stmts.latestSkip, stmts.bumpSkip, entry)) {
@@ -256,6 +274,7 @@ function buildCommonMethods(
 		| "skillPrune"
 		| "promptPrune"
 		| "reviewPrune"
+		| "itemEventPrune"
 		| "pluginLogPrune"
 		| "pluginLog"
 	>,
@@ -292,8 +311,9 @@ function buildCommonMethods(
 			const skillRows = Number(stmts.skillPrune.run(beforeIso).changes);
 			const promptRows = Number(stmts.promptPrune.run(beforeIso).changes);
 			const reviews = Number(stmts.reviewPrune.run(beforeIso).changes);
+			const events = Number(stmts.itemEventPrune.run(beforeIso).changes);
 			const logs = Number(stmts.pluginLogPrune.run(beforeIso).changes);
-			return memory + skillRows + promptRows + reviews + logs;
+			return memory + skillRows + promptRows + reviews + events + logs;
 		},
 		close() {
 			database.close();

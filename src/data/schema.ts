@@ -17,6 +17,7 @@
  * another bespoke migration.
  */
 import type { DatabaseSync } from "node:sqlite";
+import { ITEM_EVENT_KINDS } from "./item-events.js";
 import { LEDGER_OCCURRENCES, LEDGER_TRIGGERS } from "../store-types.js";
 
 /** The extraction ledger's columns in DDL order: the rebuild's explicit copy list. */
@@ -56,6 +57,35 @@ export function extractionLogDdl(name: string): string {
 )`;
 }
 
+/** The review-queue event's columns in DDL order: the rebuild's explicit copy list. */
+export const ITEM_EVENTS_COLUMNS = [
+	"ts",
+	"workspace_id",
+	"item_kind",
+	"item_id",
+	"event",
+	"source_id",
+	"reason",
+] as const;
+
+/**
+ * The review-queue event table's DDL, parameterized by table name so the
+ * fresh-file path and the rebuild share one text. The `event` whitelist is
+ * generated from {@link ITEM_EVENT_KINDS}, its single home.
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function itemEventsDdl(name: string): string {
+	const whitelist = ITEM_EVENT_KINDS.map((kind) => `'${kind}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  ts TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
+  item_id TEXT NOT NULL,
+  event TEXT CHECK (event IN (${whitelist})),
+  source_id TEXT, reason TEXT
+) STRICT`;
+}
+
 /** One `CHECK` whitelist as the code declares it. */
 export interface CheckedColumn {
 	readonly column: string;
@@ -80,6 +110,12 @@ export const GUARDED_TABLES: readonly GuardedTable[] = [
 		ddl: extractionLogDdl,
 		columns: EXTRACTION_LOG_COLUMNS,
 		checks: [{ column: "trigger", values: LEDGER_TRIGGERS }],
+	},
+	{
+		table: "item_events",
+		ddl: itemEventsDdl,
+		columns: ITEM_EVENTS_COLUMNS,
+		checks: [{ column: "event", values: ITEM_EVENT_KINDS }],
 	},
 ];
 

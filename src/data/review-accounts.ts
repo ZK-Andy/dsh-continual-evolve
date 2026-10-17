@@ -3,12 +3,15 @@
  * rollup (`review_daily`), and soft-isolation (`quarantine`). One factory
  * takes the prepared statements plus the two repositories and returns the
  * six {@link MemoryStore} methods, so the store assembly stays a thin
- * spread.
+ * spread. The queue's event tier and its derived settled streak live in
+ * `./item-events.js`; usage counters in `./usage-accounts.js`.
+ *
+ * The shapes below are this module's own (re-exported through `store-types`):
+ * they describe the two tables the accounts read and write.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import { secretLeakReason } from "./secret.js";
-import type { DailyDelta, DailyStats, MemoryStore, PatrolResult, ReviewLogEntry } from "../store-types.js";
-import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
+import type { MemoryStore } from "../store-types.js";
+import type { MemoryRow, SkillRow } from "./records.js";
 import type { Repository } from "./repository.js";
 
 /**
@@ -20,6 +23,74 @@ import type { Repository } from "./repository.js";
 export const INCOMPLETE_REVIEW_SQL =
 	"(coalesce(reason, '') LIKE 'gate-llm-failed%' OR coalesce(reason, '') LIKE 'evolve-llm-failed%' " +
 	"OR coalesce(reason, '') IN ('no-route', 'budget-exhausted', 'gate-parse-failed', 'evolve-parse-failed'))";
+
+/** One day of the hard-cap account (UTC `YYYY-MM-DD`, budget = 100). */
+export interface DailyStats {
+	day: string;
+	budget: number;
+	reviewed: number;
+	newItems: number;
+	/** Total requeues; always the sum of the three source counters below. */
+	requeued: number;
+	/** Requeued because a linkage event landed after its last verdict. */
+	requeuedLink: number;
+	/** Requeued because a calendar milestone came due (probation, promotion). */
+	requeuedClock: number;
+	/** Requeued because the stale sample drew it. */
+	requeuedSampled: number;
+	approved: number;
+	applied: number;
+	cheapToken: number;
+	evolveToken: number;
+	backlog: number;
+	dropped: number;
+	/** JSON array of the top skip reasons, `null` when none. */
+	skipTop: string | null;
+}
+
+/** Additive counters merged into today's rollup by one run. */
+export interface DailyDelta {
+	newItems?: number | undefined;
+	/** Requeues by source; the stored total is their sum, never a fourth input. */
+	requeuedLink?: number | undefined;
+	requeuedClock?: number | undefined;
+	requeuedSampled?: number | undefined;
+	approved?: number | undefined;
+	applied?: number | undefined;
+	cheapToken?: number | undefined;
+	evolveToken?: number | undefined;
+	/** Queue depth after the run (set, not added). */
+	backlog?: number | undefined;
+	dropped?: number | undefined;
+	skipReasons?: string[] | undefined;
+}
+
+/** One per-item content-review verdict (the `item-review` account's row). */
+export interface ReviewLogEntry {
+	runId?: string | undefined;
+	workspaceId?: string | undefined;
+	itemKind: "memory" | "skill";
+	itemId: string;
+	verdict: "keep" | "rewrite" | "quarantine" | "skip";
+	reason?: string | undefined;
+	/** The model this verdict ran on; `undefined` only when the run had no route at all. */
+	model?: string | undefined;
+	/** Normalized usage JSON of the cheap gate call, `undefined` when skipped before any call. */
+	cheapUsage?: unknown;
+	/** Normalized usage JSON of the evolve call, `undefined` unless rewritten. */
+	evolveUsage?: unknown;
+	/** Whether the rewrite landed (1) or the row is verdict-only (0). */
+	applied?: number | undefined;
+	/** How many times this item has evolved including this run. */
+	evolveCount?: number | undefined;
+	/**
+	 * The rewrite the model proposed when the row did NOT land it (trial mode),
+	 * as `{title, description, body, corrects}`. Without it a dry run ledgers
+	 * only why it would change an item, never into what — and the "into what"
+	 * is the part a human has to judge before turning the trial off.
+	 */
+	proposed?: unknown;
+}
 
 /** The prepared statements the review accounts run on. */
 export interface ReviewAccountStmts {
@@ -60,6 +131,7 @@ export function prepareReviewStmts(database: DatabaseSync): ReviewAccountStmts {
 		dailyConsume: database.prepare("UPDATE review_daily SET reviewed = reviewed + 1 WHERE day = ? AND reviewed < budget"),
 		dailyMerge: database.prepare(
 			"UPDATE review_daily SET new_items = new_items + ?, requeued = requeued + ?, " +
+				"requeued_link = requeued_link + ?, requeued_clock = requeued_clock + ?, requeued_sampled = requeued_sampled + ?, " +
 				"approved = approved + ?, applied = applied + ?, cheap_token = cheap_token + ?, evolve_token = evolve_token + ?, " +
 				"backlog = ?, dropped = dropped + ?, skip_top = ?, skip_counts = ? WHERE day = ?",
 		),
@@ -68,7 +140,12 @@ export function prepareReviewStmts(database: DatabaseSync): ReviewAccountStmts {
 
 type ReviewAccountMethods = Pick<
 	MemoryStore,
-	"logReview" | "consumeReviewBudget" | "getDaily" | "mergeDaily" | "quarantine" | "reviewStateOf"
+	| "logReview"
+	| "consumeReviewBudget"
+	| "getDaily"
+	| "mergeDaily"
+	| "quarantine"
+	| "reviewStateOf"
 >;
 
 /**
@@ -146,9 +223,17 @@ function buildDailyAccounts(stmts: ReviewAccountStmts): Pick<ReviewAccountMethod
 				.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
 				.slice(0, 3)
 				.map(([reason]) => reason);
+			// The total is derived here, never supplied: one writer for the
+			// identity `requeued = link + clock + sampled` (rollout ADR §A4).
+			const link = delta.requeuedLink ?? 0;
+			const clock = delta.requeuedClock ?? 0;
+			const sampled = delta.requeuedSampled ?? 0;
 			stmts.dailyMerge.run(
 				delta.newItems ?? 0,
-				delta.requeued ?? 0,
+				link + clock + sampled,
+				link,
+				clock,
+				sampled,
 				delta.approved ?? 0,
 				delta.applied ?? 0,
 				delta.cheapToken ?? 0,
@@ -170,6 +255,9 @@ interface DailyRow {
 	reviewed: number;
 	new_items: number;
 	requeued: number;
+	requeued_link: number;
+	requeued_clock: number;
+	requeued_sampled: number;
 	approved: number;
 	applied: number;
 	cheap_token: number;
@@ -187,6 +275,9 @@ function toDailyStats(row: DailyRow): DailyStats {
 		reviewed: row.reviewed,
 		newItems: row.new_items,
 		requeued: row.requeued,
+		requeuedLink: row.requeued_link,
+		requeuedClock: row.requeued_clock,
+		requeuedSampled: row.requeued_sampled,
 		approved: row.approved,
 		applied: row.applied,
 		cheapToken: row.cheap_token,
@@ -248,125 +339,5 @@ function parseCounts(raw: string | null): Record<string, number> {
 		return counts;
 	} catch {
 		return {};
-	}
-}
-
-type UsageMethods = Pick<
-	MemoryStore,
-	"recordSkillUse" | "getSkillUse" | "recordMemoryUse" | "getMemoryUse" | "recordPromptUse" | "getPromptUse"
->;
-
-/**
- * Build the six usage-counter methods over the three repositories.
- * Presence heartbeat: a body served by id counts; accounting never fails
- * the read it rides on.
- * @param memories - The memories repository.
- * @param skills - The skills repository.
- * @param prompts - The prompts repository.
- * @returns The six store methods, spread into the assembled store.
- */
-export function createUsageCounters(
-	memories: Repository<MemoryRow>,
-	skills: Repository<SkillRow>,
-	prompts: Repository<PromptRow>,
-): UsageMethods {
-	return {
-		recordSkillUse(workspaceId: string, skillId: string, scope: string) {
-			try {
-				skills.recordUsage(workspaceId, [skillId, scope], new Date().toISOString());
-			} catch {
-				// Accounting never fails the read it rides on.
-			}
-		},
-		getSkillUse(workspaceId: string, skillId: string, scope: string) {
-			try {
-				const row = skills.getUsage(workspaceId, [skillId, scope]);
-				if (row === undefined) {
-					return undefined;
-				}
-				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
-			} catch {
-				return undefined;
-			}
-		},
-		recordMemoryUse(workspaceId: string, memoryId: string) {
-			try {
-				memories.recordUsage(workspaceId, [memoryId], new Date().toISOString());
-			} catch {
-				// Accounting never fails the read it rides on.
-			}
-		},
-		getMemoryUse(workspaceId: string, memoryId: string) {
-			try {
-				const row = memories.getUsage(workspaceId, [memoryId]);
-				if (row === undefined) {
-					return undefined;
-				}
-				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
-			} catch {
-				return undefined;
-			}
-		},
-		recordPromptUse(workspaceId: string, promptId: string) {
-			try {
-				prompts.recordUsage(workspaceId, [promptId], new Date().toISOString());
-			} catch {
-				// Accounting never fails the read it rides on.
-			}
-		},
-		getPromptUse(workspaceId: string, promptId: string) {
-			try {
-				const row = prompts.getUsage(workspaceId, [promptId]);
-				if (row === undefined) {
-					return undefined;
-				}
-				return { useCount: row.use_count, lastUsedAt: row.last_used_at };
-			} catch {
-				return undefined;
-			}
-		},
-	};
-}
-
-/**
- * Run the secret screen over every active row of the three kinds and
- * quarantine what leaks. File side-effects stay with the caller: a
- * quarantined skill must stop loading immediately, so the caller drops
- * its managed file through the callback (hand-written files stay, with
- * an error counted so the residue stays visible).
- * @param memories - The memories repository.
- * @param skills - The skills repository.
- * @param prompts - The prompts repository.
- * @param result - The patrol result accumulating counts.
- * @param onSkillQuarantined - Drops one quarantined skill's managed file.
- */
-export function quarantineSecrets(
-	memories: Repository<MemoryRow>,
-	skills: Repository<SkillRow>,
-	prompts: Repository<PromptRow>,
-	result: PatrolResult,
-	onSkillQuarantined: (workspaceId: string, id: string) => void,
-): void {
-	for (const row of memories.activeRowList()) {
-		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
-		if (reason !== undefined) {
-			memories.quarantineRow(row.workspace_id, row.id);
-			result.quarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
-		}
-	}
-	for (const row of skills.activeRowList()) {
-		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
-		if (reason !== undefined) {
-			skills.quarantineRow(row.workspace_id, row.id);
-			result.skillQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
-			onSkillQuarantined(row.workspace_id, row.id);
-		}
-	}
-	for (const row of prompts.activeRowList()) {
-		const reason = secretLeakReason(`${row.title}\n${row.description}\n${row.body}`);
-		if (reason !== undefined) {
-			prompts.quarantineRow(row.workspace_id, row.id);
-			result.promptQuarantined.push({ workspaceId: row.workspace_id, id: row.id, reason });
-		}
 	}
 }
