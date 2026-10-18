@@ -40,6 +40,8 @@ export const MEMORY_BODY_LIMIT = 65_536;
 /** Sanity caps for the injection-facing fields (hook text, not prose). */
 export const MEMORY_TITLE_LIMIT = 200;
 export const MEMORY_DESCRIPTION_LIMIT = 500;
+/** Cap on the `notWhen` caveat: one sentence, not a second body. */
+export const MEMORY_NOT_WHEN_LIMIT = 200;
 
 /** Kebab-slug id shape: lowercase alphanumerics joined by single dashes. */
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -125,6 +127,11 @@ export interface MemoryProposal {
 	 * changes nothing about where the row lives.
 	 */
 	scope?: string | undefined;
+	/**
+	 * Optional caveat ("this rule does not hold when …"). Presentation only —
+	 * rendered with the hook, never used to filter retrieval.
+	 */
+	notWhen?: string | undefined;
 }
 
 /** The merged field values a create/update would write (delete checks none). */
@@ -135,6 +142,11 @@ export interface ProposedFields {
 	body: string;
 	/** The row's layer marker (`project` / `person`). */
 	scope: MemoryScope;
+	/**
+	 * The caveat rendered next to the hook ("this does not hold when …").
+	 * Empty means none was given. Presentation only: retrieval never filters on it.
+	 */
+	notWhen: string;
 }
 
 /**
@@ -160,6 +172,9 @@ export function fieldGateReasons(fields: ProposedFields): string[] {
 			`description exceeds ${MEMORY_DESCRIPTION_LIMIT} characters`,
 		),
 		textFieldGate(fields.body, "body must not be empty", MEMORY_BODY_LIMIT, `body exceeds the ${MEMORY_BODY_LIMIT}-character cap`),
+		(fields.notWhen ?? "").length > MEMORY_NOT_WHEN_LIMIT
+			? `notWhen exceeds ${MEMORY_NOT_WHEN_LIMIT} characters`
+			: undefined,
 	]) {
 		if (reason !== undefined) {
 			reasons.push(reason);

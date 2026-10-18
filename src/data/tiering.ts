@@ -140,7 +140,7 @@ export function promoteMemory(
 		}
 		memories.insertRow([
 			"", id, source.type, source.title, source.description, source.body, "person",
-			source.source_session, source.source_seqs, source.source_run, null, ts, ts,
+			source.source_session, source.source_seqs, source.source_run, null, source.not_when, ts, ts,
 		]);
 		memories.syncFts("", id);
 		stmts.setProbation.run(until, workspaceId, "", id);
@@ -187,7 +187,7 @@ export function demoteMemory(
 		}
 		memories.insertRow([
 			origin, request.id, source.type, source.title, source.description, source.body, "project",
-			source.source_session, source.source_seqs, source.source_run, null, ts, ts,
+			source.source_session, source.source_seqs, source.source_run, null, source.not_when, ts, ts,
 		]);
 		memories.syncFts(origin, request.id);
 		// The restored row is not on probation; the global one is only archived,

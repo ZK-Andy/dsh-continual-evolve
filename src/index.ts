@@ -51,15 +51,16 @@ import {
 } from "./services/review.js";
 import {
 	createFrozenMemorySection,
-	DEFAULT_MAX_CHARS,
+	createSectionRenderer,
 	DEFAULT_MEMORY_SECTION_ORDER,
 	MEMORY_SECTION_NAME,
-	memorySectionText,
+	type SectionRenderer,
 } from "./surfaces/memory-section.js";
-import { cwdOf } from "./services/agent.js";
+import { resolveStoredBudget } from "./services/token-budget.js";
+import { buildIdentity, describeIdentity } from "./services/build-identity.js";
 import { importWorkspaceMd } from "./services/import-md.js";
-import { openMemoryStore } from "./store.js";
-import { createPluginLog } from "./services/plugin-log.js";
+import { GLOBAL_WORKSPACE, openMemoryStore, type MemoryStore } from "./store.js";
+import { createPluginLog, type PluginLog } from "./services/plugin-log.js";
 import { pruneIfDue } from "./services/retention.js";
 
 export const name = "continual-evolve";
@@ -95,14 +96,17 @@ export const Config = z.object({
 	/**
 	 * The memory section: injects the workspace memory index (a store query)
 	 * at session start, frozen per session to keep the system prompt
-	 * byte-stable (prompt cache). `enabled`/`guide`/`order`/`maxChars`
+	 * byte-stable (prompt cache). `enabled`/`guide`/`order`/`maxTokens`
 	 * default to true/true/400/6000; with `guide` off and an empty store the
-	 * section renders to "" and costs no tokens.
+	 * section renders to "" and costs no tokens. The budget is tokens, not
+	 * characters: `maxChars` is the legacy key, read once and converted
+	 * (ADR `2026-10-18-absorb-memory-plugin-strengths`).
 	 */
 	memoryIndex: z.object({
 		enabled: z.boolean(),
 		guide: z.boolean(),
 		order: z.natural(),
+		maxTokens: z.natural(),
 		maxChars: z.natural(),
 		/**
 		 * The proposal-based extraction run (trigger: turn-level, per-session
@@ -157,6 +161,73 @@ function readReviewSettingsOf(config: EvolveConfig): () => ReviewSettingsSnapsho
 	});
 }
 
+/** What the section renderer needs from the root (nothing volatile is read in it). */
+interface RendererDeps {
+	readStore: () => MemoryStore | undefined;
+	readToolsAvailable: () => boolean;
+	config: EvolveConfig;
+	log: PluginLog;
+}
+
+/**
+ * Build the section renderer: the freeze, the budget and the injection
+ * accounting live in `surfaces/memory-section.ts` and `services/`, so the entry
+ * point only wires callbacks (ADR `2026-10-18-absorb-memory-plugin-strengths`).
+ */
+function buildRenderer(deps: RendererDeps): SectionRenderer {
+	const { config, log } = deps;
+	return createSectionRenderer({
+		readStore: deps.readStore,
+		frozen: createFrozenMemorySection(),
+		readBudget: () =>
+			resolveStoredBudget(
+				deps.readStore(),
+				{ maxTokens: config.memoryIndex?.maxTokens, maxChars: config.memoryIndex?.maxChars },
+				GLOBAL_WORKSPACE,
+			).tokens,
+		guide: config.memoryIndex?.guide ?? true,
+		toolsAvailable: deps.readToolsAvailable,
+		prepare: (cwd) => {
+			const store = deps.readStore();
+			if (store === undefined) {
+				return;
+			}
+			// First contact with this workspace migrates any legacy MD-era store
+			// into the database; flag-guarded, so it is a no-op after the first.
+			try {
+				importWorkspaceMd(store, cwd);
+			} catch (error) {
+				log.warn("md-import-failed", `legacy memory import failed for ${cwd}: ${error instanceof Error ? error.message : String(error)}`, {
+					workspaceId: cwd,
+				});
+			}
+		},
+		onBuilt: (info) => {
+			log.info("injection", `injected ${String(info.ids.length)} memories (~${String(info.tokens)} tokens)`, {
+				workspaceId: info.workspace,
+				sessionId: info.sessionId,
+			});
+			// One row per session: the conversion reading the card shows needs to
+			// know which ids this session was handed. Accounting never fails the
+			// assembly it rides on.
+			const store = deps.readStore();
+			if (store !== undefined && info.sessionId !== undefined) {
+				try {
+					store.recordInjection({
+						workspaceId: info.workspace,
+						sessionId: info.sessionId,
+						ts: new Date().toISOString(),
+						ids: info.ids,
+						estTokens: info.tokens,
+					});
+				} catch {
+					// Dropped accounting is a lost reading, not a broken session.
+				}
+			}
+		},
+	});
+}
+
 export function apply(host: HostContext, config: EvolveConfig): void {
 	if (config.memoryIndex?.enabled === false) {
 		return;
@@ -188,6 +259,10 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 				mountCardWhenAvailable(host, store, readReviewSettings, log);
 			}
 			log.info("section-registered", "continual-evolve memory section registered (central SQLite store, sole-writer gates)");
+			// Which build this process holds versus what is on disk: the one line
+			// that answers "did the update actually take effect?" (ADR
+			// `2026-10-18-absorb-memory-plugin-strengths`).
+			log.info("build-identity", describeIdentity(buildIdentity()));
 		},
 		(_error: unknown) => {
 			// node:sqlite missing (old runtime) or the database unusable: degrade
@@ -196,39 +271,15 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			// failed — the host's logger has no sink to fall back on.
 		},
 	);
-	const frozen = createFrozenMemorySection();
+	const renderer = buildRenderer({
+		readStore: () => state.store,
+		readToolsAvailable: () => state.toolsAvailable,
+		config,
+		log,
+	});
 	host.systemPrompt.section({
 		name: MEMORY_SECTION_NAME,
 		order: config.memoryIndex?.order ?? DEFAULT_MEMORY_SECTION_ORDER,
-		text: (context) => {
-			const store = state.store;
-			if (store === undefined) {
-				// Still loading or unavailable: render nothing (and freeze
-				// nothing — the first assembly after readiness builds for real).
-				return "";
-			}
-			const cwd = cwdOf(context.agent);
-			if (cwd !== undefined) {
-				// First contact with this workspace migrates any legacy MD-era
-				// store into the database; flag-guarded, so it is a no-op after.
-				try {
-					importWorkspaceMd(store, cwd);
-				} catch (error) {
-					log.warn(
-						"md-import-failed",
-						`legacy memory import failed for ${cwd}: ${error instanceof Error ? error.message : String(error)}`,
-						{ workspaceId: cwd },
-					);
-				}
-			}
-			return frozen.textFor(context.agent, (agent) =>
-				memorySectionText(agent, {
-					store,
-					maxChars: config.memoryIndex?.maxChars ?? DEFAULT_MAX_CHARS,
-					guide: config.memoryIndex?.guide ?? true,
-					toolsAvailable: state.toolsAvailable,
-				}),
-			);
-		},
+		text: renderer.text,
 	});
 }

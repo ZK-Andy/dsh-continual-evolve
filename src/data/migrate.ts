@@ -8,6 +8,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { LEDGER_OCCURRENCES } from "../store-types.js";
 import { extractionLogDdl, itemEventsDdl, rebuildDriftedTables, reviewLogDdl } from "./schema.js";
+import { INJECTION_LOG_DDL } from "./injection-log.js";
 
 const SCHEMA_DDL = `
 PRAGMA journal_mode=WAL;
@@ -27,6 +28,7 @@ PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
   scope TEXT NOT NULL DEFAULT 'project',
   probation_until TEXT,
   origin_workspace TEXT,
+  not_when TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, id)
@@ -41,6 +43,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
 -- SQLite 3.53.4). The sole-writer design makes code-side sync reliable;
 -- patrol() reconciles any residue.
 ${extractionLogDdl("extraction_log")};
+${INJECTION_LOG_DDL}
 CREATE TABLE IF NOT EXISTS state (
   workspace_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY (workspace_id, key)
@@ -195,6 +198,7 @@ export function migrateDatabase(database: DatabaseSync): void {
 	ensureMemoriesScope(database);
 	ensureMemoriesProbation(database);
 	ensureMemoriesOrigin(database);
+	ensureMemoriesNotWhen(database);
 	// Columns first, then shape: the rebuild copies the guard's column list,
 	// and the ALTERs above are what make an old table carry all of it.
 	rebuildDriftedTables(database);
@@ -316,6 +320,20 @@ function ensureMemoriesOrigin(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE memories ADD COLUMN origin_workspace TEXT");
+}
+
+/**
+ * Add the memories `not_when` column: the per-memory caveat ("this rule does
+ * not hold when …"), rendered with the hook and never used for retrieval
+ * filtering (ADR `2026-10-18-absorb-memory-plugin-strengths`). A store created
+ * before the column reads it as "no caveat recorded", never as null.
+ */
+function ensureMemoriesNotWhen(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "not_when")) {
+		return;
+	}
+	database.exec("ALTER TABLE memories ADD COLUMN not_when TEXT NOT NULL DEFAULT ''");
 }
 
 /**

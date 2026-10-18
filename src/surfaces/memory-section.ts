@@ -13,9 +13,17 @@
  * once per agent id and reused byte-for-byte afterwards, so the system
  * prompt stays stable within a session and cache reads keep hitting. A
  * memory written mid-session becomes visible in the NEXT session.
+ *
+ * Two budgets shape what is shown (ADR
+ * `2026-10-18-absorb-memory-plugin-strengths`): the hard cap is *tokens*,
+ * estimated in `services/token-budget.ts`, and an index that does not fit
+ * degrades in tiers — full hook lines, then id-only rows, then a counter
+ * line — so a memory the budget could not afford is still discoverable by id
+ * instead of vanishing.
  */
 import { join, resolve } from "node:path";
 import { cwdOf } from "../services/agent.js";
+import { fitTiered, type IndexRow } from "../services/token-budget.js";
 import { memoryGuideIntro, MEMORY_GUIDE_RULES } from "./memory-guide.js";
 import type { MemoryStore } from "../store.js";
 
@@ -23,8 +31,6 @@ import type { MemoryStore } from "../store.js";
 export const MEMORY_SECTION_NAME = "evolve:memory-index";
 /** Default prompt-section order (empty 1–499 slot; upstream named slots start at 500). */
 export const DEFAULT_MEMORY_SECTION_ORDER = 400;
-/** Default hard character budget for the injected index. */
-export const DEFAULT_MAX_CHARS = 6000;
 /** Sessions whose frozen section text is kept before LRU eviction. */
 export const DEFAULT_FROZEN_SESSIONS = 32;
 
@@ -35,34 +41,6 @@ export const DEFAULT_FROZEN_SESSIONS = 32;
  */
 export function memoryDirFor(cwd: string): string {
 	return join(resolve(cwd), ".evolve", "memory");
-}
-
-/** What fitting the index into the budget produced. */
-export interface IndexFit {
-	/** Index text actually shown (possibly truncated to a line boundary). */
-	text: string;
-	/** Characters dropped by the budget, 0 when the index fit whole. */
-	dropped: number;
-}
-
-/**
- * Whole-line-preserving truncation of the index to `maxChars` characters.
- * Only index rows that fit whole are shown — a partial row would corrupt the
- * line the model reads. When not even one row fits, `text` is "" and
- * `dropped` carries the full length.
- */
-export function fitIndex(index: string, maxChars: number): IndexFit {
-	const budget = Math.max(0, maxChars);
-	if (index.length <= budget) {
-		return { text: index, dropped: 0 };
-	}
-	const cut = index.slice(0, budget);
-	const lastLine = cut.lastIndexOf("\n");
-	if (lastLine <= 0) {
-		return { text: "", dropped: index.length };
-	}
-	const text = cut.slice(0, lastLine);
-	return { text, dropped: index.length - text.length };
 }
 
 /**
@@ -77,64 +55,202 @@ export function indexLineOf(record: {
 	description: string;
 	type: string;
 	probationUntil?: string | null | undefined;
+	notWhen?: string | undefined;
 }): string {
 	const probation = record.probationUntil === undefined || record.probationUntil === null ? "" : "（试用中）";
-	return `- [${record.id}] ${record.title} — ${record.description}（${record.type}）${probation}`;
+	const notWhen = record.notWhen === undefined || record.notWhen === "" ? "" : `（不适用：${clip(record.notWhen)}）`;
+	return `- [${record.id}] ${record.title} — ${record.description}（${record.type}）${probation}${notWhen}`;
 }
 
-/** Options for {@link memorySectionText}. */
-export interface MemorySectionOptions {
+/** Longest rendered `notWhen` fragment, so one caveat cannot eat the index. */
+const NOT_WHEN_RENDER_LIMIT = 60;
+
+/** Clip a rendered caveat at a character boundary, marking the cut. */
+function clip(text: string): string {
+	return text.length <= NOT_WHEN_RENDER_LIMIT ? text : `${text.slice(0, NOT_WHEN_RENDER_LIMIT)}…`;
+}
+
+/** Options for {@link buildSection}. */
+export interface SectionOptions {
 	/** The opened store; undefined while it is still loading or failed. */
 	store: MemoryStore | undefined;
-	/** Hard character budget for the injected index (default 6000). */
-	maxChars?: number;
+	/** Hard token budget for the injected index (default 6000). */
+	maxTokens?: number | undefined;
 	/** Include the when-to-save guide (default true). */
-	guide?: boolean;
+	guide?: boolean | undefined;
 	/** Whether `evolve_write`/`evolve_read` are actually registered on this host. */
-	toolsAvailable?: boolean;
+	toolsAvailable?: boolean | undefined;
 }
 
+/** One built section: the text plus the facts the accounting records. */
+export interface SectionBuild {
+	/** The rendered section text ("" when there is nothing to inject). */
+	text: string;
+	/** Memory ids the index named — full rows and id-only rows alike. */
+	ids: string[];
+	/** Estimated tokens of the rendered index (guide text excluded). */
+	tokens: number;
+	/** Rows rendered in full. */
+	fullCount: number;
+	/** Rows rendered as ids only. */
+	idOnlyCount: number;
+	/** Rows the budget dropped entirely (named in the counter line). */
+	omittedCount: number;
+}
+
+/** The empty build: nothing to inject, nothing to account. */
+const EMPTY_BUILD: SectionBuild = {
+	text: "",
+	ids: [],
+	tokens: 0,
+	fullCount: 0,
+	idOnlyCount: 0,
+	omittedCount: 0,
+};
+
 /**
- * Compose the full memory section for one assembling agent. Any store
- * failure degrades to "" — injection must never break an assembly. With the
- * guide off and an empty store the result is "" — the prompt renderer then
- * drops the section, so an empty workspace costs zero tokens.
+ * Compose the full memory section for one assembling agent. Any store failure
+ * degrades to an empty section — injection never breaks an assembly.
  */
-export function memorySectionText(agent: unknown, opts: MemorySectionOptions): string {
+export function buildSection(agent: unknown, opts: SectionOptions): SectionBuild {
 	const guide = opts.guide ?? true;
-	const maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
+	const maxTokens = opts.maxTokens ?? 0;
 	const cwd = cwdOf(agent);
 	if (!cwd || opts.store === undefined) {
-		return "";
+		return EMPTY_BUILD;
 	}
 	let records;
 	try {
 		records = opts.store.list(cwd);
 	} catch {
-		return "";
+		return EMPTY_BUILD;
 	}
-	const index = records.map(indexLineOf).join("\n");
-	const { text, dropped } = fitIndex(index, maxChars);
+	const rows: IndexRow[] = records.map((record) => ({
+		id: record.id,
+		line: indexLineOf({ ...record, notWhen: record.notWhen }),
+	}));
+	const fit = fitTiered(rows, maxTokens);
+	const ids = [...rows.slice(0, fit.fullCount + fit.idOnlyCount).map((row) => row.id)];
 
 	const parts: string[] = [];
 	if (records.length === 0) {
 		parts.push("<memories>\n（暂无记忆）\n</memories>");
-	} else if (text.length > 0) {
-		parts.push(`<memories>\n${text}\n</memories>`);
-		if (dropped > 0) {
-			parts.push(`（索引超出 ${maxChars} 字符预算，已截断——其余记忆用 \`evolve_read\` 关键词检索）`);
-		}
+	} else if (fit.text.length > 0) {
+		parts.push(`<memories>\n${fit.text}\n</memories>`);
 	} else {
-		parts.push(`（索引超出 ${maxChars} 字符预算，一行都放不下——记忆用 \`evolve_read\` 关键词检索）`);
+		parts.push(`（索引超出 ${String(maxTokens)} token 预算，一条都放不下——记忆用 \`evolve_read\` 关键词检索）`);
 	}
-	if (!guide) {
-		return records.length === 0 ? "" : parts.join("\n\n");
-	}
-	return [
-		memoryGuideIntro(opts.store.path, cwd, opts.toolsAvailable ?? true),
-		...parts,
-		MEMORY_GUIDE_RULES,
-	].join("\n\n");
+	const body = guide
+		? [memoryGuideIntro(opts.store.path, cwd, opts.toolsAvailable ?? true), ...parts, MEMORY_GUIDE_RULES].join("\n\n")
+		: records.length === 0
+			? ""
+			: parts.join("\n\n");
+	return {
+		text: body,
+		ids,
+		tokens: fit.tokens,
+		fullCount: fit.fullCount,
+		idOnlyCount: fit.idOnlyCount,
+		omittedCount: fit.omittedCount,
+	};
+}
+
+/** What an assembly reported about a freshly built section. */
+export interface SectionBuildInfo {
+	/** The workspace whose partition was rendered. */
+	workspace: string;
+	/** The agent (session) the section was frozen for, when the host named one. */
+	sessionId: string | undefined;
+	/** Memory ids named by the index. */
+	ids: string[];
+	/** Estimated tokens of the rendered index. */
+	tokens: number;
+	/** Rows rendered in full / as ids / dropped. */
+	fullCount: number;
+	idOnlyCount: number;
+	omittedCount: number;
+}
+
+/** Options for {@link createSectionRenderer}. */
+export interface SectionRendererOptions {
+	/** The store as it becomes ready (undefined until then). */
+	readStore: () => MemoryStore | undefined;
+	/** The per-session freeze. */
+	frozen: FrozenMemorySection;
+	/** Resolve the token budget at call time (config + migration marker). */
+	readBudget: () => number;
+	/** Whether the injected guide is shown (default true). */
+	guide?: boolean | undefined;
+	/** Whether the write/read tools are registered (default true). */
+	toolsAvailable?: () => boolean;
+	/** Runs before the first build for a workspace (legacy MD import). */
+	prepare?: (cwd: string) => void;
+	/** Called once per freshly built section — never on a frozen hit. */
+	onBuilt?: (info: SectionBuildInfo) => void;
+}
+
+/** The renderer the plugin root registers with the host. */
+export interface SectionRenderer {
+	/** Section text for one assembly; "" while the store is unavailable. */
+	text: (context: { agent?: unknown }) => string;
+}
+
+/**
+ * Build the section renderer. The root registers `text` and nothing else; the
+ * freeze, the budget and the build accounting live here so the entry point
+ * stays an entry point.
+ */
+export function createSectionRenderer(opts: SectionRendererOptions): SectionRenderer {
+	return {
+		text(context) {
+			const store = opts.readStore();
+			if (store === undefined) {
+				// Still loading or unavailable: render nothing and freeze nothing.
+				return "";
+			}
+			const cwd = cwdOf(context.agent);
+			if (cwd !== undefined && opts.prepare !== undefined) {
+				try {
+					opts.prepare(cwd);
+				} catch {
+					// The legacy import is best-effort; a failure never blocks injection.
+				}
+			}
+			let built: SectionBuild | undefined;
+			const { text, built: isBuild } = opts.frozen.textForMeta(context.agent, (agent) => {
+				const section = buildSection(agent, {
+					store,
+					maxTokens: opts.readBudget(),
+					guide: opts.guide ?? true,
+					toolsAvailable: opts.toolsAvailable?.() ?? true,
+				});
+				built = section;
+				return section.text;
+			});
+			if (isBuild && built !== undefined && opts.onBuilt !== undefined) {
+				try {
+					opts.onBuilt({
+						workspace: cwd ?? "",
+						sessionId: sessionIdOf(context.agent),
+						ids: built.ids,
+						tokens: built.tokens,
+						fullCount: built.fullCount,
+						idOnlyCount: built.idOnlyCount,
+						omittedCount: built.omittedCount,
+					});
+				} catch {
+					// Accounting never fails the assembly it rides on.
+				}
+			}
+			return text;
+		},
+	};
+}
+
+/** The agent's session id when the host exposes one. */
+function sessionIdOf(agent: unknown): string | undefined {
+	const id = (agent as { id?: unknown } | undefined)?.id;
+	return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 /** A per-session frozen view of the memory section text. */
@@ -145,6 +261,11 @@ export interface FrozenMemorySection {
 	 * every call (nothing to key the cache on).
 	 */
 	textFor(agent: unknown, build: (agent: unknown) => string): string;
+	/**
+	 * Same freeze, but also reports whether this call built the text. Used by
+	 * the accounting path, which must not count a frozen hit as a new exposure.
+	 */
+	textForMeta(agent: unknown, build: (agent: unknown) => string): { text: string; built: boolean };
 	/** Sessions currently frozen (test/observability hook). */
 	size(): number;
 	/** Drop every frozen session (tests; a restart rebuilds naturally). */
@@ -160,16 +281,16 @@ export interface FrozenMemorySection {
 export function createFrozenMemorySection(maxSessions: number = DEFAULT_FROZEN_SESSIONS): FrozenMemorySection {
 	const limit = Math.max(1, maxSessions);
 	const frozen = new Map<string, string>();
-	return {
-		textFor(agent, build) {
+	const meta = {
+		textForMeta(agent: unknown, build: (agent: unknown) => string): { text: string; built: boolean } {
 			const id = (agent as { id?: unknown } | undefined)?.id;
 			const key = typeof id === "string" && id.length > 0 ? id : undefined;
 			if (key === undefined) {
-				return build(agent);
+				return { text: build(agent), built: true };
 			}
 			const cached = frozen.get(key);
 			if (cached !== undefined) {
-				return cached;
+				return { text: cached, built: false };
 			}
 			const text = build(agent);
 			frozen.set(key, text);
@@ -180,8 +301,12 @@ export function createFrozenMemorySection(maxSessions: number = DEFAULT_FROZEN_S
 				}
 				frozen.delete(oldest.value);
 			}
-			return text;
+			return { text, built: true };
 		},
+	};
+	return {
+		textFor: (agent, build) => meta.textForMeta(agent, build).text,
+		textForMeta: meta.textForMeta,
 		size: () => frozen.size,
 		clear: () => frozen.clear(),
 	};

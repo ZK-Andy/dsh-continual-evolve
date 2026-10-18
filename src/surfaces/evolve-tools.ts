@@ -120,6 +120,10 @@ const EVOLVE_WRITE_PARAMETERS = {
 		title: { type: "string", description: "短标题（create 必填）。" },
 		description: { type: "string", description: "一句话触发钩子（create 必填）。" },
 		body: { type: "string", description: "正文（create 必填；update 时传新正文整体替换）。" },
+		notWhen: {
+			type: "string",
+			description: "可选：这条记忆**不适用**的条件（一句话，≤200 字）。会随钩子一起注入，只做提示，不参与检索过滤。",
+		},
 	},
 	required: ["kind", "action"],
 	additionalProperties: false,
@@ -151,6 +155,7 @@ export interface EvolveWriteArgs {
 	title?: string | undefined;
 	description?: string | undefined;
 	body?: string | undefined;
+	notWhen?: string | undefined;
 }
 
 /** Arguments the unified read executor accepts (workspace already resolved). */
@@ -238,6 +243,7 @@ export function registerEvolveTools(tools: ToolsService, store: MemoryStore): ()
 						title: stringField(args.title),
 						description: stringField(args.description),
 						body: stringField(args.body),
+						notWhen: stringField(args.notWhen),
 					});
 				},
 			),

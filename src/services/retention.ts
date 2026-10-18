@@ -35,7 +35,8 @@ export function pruneIfDue(store: MemoryStore, now: Date = new Date()): number {
 		return 0;
 	}
 	const cutoff = new Date(now.getTime() - LEDGER_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-	const removed = store.pruneLedger(cutoff) + pruneFailureState(store, now.getTime());
+	const removed =
+		store.pruneLedger(cutoff) + store.pruneInjections(cutoff) + pruneFailureState(store, now.getTime());
 	store.setState(GLOBAL_WORKSPACE, PRUNE_STATE_KEY, day);
 	return removed;
 }

@@ -17,6 +17,7 @@ export interface MemoryRow {
 	scope: string;
 	probation_until: string | null;
 	origin_workspace: string | null;
+	not_when: string;
 	source_session: string | null;
 	source_seqs: string | null;
 	source_run: string | null;
@@ -48,6 +49,8 @@ export interface MemoryRecord {
 	probationUntil: string | null;
 	/** For a promoted (global) row: the partition it came from, `null` otherwise. */
 	originWorkspace: string | null;
+	/** The caveat rendered with the hook ("不适用：…"); empty when none was given. */
+	notWhen: string;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -73,9 +76,31 @@ export function recordOf(row: MemoryRow): MemoryRecord {
 		scope: row.scope === "person" ? "person" : "project",
 		probationUntil: row.probation_until ?? null,
 		originWorkspace: row.origin_workspace ?? null,
+		notWhen: row.not_when ?? "",
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
+}
+
+/** One injection write: what the index named for one session. */
+export interface InjectionWrite {
+	workspaceId: string;
+	sessionId: string;
+	/** ISO timestamp of the build. */
+	ts: string;
+	/** Memory ids the index named (full rows and id-only rows alike). */
+	ids: string[];
+	/** Estimated tokens of the rendered index. */
+	estTokens: number;
+}
+
+/** One stored injection row. */
+export interface InjectionRow {
+	workspaceId: string;
+	sessionId: string;
+	ts: string;
+	ids: string[];
+	estTokens: number;
 }
 
 export interface PromptRow {

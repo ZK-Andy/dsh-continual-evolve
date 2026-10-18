@@ -122,3 +122,15 @@ parameters: { type: "object", properties: { message: { type: "string" } }, requi
 2. **必须自绘时**：监听 **`pointerdown`**（不是 `click`）并做**容器包含判断**（`useRef` + `node.contains(event.target)`）。打开的那次 click 早已过了 pointerdown 阶段，不会再命中自己；Escape 仍走 `keydown`。
 
 **要点**：`click` 监听 + "监听器刚挂上就被同一次事件触发" = 自绘 popover 的经典死法；有宿主原语就别自绘。
+
+## 9. 判断"插件到底换没换版"：看卡片首行或 `build-identity` 日志
+
+`ls -la lib/` + `host.log` 手工比对的老办法不再必要。进程在 mount 时把自身入口文件的 sha1
+记为「运行代」，读盘时再算一次「盘面代」：两代不同即 `restartRequired=true`。三处可看：
+
+- 卡片顶部一行：`运行代 <code> · 盘面代 <disk>（v<version>）`，不一致时整行标红并写明需重启；
+- `plugin_log` 每次 mount 一行 `build-identity`（`describeIdentity()` 的文本）；
+- `memorySnapshot().build`（`services/build-identity.ts`）。
+
+入口文件定位失败（非 `lib/index.js` 的装载方式）时两代都报 `unknown`，判定为「不欠重启」——
+观测不可用绝不阻塞注入。

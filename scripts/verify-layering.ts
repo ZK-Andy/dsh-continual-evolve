@@ -41,7 +41,7 @@ const EDGES: Record<string, readonly string[]> = {
 	// The account layer's single import site for the store assembly.
 	"data/database.ts": [],
 	"data/ledger.ts": ["store-types"],
-	"data/migrate.ts": ["data/schema", "store-types"],
+	"data/migrate.ts": ["data/injection-log", "data/schema", "store-types"],
 	"data/patrol.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	"data/records.ts": [],
 	"data/repository.ts": ["data/records", "data/resource-kinds"],
@@ -53,6 +53,8 @@ const EDGES: Record<string, readonly string[]> = {
 	"data/schema.ts": ["data/item-events", "data/review-accounts", "store-types"],
 	// The review queue's event tier, its writer, and the derived settled streak.
 	"data/item-events.ts": ["data/review-accounts"],
+	// Injection ledger: one row per session, pruned with the other ledgers.
+	"data/injection-log.ts": ["data/records"],
 	// Usage counters: one aggregate row per kind, bumped by served bodies only.
 	"data/usage-accounts.ts": ["data/records", "data/repository", "store-types"],
 	"data/secret.ts": [],
@@ -60,11 +62,12 @@ const EDGES: Record<string, readonly string[]> = {
 		"assemble",
 		"pages/memory-card/mount",
 		"pages/memory-card/settings",
-		"services/agent",
+		"services/build-identity",
 		"services/import-md",
 		"services/plugin-log",
 		"services/retention",
 		"services/review",
+		"services/token-budget",
 		"store",
 		"surfaces/memory-section",
 	],
@@ -108,13 +111,13 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/extraction-failure.ts": ["services/llm-call", "services/plugin-log", "store", "store-types"],
 	"services/extraction-prompt.ts": [],
 	"services/extraction-ring.ts": [
+		"services/extraction-screen",
 		"services/llm-call",
 		"services/chain",
 		"services/extraction",
 		"services/extraction-prompt",
 		"services/extraction-surface",
 		"services/llm-call",
-		"services/memory-rules",
 		"services/model-route",
 		"services/prompt-date",
 		"services/retention",
@@ -198,7 +201,7 @@ const EDGES: Record<string, readonly string[]> = {
 	// The tiering exits: archive / promote / demote / probation resolution.
 	"services/review-tiering.ts": ["services/review-prompt", "services/review-ring", "services/review-row"],
 	"data/tiering.ts": ["data/records", "data/repository"],
-	"data/accounts.ts": ["data/item-events", "data/review-accounts", "data/tiering", "data/usage-accounts"],
+	"data/accounts.ts": ["data/injection-log", "data/item-events", "data/review-accounts", "data/tiering", "data/usage-accounts"],
 	"services/skill-apply.ts": [
 		"data/ledger",
 		"data/records",
@@ -261,9 +264,14 @@ const EDGES: Record<string, readonly string[]> = {
 		"surfaces/memory-section",
 	],
 	"surfaces/memory-guide.ts": [],
-	"surfaces/memory-section.ts": ["services/agent", "store", "surfaces/memory-guide"],
-	"surfaces/memory-snapshot.ts": ["services/skill-rules", "store"],
+	"surfaces/memory-section.ts": ["services/agent", "services/token-budget", "store", "surfaces/memory-guide"],
+	"surfaces/memory-snapshot.ts": ["services/build-identity", "services/injection-stats", "services/skill-rules", "store"],
 	"surfaces/prompt-snapshot.ts": ["store"],
+	"services/build-identity.ts": [],
+	"services/injection-stats.ts": ["store-types"],
+	"services/pre-screen.ts": ["services/token-budget"],
+	"services/extraction-screen.ts": ["services/memory-rules", "services/pre-screen", "store-types"],
+	"services/token-budget.ts": [],
 	"surfaces/skill-provider.ts": [],
 };
 

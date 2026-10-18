@@ -55,7 +55,7 @@ No commands. On the first session after restart the index is injected automatica
 | `memoryIndex.enabled` | `true` | Register the memory section |
 | `memoryIndex.guide` | `true` | Inject the guide (zero tokens when off and the index is empty) |
 | `memoryIndex.order` | `400` | Section order (upstream named slots start at `PLAN_POLICY=500`) |
-| `memoryIndex.maxChars` | `6000` | Hard character budget for the injected index |
+| `memoryIndex.maxTokens` | `6000` | Hard token budget for the injected index (CJK-aware estimate; over-budget rows degrade to id-only lines) |
 | `memoryIndex.extraction` | `true` | The proposal-based extraction run (turn-level, per-session slots, no idle timer) |
 | `review.enabled` | `true` | The autonomous content-quality loop (own prompts/budget/ledger, trial dry-run) |
 | `review.dryRun` | `true` | Ledger verdicts without landing them (flip off after the trial distribution reads clean) |
@@ -72,7 +72,7 @@ Profile patch example:
 - id: continual-evolve
   config:
     memoryIndex:
-      maxChars: 8000
+      maxTokens: 8000
       extraction: true
     review:
       dryRun: false

@@ -7,7 +7,11 @@
  */
 import type { ResourceKind } from "./repository.js";
 
-const MEMORIES_ORDER = "ORDER BY CASE type WHEN 'feedback' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, updated_at DESC";
+// `id` is the tiebreak on purpose: the injected index must be byte-stable for a
+// given store, and SQLite leaves equal-key rows unordered (ADR
+// `2026-10-18-absorb-memory-plugin-strengths`).
+const MEMORIES_ORDER =
+	"ORDER BY CASE type WHEN 'feedback' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, updated_at DESC, id ASC";
 
 /**
  * The memories kind descriptor: every memories SQL string in one place.
@@ -36,10 +40,10 @@ export const MEMORIES: ResourceKind = {
 	selectActiveRows: "SELECT * FROM memories WHERE status = 'active'",
 	updateQuarantine: "UPDATE memories SET status = 'quarantined' WHERE workspace_id = ? AND id = ?",
 	insertSql:
-		"INSERT INTO memories (workspace_id, id, type, title, description, body, scope, status, source_session, source_seqs, source_run, corrects, created_at, updated_at) " +
-		"VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO memories (workspace_id, id, type, title, description, body, scope, status, source_session, source_seqs, source_run, corrects, not_when, created_at, updated_at) " +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
 	updateSql:
-		"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, scope = ?, corrects = COALESCE(?, corrects), updated_at = ? WHERE workspace_id = ? AND id = ?",
+		"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, scope = ?, corrects = COALESCE(?, corrects), not_when = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
 	deleteSql: "DELETE FROM memories WHERE workspace_id = ? AND id = ?",
 	ftsDropSql: "DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE workspace_id = ? AND id = ?)",
 	ftsInsertSql:

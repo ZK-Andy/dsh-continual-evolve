@@ -26,14 +26,17 @@ import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, prepareStateStm
 import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
 import { openRepositories, type Repository } from "./data/repository.js";
 import {
+	createInjectionMethods,
 	createItemEventMethods,
 	createReviewAccounts,
 	createTieringMethods,
 	createUsageCounters,
 	itemEventWriter,
+	prepareInjectionStmts,
 	prepareItemEventStmts,
 	prepareReviewStmts,
 	prepareTieringStmts,
+	type InjectionStmts,
 	type ItemEventStmts,
 	type ReviewAccountStmts,
 	type TieringStmts,
@@ -93,7 +96,7 @@ export function defaultStorePath(): string {
 }
 
 /** The prepared statements one open store holds (state keys plus both bundles). */
-type StoreStatements = StateStmts & LedgerStmts & ReviewAccountStmts & ItemEventStmts & TieringStmts;
+type StoreStatements = StateStmts & LedgerStmts & ReviewAccountStmts & ItemEventStmts & InjectionStmts & TieringStmts;
 
 /** Open (creating on first use) the central store. */
 export async function openMemoryStore(explicitPath?: string): Promise<MemoryStore> {
@@ -107,6 +110,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		...prepareLedgerStmts(database),
 		...prepareReviewStmts(database),
 		...prepareItemEventStmts(database),
+		...prepareInjectionStmts(database),
 		...prepareTieringStmts(database),
 	};
 
@@ -120,6 +124,7 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 		...createReviewAccounts(stmts, memories, skills),
 		...createItemEventMethods(stmts),
 		...createTieringMethods(database, memories, stmts, () => new Date()),
+		...createInjectionMethods(stmts),
 	};
 	return store;
 }

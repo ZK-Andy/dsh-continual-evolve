@@ -56,7 +56,7 @@
 | `memoryIndex.enabled` | `true` | 注册记忆 section |
 | `memoryIndex.guide` | `true` | 注入指南（关闭且索引为空时该 section 零 token） |
 | `memoryIndex.order` | `400` | section 顺序（上游命名槽位自 `PLAN_POLICY=500` 起） |
-| `memoryIndex.maxChars` | `6000` | 注入索引的硬字符预算 |
+| `memoryIndex.maxTokens` | `6000` | 注入索引的硬 token 预算（CJK 感知估算；超预算的行降级为 id 行） |
 | `memoryIndex.extraction` | `true` | 提案制提取运行（轮级、按会话分槽、无空闲计时器） |
 | `review.enabled` | `true` | 内容质量自进化环（自有提示词/预算/账本，默认试运行） |
 | `review.dryRun` | `true` | 只记 verdict 不落盘（试运行分布看顺后再关） |

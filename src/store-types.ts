@@ -11,13 +11,13 @@ import type { MemoryProposal } from "./services/memory-rules.js";
 import type { PromptProposal } from "./services/prompt-rules.js";
 import type { SkillProposal } from "./services/skill-rules.js";
 import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.js";
-import type { MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
+import type { InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
 import type { ItemEventEntry, ReviewSettled } from "./data/item-events.js";
 import type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
 import type { TieringOutcome } from "./data/tiering.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
-export type { MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
+export type { InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
 /** The queue's event shapes live with the table they describe (`data/item-events.ts`). */
 export { ITEM_EVENT_KINDS } from "./data/item-events.js";
 export type { ItemEventEntry, ItemEventKind, ReviewSettled } from "./data/item-events.js";
@@ -253,6 +253,16 @@ export interface MemoryStore {
 	logPlugin(entry: PluginLogEntry): void;
 	/** Ledger and log rows older than the cutoff, removed (the unbounded tables). */
 	pruneLedger(beforeIso: string): number;
+	/**
+	 * Record one session's injection (the ids the index named and its estimated
+	 * tokens). The section is frozen per session, so this writes once per
+	 * session; a repeat for the same session is ignored idempotently.
+	 */
+	recordInjection(entry: InjectionWrite): void;
+	/** This workspace's injections since a timestamp, newest first. */
+	listInjections(workspaceId: string, sinceIso: string): InjectionRow[];
+	/** Injection rows older than the cutoff, removed (returns rows removed). */
+	pruneInjections(beforeIso: string): number;
 	close(): void;
 	/** One active prompt supplement from a partition, undefined when absent. */
 	getPrompt(workspaceId: string, id: string): PromptRecord | undefined;

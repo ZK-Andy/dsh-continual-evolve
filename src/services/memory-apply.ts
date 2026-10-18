@@ -12,6 +12,7 @@ import {
 	type MemoryProposal,
 	type MemoryScope,
 	type MemoryType,
+	type ProposedFields,
 	slugifyId,
 } from "./memory-rules.js";
 import type { ItemEventEntry, LedgerEntry, LedgerFile, MemoryRecord } from "../store-types.js";
@@ -125,7 +126,7 @@ interface MemoryApplyJob {
 	proposal: MemoryProposal;
 	id: string;
 	existing: MemoryRecord | undefined;
-	fields: { type: MemoryType; title: string; description: string; body: string; scope: MemoryScope };
+	fields: ProposedFields;
 	link: string | null;
 	files: MemoryLedgerFile[];
 }
@@ -205,6 +206,7 @@ function createMemory(job: MemoryApplyJob): ProposalOutcome {
 		proposal.sourceSeqs ?? null,
 		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
 		link,
+		fields.notWhen,
 		now,
 		now,
 	]);
@@ -234,6 +236,7 @@ function updateMemory(job: MemoryApplyJob): ProposalOutcome {
 		fields.body,
 		fields.scope,
 		link,
+		fields.notWhen,
 		db.now(),
 		ctx.workspaceId,
 		id,
@@ -306,7 +309,7 @@ function mergedFields(
 	proposal: MemoryProposal,
 	existing: MemoryRecord | undefined,
 	action: "create" | "update",
-): { fields: { type: MemoryType; title: string; description: string; body: string; scope: MemoryScope } } | { reason: string } {
+): { fields: ProposedFields } | { reason: string } {
 	const pick = (value: string | undefined, fallback: string): string =>
 		typeof value === "string" ? value : fallback;
 	if (action === "create") {
@@ -323,6 +326,7 @@ function mergedFields(
 				// Cast narrows the proposal's free-form string to the taxonomy; the
 				// field gate right after rejects anything outside it.
 				scope: (typeof proposal.scope === "string" ? proposal.scope : "project") as MemoryScope,
+				notWhen: typeof proposal.notWhen === "string" ? proposal.notWhen : "",
 			},
 		};
 	}
@@ -338,6 +342,7 @@ function mergedFields(
 			// Omitted scope keeps the stored one: an update that only touches
 			// text must not silently reset a promotion candidate to `project`.
 			scope: (typeof proposal.scope === "string" ? proposal.scope : existing.scope) as MemoryScope,
+			notWhen: pick(proposal.notWhen, existing.notWhen),
 		},
 	};
 }

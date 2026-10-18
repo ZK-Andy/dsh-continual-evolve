@@ -10,6 +10,8 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { GLOBAL_WORKSPACE, MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord, type SkillRecord } from "../store.js";
 import { skillUsagePartition } from "../services/skill-rules.js";
+import { buildIdentity, type BuildIdentity } from "../services/build-identity.js";
+import { injectionStats, type InjectionStats } from "../services/injection-stats.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
 
@@ -30,6 +32,8 @@ export interface MemoryFileInfo {
 	updatedAt: number;
 	/** The reviewer advised moving this fact into the repo docs (advice only). */
 	suggestExport: boolean;
+	/** The caveat rendered with the hook ("不适用：…"), empty when none. */
+	notWhen: string;
 }
 
 /** The full read-only snapshot the card renders for one workspace root. */
@@ -46,6 +50,10 @@ export interface MemorySnapshot {
 	quarantined: { id: string; scope: MemoryScopeTag; reason: string }[];
 	/** The last patrol pass this process recorded (null before the first). */
 	lastPatrol: { ts: string; orphanFtsRows: number; quarantined: number } | null;
+	/** Which build this process runs versus what is on disk (null when unreadable). */
+	build: BuildIdentity | null;
+	/** Recent injection volume and how much of it was read (null when unreadable). */
+	injection: InjectionStats | null;
 }
 
 /**
@@ -90,6 +98,8 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 		files: [],
 		quarantined: [],
 		lastPatrol: null,
+		build: safeBuild(),
+		injection: null,
 	};
 	let all;
 	try {
@@ -126,7 +136,27 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 			.filter((entry) => entry.record.status === "quarantined")
 			.map((entry) => ({ id: entry.record.id, scope: entry.scope, reason: quarantineReasonOf(store, entry.record) })),
 		lastPatrol,
+		build: safeBuild(),
+		injection: safeInjection(store, workspaceRoot),
 	};
+}
+
+/** The build identity, degrading to null when the read itself fails. */
+function safeBuild(): BuildIdentity | null {
+	try {
+		return buildIdentity();
+	} catch {
+		return null;
+	}
+}
+
+/** The injection reading for one workspace, degrading to null. */
+function safeInjection(store: MemoryStore, workspaceRoot: string): InjectionStats | null {
+	try {
+		return injectionStats(store, workspaceRoot === GLOBAL_WORKSPACE ? GLOBAL_WORKSPACE : workspaceRoot);
+	} catch {
+		return null;
+	}
 }
 
 function infoOf(entry: { record: MemoryRecord; scope: MemoryScopeTag }, store: MemoryStore): MemoryFileInfo {
@@ -142,6 +172,7 @@ function infoOf(entry: { record: MemoryRecord; scope: MemoryScopeTag }, store: M
 		// The review's advice exits are read-only suggestions: the card is the
 		// only place a human learns "this belongs in the repo docs".
 		suggestExport: store.latestVerdict(record.workspaceId, "memory", record.id) === "export-suggestion",
+		notWhen: record.notWhen,
 	};
 }
 

@@ -68,6 +68,36 @@ export function queryTokens(query: string): string[] {
 	return query.split(/[\s\u3000]+/).filter((token) => token.length > 0);
 }
 
+/** Whether a string contains any CJK code point. */
+function hasCjk(text: string): boolean {
+	for (const char of text) {
+		const cp = char.codePointAt(0) ?? 0;
+		if ((cp >= 0x2e80 && cp <= 0x9fff) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xff00 && cp <= 0xffef)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Expand one query token into match alternatives. A CJK run longer than three
+ * characters is a sentence fragment, not a keyword: requiring the whole run
+ * ("什么时候可以") finds nothing in a title that says "发版前必须 CI 全绿",
+ * while each trigram window is a usable key. Windows are OR-ed within the
+ * token and tokens stay AND-combined, so precision is bounded by the tokens the
+ * caller typed (ADR `2026-10-18-absorb-memory-plugin-strengths`, finding F8).
+ */
+export function searchAlternatives(token: string): string[] {
+	if (token.length <= 3 || !hasCjk(token)) {
+		return [token];
+	}
+	const windows: string[] = [];
+	for (let index = 0; index + 3 <= token.length; index += 1) {
+		windows.push(token.slice(index, index + 3));
+	}
+	return [...new Set(windows)];
+}
+
 /** `%token%` with LIKE metacharacters escaped — keywords match literally. */
 export function likePattern(token: string): string {
 	return `%${token.replaceAll(/[\\%_]/g, "\\$&")}%`;
@@ -120,7 +150,7 @@ export class Repository<Row> {
 	private readonly usageUpsert: StatementSync;
 	private archiveStmt: StatementSync | undefined;
 	/** LIKE fallback: one statement per token count — the query set repeats, the counts don't grow. */
-	private readonly likeStmts = new Map<number, StatementSync>();
+	private readonly likeStmts = new Map<string, StatementSync>();
 
 	/**
 	 * Prepare every statement for one kind up front.
@@ -166,39 +196,78 @@ export class Repository<Row> {
 	}
 
 	/**
-	 * Keyword search, workspace-scoped: trigram FTS when every token is ≥3
-	 * chars (with a LIKE fallback whenever FTS finds nothing), literal LIKE
-	 * substrings otherwise.
+	 * Keyword search, workspace-scoped, in three passes: an AND over the query's
+	 * token groups (trigram FTS first, LIKE underneath), then — because a
+	 * natural-language question is not a keyword list — an OR over the same
+	 * alternatives. A question like "什么时候可以 publish" shares no trigram run
+	 * with "发版前必须 CI 全绿"; the strict pass returns nothing and the OR pass
+	 * recovers it on "publish" (ADR `2026-10-18-absorb-memory-plugin-strengths`).
 	 */
 	searchRows(workspaceId: string, query: string, limit: number): Row[] {
 		const tokens = queryTokens(query);
 		if (tokens.length === 0) {
 			return [];
 		}
-		if (tokens.every((token) => token.length >= 3)) {
-			const hits = this.fts.all(tokens.map(ftsPhrase).join(" AND "), workspaceId, limit) as unknown as Row[];
+		const groups = tokens.map(searchAlternatives);
+		const strict = this.matchSearch(workspaceId, groups, "AND", limit);
+		if (strict.length > 0 || groups.length === 1) {
+			return strict;
+		}
+		return this.matchSearch(workspaceId, groups.flat().map((token) => [token]), "OR", limit);
+	}
+
+	/**
+	 * One search pass over the query's alternatives.
+	 * @param workspaceId - The partition.
+	 * @param groups - Alternatives per token; joined by {@link joiner}.
+	 * @param joiner - `AND` (every group must match) or `OR` (any alternative).
+	 * @param limit - Row cap.
+	 * @returns Matching rows in the kind's order.
+	 */
+	private matchSearch(
+		workspaceId: string,
+		groups: readonly (readonly string[])[],
+		joiner: "AND" | "OR",
+		limit: number,
+	): Row[] {
+		if (groups.every((group) => group.every((token) => token.length >= 3))) {
+			const expression = groups
+				.map((group) => (group.length === 1 ? ftsPhrase(group[0] as string) : `(${group.map(ftsPhrase).join(" OR ")})`))
+				.join(` ${joiner} `);
+			const hits = this.fts.all(expression, workspaceId, limit) as unknown as Row[];
 			if (hits.length > 0) {
 				return hits;
 			}
 		}
-		return this.likeSearch(workspaceId, tokens, limit);
+		return this.likeSearch(workspaceId, groups, joiner, limit);
 	}
 
-	private likeSearch(workspaceId: string, tokens: readonly string[], limit: number): Row[] {
-		let stmt = this.likeStmts.get(tokens.length);
+	private likeSearch(
+		workspaceId: string,
+		groups: readonly (readonly string[])[],
+		joiner: "AND" | "OR",
+		limit: number,
+	): Row[] {
+		const key = `${joiner}:${groups.map((group) => group.length).join(",")}`;
+		let stmt = this.likeStmts.get(key);
 		if (stmt === undefined) {
-			const clause = tokens
-				.map(() => `(${this.kind.likeColumns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(" OR ")})`)
-				.join(" AND ");
+			const columns = this.kind.likeColumns;
+			const clause = groups
+				.map((group) =>
+					`(${group.map(() => `(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(" OR ")})`).join(" OR ")})`,
+				)
+				.join(` ${joiner} `);
 			stmt = this.database.prepare(
 				`SELECT * FROM ${this.kind.table} WHERE workspace_id = ? AND status = 'active' AND ${clause} ${this.kind.order} LIMIT ?`,
 			);
-			this.likeStmts.set(tokens.length, stmt);
+			this.likeStmts.set(key, stmt);
 		}
-		const patterns = tokens.flatMap((token) => {
-			const pattern = likePattern(token);
-			return this.kind.likeColumns.map(() => pattern);
-		});
+		const patterns = groups.flatMap((group) =>
+			group.flatMap((token) => {
+				const pattern = likePattern(token);
+				return this.kind.likeColumns.map(() => pattern);
+			}),
+		);
 		return stmt.all(workspaceId, ...patterns, limit) as unknown as Row[];
 	}
 

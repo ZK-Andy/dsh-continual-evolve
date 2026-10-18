@@ -14,6 +14,12 @@ export {
 } from "./item-events.js";
 export { createUsageCounters } from "./usage-accounts.js";
 export {
+	createInjectionMethods,
+	prepareInjectionStmts,
+	type InjectionMethods,
+	type InjectionStmts,
+} from "./injection-log.js";
+export {
 	createTieringMethods,
 	prepareTieringStmts,
 	PROBATION_DAYS,

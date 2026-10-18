@@ -2,12 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-	createFrozenMemorySection,
-	fitIndex,
-	memoryDirFor,
-	memorySectionText,
-} from "../src/surfaces/memory-section.js";
+import { buildSection, createFrozenMemorySection, memoryDirFor } from "../src/surfaces/memory-section.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let workspace = "";
@@ -49,26 +44,6 @@ describe("memoryDirFor", () => {
 	});
 });
 
-describe("fitIndex", () => {
-	it("returns the index untouched when it fits", () => {
-		expect(fitIndex("abc", 10)).toEqual({ text: "abc", dropped: 0 });
-	});
-
-	it("truncates at the last line boundary and reports the drop", () => {
-		const index = "line-one\nline-two\nline-three";
-		const fit = fitIndex(index, 20);
-		expect(fit.text).toBe("line-one\nline-two");
-		expect(fit.dropped).toBe(index.length - fit.text.length);
-	});
-
-	it("never leaves a partial row: a single over-budget line drops whole", () => {
-		expect(fitIndex("abcdef", 4)).toEqual({ text: "", dropped: 6 });
-		const empty = fitIndex("abcdef", 0);
-		expect(empty.text).toBe("");
-		expect(empty.dropped).toBe(6);
-	});
-});
-
 describe("memorySectionText", () => {
 	it("puts global rows first and marks a probation row", async () => {
 		store.applyProposals({ workspaceId: "", trigger: "explicit" }, [
@@ -81,7 +56,7 @@ describe("memorySectionText", () => {
 		// Promote one project row: it moves into L0 on probation, so the next
 		// render must place it in the global block with the trial marker.
 		expect(store.promoteMemory(workspace, "p-l1").ok).toBe(true);
-		const text = memorySectionText(agentAt(workspace), { store });
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000 }).text;
 		expect(text.indexOf("g-l0")).toBeLessThan(text.indexOf("p-l2"));
 		expect(text.indexOf("p-l1")).toBeLessThan(text.indexOf("p-l2"));
 		expect(text).toContain("（试用中）");
@@ -89,14 +64,14 @@ describe("memorySectionText", () => {
 	});
 
 	it("renders nothing without a workspace or a store", async () => {
-		expect(memorySectionText(undefined, { store })).toBe("");
-		expect(memorySectionText({ session: { header: {} } }, { store })).toBe("");
-		expect(memorySectionText(agentAt(workspace), { store: undefined })).toBe("");
+		expect(buildSection(undefined, { store, maxTokens: 6000 }).text).toBe("");
+		expect(buildSection({ session: { header: {} } }, { store, maxTokens: 6000 }).text).toBe("");
+		expect(buildSection(agentAt(workspace), { store: undefined, maxTokens: 6000 }).text).toBe("");
 	});
 
 	it("injects the store query as the index, with the central-library framing", () => {
 		expect(seed("fedora-env", "user", "Fedora 环境")).toBe(true);
-		const text = memorySectionText(agentAt(workspace), { store });
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000 }).text;
 		expect(text).toContain("# 持久记忆");
 		expect(text).toContain(store.path);
 		expect(text).toContain(`<memories>\n- [fedora-env] Fedora 环境 — Fedora 环境 的钩子（user）\n</memories>`);
@@ -108,7 +83,7 @@ describe("memorySectionText", () => {
 		seed("zzz-reference", "reference", "参照");
 		seed("aaa-user", "user", "画像");
 		seed("mmm-feedback", "feedback", "规矩");
-		const text = memorySectionText(agentAt(workspace), { store, guide: false });
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000, guide: false }).text;
 		const lines = text.split("\n").filter((line) => line.startsWith("- ["));
 		expect(lines.map((line) => line.slice(3, line.indexOf("]")))).toEqual(["mmm-feedback", "aaa-user", "zzz-reference"]);
 		expect(text).not.toContain("的正文");
@@ -116,33 +91,33 @@ describe("memorySectionText", () => {
 	});
 
 	it("shows the empty marker when the workspace has no memories", () => {
-		const text = memorySectionText(agentAt(workspace), { store });
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000 }).text;
 		expect(text).toContain("（暂无记忆）");
-		expect(memorySectionText(agentAt(workspace), { store, guide: false })).toBe("");
+		expect(buildSection(agentAt(workspace), { store, maxTokens: 6000, guide: false }).text).toBe("");
 	});
 
 	it("renders nothing for another workspace's partition", () => {
 		seed("fedora-env", "user", "Fedora 环境");
 		const other = join(workspace, "other");
-		expect(memorySectionText(agentAt(other), { store, guide: false })).toBe("");
+		expect(buildSection(agentAt(other), { store, maxTokens: 6000, guide: false }).text).toBe("");
 	});
 
-	it("appends a memory_read hint when the index exceeds the budget", () => {
+	it("keeps an over-budget row discoverable as an id-only line", () => {
 		seed("a", "user", "甲");
 		seed("b", "user", "乙");
 		seed("c", "user", "丙");
-		const text = memorySectionText(agentAt(workspace), { store, maxChars: 40, guide: false });
-		expect(text).toContain("已截断");
-		expect(text).toContain("evolve_read");
-		const shown = text.split("\n").filter((line) => line.startsWith("- ["));
-		expect(shown.length).toBeLessThan(3);
+		const section = buildSection(agentAt(workspace), { store, maxTokens: 20, guide: false });
+		// Full lines stop fitting; the tail degrades to ids instead of vanishing.
+		expect(section.fullCount).toBeGreaterThan(0);
+		expect(section.fullCount + section.idOnlyCount).toBe(2);
+		expect(section.text).toMatch(/^- \[[abc]\]$/m);
 	});
 
-	it("renders the search hint when nothing fits", () => {
+	it("renders the search hint when not even one id fits", () => {
 		seed("one-long-row", "user", "一行超长的索引行");
-		const text = memorySectionText(agentAt(workspace), { store, maxChars: 5, guide: false });
-		expect(text).not.toContain("<memories>");
-		expect(text).toContain("一行都放不下");
+		const section = buildSection(agentAt(workspace), { store, maxTokens: 1, guide: false });
+		expect(section.text).not.toContain("<memories>");
+		expect(section.text).toContain("一条都放不下");
 	});
 
 	it("survives a store that throws on read", () => {
@@ -157,12 +132,12 @@ describe("memorySectionText", () => {
 				return undefined;
 			},
 		}) as unknown as MemoryStore;
-		expect(memorySectionText(agentAt(workspace), { store: hostile })).toBe("");
+		expect(buildSection(agentAt(workspace), { store: hostile, maxTokens: 6000 }).text).toBe("");
 	});
 
 	it("swaps to the no-tools phrasing when tool registration failed", () => {
 		seed("fedora-env", "user", "Fedora 环境");
-		const text = memorySectionText(agentAt(workspace), { store, toolsAvailable: false });
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000, toolsAvailable: false }).text;
 		expect(text).not.toContain("evolve_write");
 		expect(text).toContain("告诉用户");
 	});

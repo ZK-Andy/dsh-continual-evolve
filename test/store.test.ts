@@ -199,7 +199,11 @@ describe("reads", () => {
 		expect(store.search(WS, "中文 交接").map((r) => r.id)).toEqual(["both"]);
 		// Mixed token shapes (title holds one, body the other) still AND via LIKE.
 		expect(store.search(WS, "中文交接流程 记忆").map((r) => r.id)).toEqual(["both"]);
-		expect(store.search(WS, "中文 不存在的词").map((r) => r.id)).toEqual([]);
+		// A question whose tokens never co-occur falls back to OR: the strict pass
+		// found nothing, so token overlap is the only signal left.
+		expect(store.search(WS, "中文 不存在的词").map((r) => r.id).sort()).toEqual(["both", "half"]);
+		// Nothing overlaps at all ⇒ no match, no relaxation.
+		expect(store.search(WS, "完全无关 查无此项")).toEqual([]);
 		expect(store.search(WS, "   ")).toEqual([]);
 	});
 

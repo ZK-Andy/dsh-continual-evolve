@@ -111,6 +111,11 @@ window.__ModuleLoader__.load({
 			searchPlaceholder: "搜索记忆…",
 			searchEmpty: "没有匹配的记忆文件。",
 			quarantined: "巡检隔离（疑似密钥泄漏等异常，已隐藏）：",
+			buildLine: "运行代 {code} · 盘面代 {disk}（v{version}）",
+			buildStale: "盘面代码已换，需重启宿主才会生效",
+			buildUnknown: "代际不可读（无法定位入口文件）",
+			injectionLine: "近 {days} 天注入 {sessions} 次会话 / {injected} 条，被读 {read} 条（{rate}）",
+			notWhenLabel: "不适用：",
 						readError: "读取失败：",
 			previewLoading: "正在加载记忆…",
 			previewTooLarge: "该记忆文件超过 5 MiB 预览上限。",
@@ -163,6 +168,11 @@ window.__ModuleLoader__.load({
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
 			quarantined: "Quarantined by patrol (suspected secrets, hidden): ",
+			buildLine: "Running {code} · on disk {disk} (v{version})",
+			buildStale: "Disk code changed — restart the host to load it",
+			buildUnknown: "Generation unreadable (entry file not locatable)",
+			injectionLine: "Last {days} days: {sessions} sessions injected {injected} memories, {read} read ({rate})",
+			notWhenLabel: "Not when: ",
 						readError: "Read failed: ",
 			previewLoading: "Loading memory…",
 			previewTooLarge: "This memory file exceeds the 5 MiB preview limit.",
@@ -852,6 +862,47 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		/** Which build this process runs versus what is on disk. */
+		function buildLine(t, build) {
+			if (build === null || build === undefined || typeof build !== "object") {
+				return null;
+			}
+			if (build.codeGeneration === "unknown" && build.diskGeneration === "unknown") {
+				return createElement("div", { key: "build", className: "dce-stats" }, t("buildUnknown"));
+			}
+			var text = t("buildLine", {
+				code: build.codeGeneration,
+				disk: build.diskGeneration,
+				version: build.version,
+			});
+			return createElement(
+				"div",
+				{ key: "build", className: build.staleOnDisk === true ? "dce-warn" : "dce-stats" },
+				build.staleOnDisk === true ? text + " — " + t("buildStale") : text,
+			);
+		}
+
+		/** Recent injection volume and how much of it was read. */
+		function injectionLine(t, injection) {
+			if (injection === null || injection === undefined || typeof injection !== "object") {
+				return null;
+			}
+			if (injection.injected === 0) {
+				return null;
+			}
+			return createElement(
+				"div",
+				{ key: "injection", className: "dce-stats" },
+				t("injectionLine", {
+					days: injection.days,
+					sessions: injection.sessions,
+					injected: injection.injected,
+					read: injection.read,
+					rate: Math.round(injection.rate * 100) + "%",
+				}),
+			);
+		}
+
 		/** A memory row's badge: the global marker and the export advice, whichever apply. */
 		function memoryBadge(t, file) {
 			var labels = [];
@@ -860,6 +911,9 @@ window.__ModuleLoader__.load({
 			}
 			if (file.suggestExport === true) {
 				labels.push(t("exportSuggestion"));
+			}
+			if (typeof file.notWhen === "string" && file.notWhen.length > 0) {
+				labels.push(t("notWhenLabel") + file.notWhen);
 			}
 			return labels.join(" · ");
 		}
@@ -872,6 +926,8 @@ window.__ModuleLoader__.load({
 			});
 			var parts = [
 				createElement("div", { key: "stats", className: "dce-stats" }, t("stats", { files: vm.snapshot.fileCount })),
+				buildLine(t, vm.snapshot.build),
+				injectionLine(t, vm.snapshot.injection),
 				quarantineLine(t, vm.snapshot.quarantined),
 				fileSearchInput(t, vm.query, vm.onQueryChange),
 				createElement(

@@ -14,6 +14,8 @@ export interface MemoryWriteFields {
 	title?: string | undefined;
 	description?: string | undefined;
 	body?: string | undefined;
+	/** The caveat rendered with the hook; presentation only. */
+	notWhen?: string | undefined;
 }
 
 /** Read fields the memory executor accepts (narrowed from the dispatcher). */
@@ -52,6 +54,7 @@ function fieldsOf(args: MemoryWriteFields): {
 	title: string | undefined;
 	description: string | undefined;
 	body: string | undefined;
+	notWhen: string | undefined;
 } {
 	return {
 		action: args.action,
@@ -60,6 +63,7 @@ function fieldsOf(args: MemoryWriteFields): {
 		title: stringField(args.title),
 		description: stringField(args.description),
 		body: stringField(args.body),
+		notWhen: stringField(args.notWhen),
 	};
 }
 
@@ -84,6 +88,7 @@ export function writeMemoryRecord(store: MemoryStore, workspaceId: string, sessi
 			title: fields.title,
 			description: fields.description,
 			body: fields.body,
+			notWhen: fields.notWhen,
 		},
 	]);
 	if (outcome === undefined || !outcome.ok) {

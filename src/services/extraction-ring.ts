@@ -12,6 +12,7 @@ import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
 import { failureCodeOf, isRouteRejected, observedUsageOf } from "./llm-call.js";
 import type { ModelSelection } from "./model-route.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
+import { screenExtractionBatch } from "./extraction-screen.js";
 import { CHEAP_INCREMENT_MAX, cheapPrompt, extractionPrompt, manifestLineOf, type ParsedAnswer } from "./extraction-prompt.js";
 import { todayUtc } from "./prompt-date.js";
 import { pruneIfDue } from "./retention.js";
@@ -19,7 +20,6 @@ import { extractionGate, extractionMain } from "./subagent-defs.js";
 import { cutFailureOf, subagentLoaderFor, type SubagentAnswer, type SubagentCall, type SubagentLoader } from "./subagent.js";
 import { ROUTE_REJECTED_REASON, type LedgerEntry, type MemoryStore } from "../store.js";
 import type { ExtractionDeps, ExtractionResult, ExtractionTarget, RunOptions } from "./extraction.js";
-import type { MemoryProposal } from "./memory-rules.js";
 
 /** Head length of a failed run's raw answer kept in the ledger `files` column. */
 const FAILURE_RAW_MAX = 2048;
@@ -321,7 +321,27 @@ function settleProposalAnswer(item: ExtractionItem, answer: SubagentAnswer<Parse
 
 /** Apply an apply-decision answer through the store gates, with hygiene riding along. */
 function applyProposalAnswer(item: ExtractionItem, parsed: ParsedAnswer, usage: unknown): ChainOutcome {
+	// The store's own proposal shape — no second import for a type the gate owns.
+	type MemoryProposal = Parameters<MemoryStore["applyProposals"]>[1][number];
 	const { store } = item.deps;
+	// Deterministic pre-screen: duplicate bodies and no-op updates never reach the
+	// write gate, so they cannot bump `updated_at` or move the review queue.
+	const screened = screenExtractionBatch(store, item.ledgerBase.workspaceId, parsed.proposals as MemoryProposal[]);
+	if (screened.kept.length === 0) {
+		item.advanceCursor();
+		const reason = screened.skipReason ?? "pre-screen: no proposals";
+		store.logSkipped({
+			...item.ledgerBase,
+			skipReason: reason,
+			status: "skipped",
+			model: item.route.model,
+			usage,
+			cheapUsage: item.cheapUsage,
+			cheapError: item.cheapError,
+		});
+		item.result = { status: "skipped", skipReason: reason, cursor: item.boundarySeq };
+		return "handled";
+	}
 	const outcomes = store.applyProposals(
 		{
 			workspaceId: item.ledgerBase.workspaceId,
@@ -334,7 +354,7 @@ function applyProposalAnswer(item: ExtractionItem, parsed: ParsedAnswer, usage: 
 			cheapError: item.cheapError,
 			decision: parsed.reason,
 		},
-		parsed.proposals as MemoryProposal[],
+		screened.kept,
 	);
 	if (!outcomes.every((outcome) => outcome.ok)) {
 		item.result = { status: "rejected", skipReason: outcomes.find((outcome) => !outcome.ok)?.reason };

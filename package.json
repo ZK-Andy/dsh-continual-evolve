@@ -69,7 +69,8 @@
     "check:governance": "tsx scripts/verify-governance.ts",
     "check:budgets": "tsx scripts/verify-src-budgets.ts",
     "check:pack": "tsx scripts/verify-pack-contents.ts",
-    "change-scope": "tsx scripts/change-scope.ts"
+    "change-scope": "tsx scripts/change-scope.ts",
+    "eval:recall": "tsx scripts/eval-recall.ts"
   },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"
