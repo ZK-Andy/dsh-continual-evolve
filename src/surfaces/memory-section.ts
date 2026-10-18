@@ -44,10 +44,13 @@ export function memoryDirFor(cwd: string): string {
 }
 
 /**
- * One index line: hook only — bodies are an `evolve_read` call away. A row on
- * probation says so: a trial memory is visible on purpose (an unseen memory
- * cannot earn the cross-project use that confirms it), and the marker is what
- * keeps the reader honest about its status.
+ * One index line: hook only — bodies are an `evolve_read` call away. The hook
+ * is the id, the title and the head of the description: the type is carried by
+ * the block's ordering (feedback > user > reference) instead of a per-line tag,
+ * and the description is clipped so one long hook cannot price out five peers.
+ * A row on probation says so: a trial memory is visible on purpose (an unseen
+ * memory cannot earn the cross-project use that confirms it), and the marker is
+ * what keeps the reader honest about its status.
  */
 export function indexLineOf(record: {
 	id: string;
@@ -58,16 +61,20 @@ export function indexLineOf(record: {
 	notWhen?: string | undefined;
 }): string {
 	const probation = record.probationUntil === undefined || record.probationUntil === null ? "" : "（试用中）";
-	const notWhen = record.notWhen === undefined || record.notWhen === "" ? "" : `（不适用：${clip(record.notWhen)}）`;
-	return `- [${record.id}] ${record.title} — ${record.description}（${record.type}）${probation}${notWhen}`;
+	const notWhen = record.notWhen === undefined || record.notWhen === "" ? "" : `（不适用：${clip(record.notWhen, NOT_WHEN_RENDER_LIMIT)}）`;
+	const description = record.description === "" ? "" : ` — ${clip(record.description, DESCRIPTION_RENDER_LIMIT)}`;
+	return `- [${record.id}] ${record.title}${description}${probation}${notWhen}`;
 }
+
+/** Longest rendered description fragment: the index is a hook, not a summary. */
+const DESCRIPTION_RENDER_LIMIT = 20;
 
 /** Longest rendered `notWhen` fragment, so one caveat cannot eat the index. */
 const NOT_WHEN_RENDER_LIMIT = 60;
 
-/** Clip a rendered caveat at a character boundary, marking the cut. */
-function clip(text: string): string {
-	return text.length <= NOT_WHEN_RENDER_LIMIT ? text : `${text.slice(0, NOT_WHEN_RENDER_LIMIT)}…`;
+/** Clip a rendered fragment at a character boundary, marking the cut. */
+function clip(text: string, limit: number): string {
+	return text.length <= limit ? text : `${text.slice(0, limit)}…`;
 }
 
 /** Options for {@link buildSection}. */

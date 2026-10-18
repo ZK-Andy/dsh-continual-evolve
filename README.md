@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-696%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-697%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -73,7 +73,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ### 开局注入
 
-- 只注册一个 system-prompt section（`order 400`）：本工作区的索引，只含钩子（id、标题、描述、类型、可选 `notWhen`），外加库路径与几行指南。feedback > user > reference 排序，并列按 id 稳定。
+- 只注册一个 system-prompt section（`order 400`）：本工作区的索引，只含钩子（id、标题、描述截 20 字、可选「不适用」）；类型不逐行标注，由块内 feedback > user > reference 排序承担。外加库路径与两段指南，并列按 id 稳定。
 - 每会话只算一次并逐字节复用——prompt cache 持续命中；空 store 零 token。
 - 预算按 token 计，CJK 感知（中文 1.5 token/字，其余 4 字符/token）。装不下分三档降级：完整钩子行 → 只留 `- [id]` 行 → `（其余 N 条未展开…）` 计数行。被裁掉的记忆仍能靠 `evolve_read` 捞回。
 
@@ -157,7 +157,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ```bash
 pnpm install && pnpm build   # 装依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（696 个测试）
+pnpm test                    # vitest（697 个测试）
 pnpm test:coverage           # v8 覆盖率，CI 门禁 91/83
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR 格式、文档预算、链接、治理、交接

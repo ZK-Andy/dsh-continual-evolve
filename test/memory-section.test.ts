@@ -74,9 +74,28 @@ describe("memorySectionText", () => {
 		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000 }).text;
 		expect(text).toContain("# 持久记忆");
 		expect(text).toContain(store.path);
-		expect(text).toContain(`<memories>\n- [fedora-env] Fedora 环境 — Fedora 环境 的钩子（user）\n</memories>`);
+		expect(text).toContain(`<memories>\n- [fedora-env] Fedora 环境 — Fedora 环境 的钩子\n</memories>`);
 		expect(text).toContain("evolve_read");
 		expect(text).toContain("evolve_write");
+	});
+
+	it("clips a long description and leaves the type to the block ordering", () => {
+		expect(
+			store.applyProposals({ workspaceId: workspace, trigger: "explicit" }, [
+				{
+					action: "create",
+					id: "long-hook",
+					type: "user",
+					title: "短标题",
+					description: "这是一条很长很长的描述，长到会把索引行撑成一条小作文，必须被截断",
+					body: "正文",
+				},
+			])[0]?.ok,
+		).toBe(true);
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000, guide: false }).text;
+		expect(text).toContain("- [long-hook] 短标题 — 这是一条很长很长的描述，长到会把索引行撑…");
+		expect(text).not.toContain("（user）");
+		expect(text).not.toContain("小作文");
 	});
 
 	it("orders the index feedback > user > reference and shows hooks, not bodies", () => {
@@ -106,9 +125,10 @@ describe("memorySectionText", () => {
 		seed("a", "user", "甲");
 		seed("b", "user", "乙");
 		seed("c", "user", "丙");
-		const section = buildSection(agentAt(workspace), { store, maxTokens: 20, guide: false });
+		const section = buildSection(agentAt(workspace), { store, maxTokens: 16, guide: false });
 		// Full lines stop fitting; the tail degrades to ids instead of vanishing.
 		expect(section.fullCount).toBeGreaterThan(0);
+		expect(section.idOnlyCount).toBeGreaterThan(0);
 		expect(section.fullCount + section.idOnlyCount).toBe(2);
 		expect(section.text).toMatch(/^- \[[abc]\]$/m);
 	});

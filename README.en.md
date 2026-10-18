@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-696%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-697%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -73,7 +73,7 @@ Writes made mid-session become visible in the next session — the injected sect
 
 ### Session-start injection
 
-- One system-prompt section (`order 400`): the workspace's index as hooks only (id, title, description, type, optional `notWhen`), plus the store path and a short guide. Ordered feedback > user > reference, ties by id.
+- One system-prompt section (`order 400`): the workspace's index as hooks only — id, title, description clipped to 20 characters, optional `notWhen`; the type is carried by the block's feedback > user > reference ordering rather than a per-line tag. Plus the store path and a two-paragraph guide, ties by id.
 - Computed once per session and reused byte-for-byte — the prompt cache stays warm; an empty store costs zero tokens.
 - Token budget, CJK-aware (1.5 tokens per Chinese character, 4 characters per token otherwise). Over-budget indexes degrade in tiers: full hook lines → `- [id]`-only lines → a `（其余 N 条未展开…）` counter. A cut memory stays reachable through `evolve_read`.
 
@@ -157,7 +157,7 @@ Every `review.*` field is volatile: the settings card edits it without a remount
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (696 tests)
+pnpm test                    # vitest (697 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds (91/83)
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR format, doc budgets, links, governance, handoff

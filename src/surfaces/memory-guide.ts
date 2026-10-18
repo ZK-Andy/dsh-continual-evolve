@@ -23,19 +23,15 @@ export function memoryGuideIntro(storePath: string, workspaceId: string, toolsAv
 	if (toolsAvailable) {
 		return `# 持久记忆
 
-你的持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`）。下方注入的是本工作区的记忆索引（feedback > user > reference，只有钩子不含正文）；需要某条正文或想按关键词检索，用 \`evolve_read\`（kind=memory）。
+持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`）。下方索引只有钩子（id、标题、截断的描述，feedback > user > reference 排序），不含正文；要正文或按关键词检索，用 \`evolve_read\`（kind=memory）。
 
-用户明确要求记住时，用 \`evolve_write\`（kind=memory，action: create）落库——feedback 类的正文必带 **Why:** 与 **How to apply:** 两行；要求忘记时用 action: delete；情况变了用 action: update 改原条目，不另起新条目。
-
-除此之外的沉淀由会话结束后的专职提取流程负责——不要在执行任务途中分心维护记忆。`;
+用户明确要求记住时用 \`evolve_write\`（kind=memory，action: create；feedback 正文必带 **Why:** 与 **How to apply:**），忘掉用 delete，情况变用 update。其余沉淀归会话结束后的专职提取流程，执行任务途中不要维护记忆。`;
 	}
 	return `# 持久记忆
 
-你的持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`），但本宿主未挂载记忆读写工具。下方注入的是本工作区的记忆索引（feedback > user > reference，只有钩子不含正文）；需要正文时，把 id 告诉用户请其代查。
+持久记忆存放在中央库 \`${storePath}\`（当前工作区：\`${workspaceId}\`），但本宿主未挂载记忆读写工具。下方索引只有钩子（id、标题、截断的描述）；需要正文时，把 id 告诉用户请其代查。
 
-用户明确要求记住或忘记时，直接把要记的内容和类型（user/feedback/reference）告诉用户，由用户手动管理。
-
-除此之外的沉淀由会话结束后的专职提取流程负责——不要在执行任务途中分心维护记忆。`;
+用户要求记住或忘记时，把内容和类型（user/feedback/reference）告诉用户，由用户手动管理。其余沉淀归会话结束后的专职提取流程。`;
 }
 
 /**
