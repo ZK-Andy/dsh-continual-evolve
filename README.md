@@ -1,56 +1,127 @@
 # dsh-continual-evolve
 
-English | [中文](README.zh.md)
+<p align="center">
+  <b>Governed, self-evolving memory for <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a>.</b><br>
+  The model proposes. The code gates. One database lands.
+</p>
 
-[![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-[![npm](https://img.shields.io/npm/v/dsh-continual-evolve)](https://www.npmjs.com/package/dsh-continual-evolve)
-[![CI](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933)](package.json)
-[![Tests](https://img.shields.io/badge/tests-696%20passing-brightgreen)]()
-[![Coverage · statements](https://img.shields.io/badge/coverage_statements-97%25-brightgreen)]()
-[![Coverage · branches](https://img.shields.io/badge/coverage_branches-92%25-green)]()
-[![Coverage · functions](https://img.shields.io/badge/coverage_functions-99%25-brightgreen)]()
+<p align="center">
+  <a href="https://www.npmjs.com/package/dsh-continual-evolve"><img src="https://img.shields.io/npm/v/dsh-continual-evolve?color=4D6BFE" alt="npm"></a>
+  <a href="https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml"><img src="https://github.com/ZK-Andy/dsh-continual-evolve/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-339933" alt="Node"></a>
+</p>
 
-A workspace-memory plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`). Every memory lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace), the index is injected at session start, and the plugin's code is the literal **sole writer** — the model proposes, code gates and lands.
+<p align="center">
+  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
+  <img src="https://img.shields.io/badge/tests-696%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
+  <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
+  <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
+</p>
 
-## Why
+<p align="center">English | <a href="README.zh.md">中文</a></p>
 
-Reusable experience gathered in one session is forgotten by the next. A folder of markdown files makes memory visible but leaves every write ungoverned: index drift, frontmatter rot, oversized files and secrets only show up *after* a bad write lands. This plugin keeps ZCode's memory shape (per-workspace partitioning, injected index, typed memories) and moves the store into one database whose every mutation passes mechanical gates. Four things it can answer with data rather than vibes: *which build is this process running*, *was the injected index ever read*, *what did the budget leave out*, and *did the last retrieval change make recall better or worse*.
+Every memory, skill and prompt note lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace). Session start injects its index as a single prompt section, and the plugin's code is the literal **sole writer** — every model proposal passes mechanical gates inside one transaction before it lands. No safety property depends on the model behaving.
 
-## How it works
+## Highlights
 
-1. **Session-start injection.** One system-prompt section: the workspace's memory index as a store query (hooks only, ordered feedback > user > reference, ties broken by id), the database path, and a short guide. The section is computed once per session and reused byte-for-byte, so the prompt cache stays warm; an empty store costs zero tokens.
-2. **A token budget that degrades instead of dropping.** The budget is tokens, estimated CJK-aware (1.5 tokens per Chinese character, 4 characters per token otherwise). An index that does not fit degrades in tiers: full hook lines → `- [id]`-only lines → a `（其余 N 条未展开…）` counter — a memory the budget could not afford stays discoverable by `evolve_read` instead of vanishing.
-3. **Two tools, one writer.** `evolve_write(kind, …)` (create/update/delete, `move-to-global` for skills) is the explicit path for "remember …" / "forget …" and for sedimenting procedures — `kind` is `memory`, `skill` or `prompt`, and every proposal passes the gates (id shape, type enum, the feedback **Why:**/**How to apply:** contract, secret screening, 64KB body cap, optional `corrects` link, optional `notWhen` caveat) inside one transaction. `evolve_read(kind, …)` serves bodies by id and searches by keyword: an AND over the query's token groups first (trigram FTS, LIKE underneath), then — because a question is not a keyword list — an OR pass over the same alternatives, with CJK fragments expanded into 3-character windows. Each body served by id bumps that row's view counter: a presence heartbeat, so long-unviewed rows are removal candidates while pruning itself stays human.
-4. **Proposal-based extraction.** The trajectory-to-memory automation, audited in `extraction_log`. Every `agent/turn-stopping` schedules that session's boundary, state kept **per session** (coalescing, not queueing; `compaction/start` and session close drain it), **no idle timer**. A run reads the increment since its cursor, feeds FTS-similar memories to one LLM call, and the answer lands through the same gates; failures never advance the cursor. A cheap pre-gate (tiny verdict on the increment head) runs first: a refusal consumes the increment as a model skip, an unclear gate fails open to the full call. Full and gate usages ledger in separate columns, and a dead gate keeps its error head in `cheap_error`. Before anything is written, a **deterministic pre-screen** drops proposals that duplicate an existing body or change nothing; the reason lands as `pre-screen: duplicate×N`.
-5. **Autonomous content-quality loop.** The second background automation, independent by construction (own prompts, own daily budget, own `review_log`, no cursor; only the write gates are shared). A gate call decides whether an entry deserves a close look; only approvals run the evolve pass that judges content quality (memories: home-ownership plus accuracy/usability/reusability/duplication/freshness; skills: trigger precision/executability/duplication, reuse judged scope-aware) and proposes a rewrite. Each of the four review jobs loads its own rubric from one subagent table. Gate/leg failures ledger the error text, the model and the tokens already burned; a verdict that completed before a budget cut still counts, while a call that produced no verdict leaves the item queued. New writes are reviewed as they land; requeues are event-driven (a nearby landing, a `corrects` link, a correction-shaped feedback write). Both tracks resolve their route from the session's *current* selection and share one failure discipline: a refused route (`AUTH`, `NO_ADAPTER`) stops being called until it changes; transient faults back off 0 → 5min → 15min → 1h → 6h.
-6. **Memory layers and a two-stage promotion funnel.** L0 = about the person (kept in the global partition), L1 = about a project; L2 session state never enters the store. A row reaches L0 only through **two independent judgements plus a 30-day probation**: extraction marks `scope=person` when all three home tests pass, and the review's second judgement must say promote. The move is one transaction (global row built, project row archived, exactly one active copy) carrying the probation window and the origin partition; probation rows are injected tagged「试用中」. At the window's end the row is promoted (cross-partition use was recorded), returned home, or quarantined. Wrong-home layers: promote what belongs to the person, *advise* "this belongs in the repo docs" (card tag only — the plugin never writes into your repository), quarantine wrong or stale rows, archive what should never have existed. Physical deletion is always human.
-7. **Observability built in.** (a) **Build identity** — the process hashes its own entry file at import (`codeGeneration`) and re-reads it on demand (`diskGeneration`); they differ ⇒ the host must restart. (b) **Injection accounting** — one row per session in `injection_log` (ids named by the index, estimated tokens, 30-day retention); the card shows a 7-day "injected N / read M (X%)" conversion, where *read* means the body was served after the injection that named it. Its limit is stated, not hidden: it answers "was it read", never "did the answer use it". (c) **A recall evaluation** — `npm run eval:recall` seeds a throwaway store from a fixture and reports hit@1 and MRR; an empty fixture is red by design.
-8. **Rollback is a ledger, not a mechanism.** Every mutation lands a row with before/after snapshots (`extraction_log`, `skill_log`, `review_log`); undo means rewriting the `before` values. A hygiene pass rides on every applied run: orphan FTS rows dropped, secret-bearing rows quarantined (hidden, never deleted; a quarantined skill's materialized file is removed so it stops loading). Plugin diagnostics have a durable home of their own (`plugin_log`) because a stock host attaches no exporter; all four ledgers rotate on one 30-day window.
-9. **Cards: memory + review settings.** Mounted on the plugin's page in the official plugin manager (hosts without the slot silently degrade). The upper card edits the global `review.*` settings (explicit save; `enabled` needs a restart, the rest apply on the next drain) and never follows the workspace selector. The lower card is the read-only projection: build identity (red when a restart is owed), 7-day injection conversion, a workspace selector over the store's partitions, search, relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, and a skills section (global rows badged, project shadows global) with view counts. Localized through the host's `locale/*.json` channel and theme tokens.
+- **One store, one writer** — all state in one SQLite file; the plugin is the only code that writes it.
+- **Session-start index** — hooks for the current workspace injected as one prompt section, frozen per session, ordered feedback > user > reference.
+- **A budget that degrades, not drops** — CJK-aware token budget (default 6000) steps from full hooks to id-only lines to an "N more" counter.
+- **Two tools** — `evolve_write` lands memories, skills and prompt notes; `evolve_read` serves bodies and searches by keyword (trigram FTS, CJK-aware).
+- **Proposal-based extraction** — per-session turn-level automation: no idle timer, a cheap pre-gate, a duplicate/no-change pre-screen, every skip ledgered.
+- **Autonomous quality review** — own prompts, budget and ledger; verdicts rewrite / quarantine / archive / advice-only; deletion is never automatic; dry-run by default.
+- **Layered memory** — L0 about the person, L1 about a project, L2 never stored; L0 is reachable only through two independent judgements plus a 30-day probation.
+- **Observability, not vibes** — build-generation self-check, 7-day injection→read conversion, and an offline recall baseline.
+- **Rollback by ledger** — before/after snapshots for every mutation, plus a hygiene patrol for orphan index rows and secret-bearing entries.
+- **Plugin-manager cards** — a read-only store projection with search and previews, and the global `review.*` settings card.
 
-Memory types follow the ZCode taxonomy: `user` (profile and environment facts), `feedback` (corrected or confirmed practices — bodies must carry **Why:** and **How to apply:** lines), `reference` (resource pointers). `notWhen` is an optional one-sentence caveat rendered next to the hook ("不适用：…"); it is presentation only and never filters retrieval. The extraction boundary is person- and environment-scoped knowledge: decisions and trade-offs are repo-scoped and belong to the repo's ADR route.
-
-Legacy markdown stores (`<workspace>/.evolve/memory/*.md`) are imported losslessly on first contact and the directory is renamed aside as `memory-imported-<date>/` — never deleted.
-
-## Install
+## Quick start
 
 ```bash
-# From npm (activates on install — ships its own bundle patch)
+# from npm (activates on install — ships its own bundle patch)
 dsh plugin add dsh-continual-evolve
 
-# Or from source (approve the allowBuilds build step on first GitHub install)
+# or from source (approve the allowBuilds build step on first GitHub install)
 dsh plugin add ZK-Andy/dsh-continual-evolve
 ```
 
-After installing or updating, restart the profile you actually use (the desktop host or `dsh <profile>`).
+Restart the profile you actually use (the desktop host or `dsh <profile>`). Requires Node ≥ 22.5 for `node:sqlite`; without it the plugin degrades to a no-op with a console warning.
 
-## Usage
+There are no commands to learn — just talk:
 
-No commands. On the first session after restart the index is injected automatically; tell the model "remember …" / "forget …" and it lands through `evolve_write` and the gates. To sediment a procedure, ask for it as a skill — it materializes as a `SKILL.md` the `skill` tool discovers after restart; say "use it everywhere" and the model moves it to the global scope (the project copy archives). Mid-session writes become visible in the next session (the section is frozen to protect the prompt cache).
+```text
+"remember that I review with oxlint, not eslint"   → evolve_write, gated and landed
+"save this procedure as a skill"                   → a SKILL.md the skill tool finds after restart
+"use it everywhere"                                → the skill moves to the global scope
+```
 
-To check the install after a restart: open the plugin's page in the official plugin manager — the first line shows the running generation against the one on disk, and turns red with "restart the host" when they differ. `plugin_log` carries the same reading as a `build-identity` row. The store requires Node ≥ 22.5 (`node:sqlite`); without it the plugin degrades to a no-op with a console warning.
+> [!TIP]
+> After a restart, open the plugin's page in the plugin manager: the first line compares the running build with the one on disk, and turns red with "restart the host" when they differ. `plugin_log` carries the same reading as a `build-identity` row.
+
+Writes made mid-session become visible in the next session — the injected section is frozen to keep the prompt cache warm.
+
+## How it works
+
+```
+  input   ──  "remember …" (evolve_write)  ·  session turns (extraction)
+  gates   ──  id shape · type · secret screen · 64KB cap · Why/How contract · one transaction
+  store   ──  memory.db, rows partitioned by workspace
+  output  ──  index injected next session  ·  review loop (rewrite / quarantine / archive)
+```
+
+### Session-start injection
+
+- One system-prompt section (`order 400`): the workspace's index as hooks only (id, title, description, type, optional `notWhen`), plus the store path and a short guide. Ordered feedback > user > reference, ties by id.
+- Computed once per session and reused byte-for-byte — the prompt cache stays warm; an empty store costs zero tokens.
+- Token budget, CJK-aware (1.5 tokens per Chinese character, 4 characters per token otherwise). Over-budget indexes degrade in tiers: full hook lines → `- [id]`-only lines → a `（其余 N 条未展开…）` counter. A cut memory stays reachable through `evolve_read`.
+
+### One write path
+
+- `evolve_write(kind, …)` handles `create` / `update` / `delete` for `kind = memory | skill | prompt`, plus `move-to-global` for skills.
+- Gates, one transaction: id shape, type enum, the feedback **Why:**/**How to apply:** contract, secret screening, 64KB body cap, optional `corrects` link, optional `notWhen` caveat.
+- `evolve_read(kind, …)` serves bodies by id and searches by keyword: AND over the query's token groups (trigram FTS, LIKE underneath), then an OR pass, with CJK fragments expanded into 3-character windows.
+- A body served by id bumps its view counter — a presence heartbeat, not proof of use. Long-unviewed rows become removal candidates; pruning stays human.
+
+### Extraction
+
+The trajectory-to-memory track, audited in `extraction_log`.
+
+- Turn-level and **per session**: `agent/turn-stopping` schedules that session's boundary, coalescing (a run in flight keeps only the newest boundary, never a queue); `compaction/start` and session close drain it. **No idle timer.**
+- A run reads the increment since its cursor, passes a cheap pre-gate, gets FTS-similar memories as context, and lands one LLM proposal through the same gates. A gate refusal consumes the increment as a model skip; an unclear gate fails open.
+- A deterministic pre-screen drops proposals that duplicate an existing body or change nothing (`pre-screen: duplicate×N`). Failures never advance the cursor; every skip is ledgered.
+
+### Quality review
+
+The second background track, independent by construction: own prompts, own daily budget (100 items), own `review_log`, no cursor — only the write gates are shared.
+
+- A cheap gate decides whether an entry deserves a close look; only approvals run the evolve pass.
+- The evolve pass judges content quality and proposes a rewrite — memories on home-ownership plus accuracy/usability/reusability/duplication/freshness; skills on trigger precision/executability/duplication, with reuse judged scope-aware.
+- Four outcomes: rewrite · quarantine (hidden, never deleted) · archive (history kept, no longer injected) · advice-only "this belongs in the repo docs". The plugin never writes into your repository.
+- New writes are reviewed as they land; requeues are event-driven; the calendar is only a sampling backstop (`review.staleDays`, the longest exemption window, doubles on consecutive keeps). Ships in dry-run.
+
+### Layers and promotion
+
+- L0 = about the person (global partition) · L1 = about a project · L2 = session state, never stored.
+- L0 is not hand-maintained. A row reaches it only through **two independent judgements plus a 30-day probation**: extraction marks `scope=person`, then the review must say promote.
+- The move is one transaction — global row built, project row archived, exactly one active copy — carrying the probation window and the origin partition.
+- Probation rows are injected tagged「试用中」; at the window's end they are promoted, returned home, or quarantined. Physical deletion is always human.
+
+### Rollback, hygiene, observability
+
+- Every mutation lands before/after snapshots (`extraction_log`, `skill_log`, `review_log`); undo means rewriting the `before` values. All four ledgers rotate on one 30-day window.
+- Hygiene rides on every applied run: orphan FTS rows dropped, secret-bearing rows quarantined (hidden, never deleted; a quarantined skill's file is removed so it stops loading), drifted skill files restored from the store.
+- Diagnostics live in `plugin_log` — a stock host attaches no exporter.
+- Three readings replace guesswork: **build identity** (import-time hash vs on-disk hash ⇒ a restart is owed) · **injection accounting** (`injection_log`, 7-day "injected N / read M" conversion — answers *was it read*, never *was it used*) · **recall evaluation** (`npm run eval:recall`, hit@1 and MRR; an empty fixture is red by design).
+
+### Cards
+
+- Mounted on the plugin's page in the official plugin manager; hosts without the slot silently degrade.
+- Upper card: global `review.*` settings — explicit save; `enabled` needs a restart, the rest apply on the next drain.
+- Lower card: read-only projection — build identity, 7-day conversion, workspace selector over the store's partitions, search, relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, and skills (global rows badged, project shadows global) with view counts.
+
+Types follow the ZCode taxonomy: `user` (profile and environment facts), `feedback` (corrected or confirmed practices — bodies must carry **Why:** and **How to apply:**), `reference` (resource pointers). `notWhen` is a one-sentence caveat rendered next to the hook ("不适用：…") — presentation only, never a retrieval filter. Extraction boundary: person- and environment-scoped knowledge; decisions and trade-offs are repo-scoped and belong to the repo's ADR route. Legacy markdown stores (`<workspace>/.evolve/memory/*.md`) are imported losslessly on first contact, and the directory is renamed aside as `memory-imported-<date>/` — never deleted.
 
 ## Configuration
 
@@ -94,34 +165,15 @@ pnpm check:pack              # published-artifact consistency (also runs on prep
 pnpm eval:recall             # offline recall baseline (hit@1 / MRR over a fixture)
 ```
 
-Layout (71 modules under `src/`, 55 test files):
-
-```
-├── src/
-│   ├── index.ts            # registration: config + host shapes + apply orchestration
-│   ├── assemble.ts         # shared mounts: tools + extraction + review + creator skills
-│   ├── store.ts            # store assembly: open/migrate, per-kind method builders, re-exports
-│   ├── store-types.ts      # store surface (single MemoryStore) + ledger/account shapes
-│   ├── data/               # storage back end: database, generic repository + descriptors,
-│   │                       # row/record shapes (single home), secret screen, migration, ledgers,
-│   │                       # review accounts, item events, injection ledger, patrol
-│   ├── services/           # application services: write gates, extraction/review loops,
-│   │                       # proposal pre-screen, route resolution + failure discipline,
-│   │                       # token budget, build identity, extraction accounting + stats,
-│   │                       # transport, retention, md import, skill files, plugin log
-│   ├── pages/
-│   │   └── memory-card/    # the plugin-manager page: routes + settings + mount + hint
-│   └── surfaces/           # presentation: unified evolve_* tools, injection (renderer +
-│                           # budget tiers), snapshots, guide, creator-skill provider
-├── client/
-│   └── client.js          # hand-written client bundle: memory + review-settings cards
-├── locale/                # host package metadata: localized display name + description (zh/en)
-├── scripts/               # gates (ADR/docs/layering/budgets/pack) + eval:recall
-├── test/                  # vitest suite (55 files)
-├── lib/                   # build output (tsc)
-├── docs/                  # design.md (design) · FAQ.md (real-world pitfalls)
-└── .agents/               # AI collaboration layer (AGENTS.md, skills, ADR notes)
-```
+| Path | Contents |
+|---|---|
+| `src/` | 71 modules: registration, store, `data/` back end, `services/` application services, `surfaces/` presentation, `pages/memory-card/` |
+| `client/` | hand-written client bundle for the cards |
+| `locale/` | localized display name and description (zh/en) |
+| `scripts/` | gates (ADR, docs, layering, budgets, pack) and `eval:recall` |
+| `test/` | vitest suite, 55 files |
+| `docs/` | `design.md` (design) · `FAQ.md` (real-world pitfalls) |
+| `.agents/` | AI collaboration layer (AGENTS.md, skills, ADR notes) |
 
 ## Docs
 
