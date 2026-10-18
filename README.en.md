@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-697%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-700%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -157,7 +157,7 @@ Every `review.*` field is volatile: the settings card edits it without a remount
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (697 tests)
+pnpm test                    # vitest (700 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds (91/83)
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR format, doc budgets, links, governance, handoff

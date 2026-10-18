@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildSection, createFrozenMemorySection, memoryDirFor } from "../src/surfaces/memory-section.js";
+import { buildSection, createFrozenMemorySection, indexLineOf, memoryDirFor } from "../src/surfaces/memory-section.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let workspace = "";
@@ -189,5 +189,30 @@ describe("createFrozenMemorySection", () => {
 		let builds = 0;
 		expect(frozen.textFor({}, () => `t${++builds}`)).toBe("t1");
 		expect(frozen.textFor({}, () => `t${++builds}`)).toBe("t2");
+	});
+});
+
+describe("indexLineOf", () => {
+	it("omits the separator when the description is empty", () => {
+		expect(indexLineOf({ id: "x", title: "只有标题", description: "", type: "user" })).toBe("- [x] 只有标题");
+	});
+
+	it("clips a caveat and keeps it beside the hook", () => {
+		const line = indexLineOf({
+			id: "y",
+			title: "标题",
+			description: "描述",
+			type: "feedback",
+			notWhen: "一".repeat(80),
+		});
+		expect(line).toContain("（不适用：");
+		expect(line).toContain("…）");
+		expect(line).not.toContain("一".repeat(61));
+	});
+
+	it("marks a probation row", () => {
+		expect(indexLineOf({ id: "z", title: "标题", description: "描述", type: "user", probationUntil: "2026-11-16" })).toBe(
+			"- [z] 标题 — 描述（试用中）",
+		);
 	});
 });
