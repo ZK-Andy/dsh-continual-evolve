@@ -2,7 +2,14 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { UNKNOWN_GENERATION, buildIdentity, describeIdentity, identify } from "../src/services/build-identity.js";
+import {
+	UNKNOWN_GENERATION,
+	buildIdentity,
+	describeIdentity,
+	entryOf,
+	identify,
+	versionOf,
+} from "../src/services/build-identity.js";
 
 function tempFile(content: string): string {
 	const dir = mkdtempSync(join(tmpdir(), "evolve-build-"));
@@ -54,5 +61,19 @@ describe("buildIdentity", () => {
 		const file = tempFile("b");
 		const current = identify(file, identify(file, "x", "v").diskGeneration, "0.0.0");
 		expect(describeIdentity(current)).toContain("disk matches");
+	});
+});
+
+describe("resolution helpers", () => {
+	it("resolves the entry next to a file URL and refuses a non-file URL", () => {
+		const here = new URL("./build-identity.test.ts", import.meta.url).href;
+		expect(entryOf(here)).toContain("index.js");
+		expect(entryOf("https://example.com/x.js")).toBeUndefined();
+	});
+
+	it("reads the package version next to this module", () => {
+		// The manifest sits two levels above the module (src/services, lib/services).
+		expect(versionOf(new URL("services/x.js", import.meta.url).href)).toMatch(/^\d+\.\d+\.\d+/);
+		expect(versionOf("https://example.com/x.js")).toBe(UNKNOWN_GENERATION);
 	});
 });

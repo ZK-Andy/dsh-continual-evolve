@@ -40,13 +40,15 @@ function hashOf(bytes: string | Buffer): string {
 }
 
 /**
- * The built entry file, resolved from this module's own location: the built
- * tree is `lib/services/build-identity.js` → `lib/index.js`. Under `tsx` the
- * source path has no sibling entry, so callers fall back to unknown.
+ * Resolve the built entry file relative to one module URL: the built tree is
+ * `lib/services/build-identity.js` → `lib/index.js`. Under `tsx` the source path
+ * has no sibling entry, so the hash falls back to unknown.
+ * @param moduleUrl - The module's own URL (tests pass a synthetic one).
+ * @returns The entry path, or undefined when the URL is not a file URL.
  */
-function defaultEntry(): string | undefined {
+export function entryOf(moduleUrl: string): string | undefined {
 	try {
-		return fileURLToPath(new URL("../index.js", import.meta.url));
+		return fileURLToPath(new URL("../index.js", moduleUrl));
 	} catch {
 		return undefined;
 	}
@@ -69,12 +71,16 @@ function generationOf(file: string | undefined): string {
  * re-reading later would report the disk as "what we run", which is the exact
  * confusion this module exists to end.
  */
-const LOADED_GENERATION = generationOf(defaultEntry());
+const LOADED_GENERATION = generationOf(entryOf(import.meta.url));
 
-/** The package version, read once (it cannot change while the process lives). */
-function versionOf(): string {
+/**
+ * Read the package version next to one module URL.
+ * @param moduleUrl - The module's own URL (tests pass a synthetic one).
+ * @returns The version string, or the unknown marker when the manifest is unreadable.
+ */
+export function versionOf(moduleUrl: string): string {
 	try {
-		const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+		const manifest = JSON.parse(readFileSync(new URL("../../package.json", moduleUrl), "utf8")) as {
 			version?: unknown;
 		};
 		return typeof manifest.version === "string" ? manifest.version : UNKNOWN_GENERATION;
@@ -83,7 +89,8 @@ function versionOf(): string {
 	}
 }
 
-const LOADED_VERSION = versionOf();
+const DEFAULT_ENTRY = entryOf(import.meta.url);
+const LOADED_VERSION = versionOf(import.meta.url);
 
 /**
  * Compare a loaded generation with the current disk state.
@@ -110,7 +117,7 @@ export function identify(entry: string | undefined, loaded: string, version: str
  * @returns Loaded generation (from import time), disk generation (now), and whether a restart is owed.
  */
 export function buildIdentity(): BuildIdentity {
-	return identify(defaultEntry(), LOADED_GENERATION, LOADED_VERSION);
+	return identify(DEFAULT_ENTRY, LOADED_GENERATION, LOADED_VERSION);
 }
 
 /**
