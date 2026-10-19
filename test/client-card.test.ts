@@ -844,6 +844,71 @@ describe("injection readings (P1)", () => {
 	});
 });
 
+describe("eval freshness line (P5a)", () => {
+	function snapshotWithEvals(evals: unknown): Record<string, unknown> {
+		return {
+			exists: true,
+			fileCount: 20,
+			files: [
+				{ id: "a", title: "a", description: "", type: "user", status: "active", scope: "project", updatedAt: Date.now(), suggestExport: false },
+			],
+			quarantined: [],
+			lastPatrol: null,
+			readError: null,
+			build: null,
+			injection: null,
+			evals,
+		};
+	}
+
+	function renderEvals(evals: unknown): ElementLike {
+		const harness = makeHookReact();
+		return renderBlockTree(harness, [
+			{ root: "/ws/a", label: "A", snapshot: snapshotWithEvals(evals), error: null },
+		]);
+	}
+
+	function textsByClass(tree: ElementLike, className: string): string[] {
+		return findAllByClassName(tree, className).map((el) => String((el.children as unknown[])[0]));
+	}
+
+	it("renders days-ago for both arms and never-ran dashes", () => {
+		const tree = renderEvals({ fourArm: { daysAgo: 12, commit: "abc", stale: false }, external: null });
+		const lines = textsByClass(tree, "dce-stats");
+		expect(lines.some((line) => line.includes("上次四臂 12 天前"))).toBe(true);
+		expect(lines.some((line) => line.includes("上次外锚 —"))).toBe(true);
+	});
+
+	it("marks the line red past the 60-day window", () => {
+		const tree = renderEvals({ fourArm: { daysAgo: 3, commit: "abc", stale: false }, external: { daysAgo: 61, commit: "def", stale: true } });
+		const warn = textsByClass(tree, "dce-warn");
+		expect(warn.some((line) => line.includes("上次外锚 61 天前"))).toBe(true);
+		expect(warn.some((line) => line.includes("超 60 天未跑"))).toBe(true);
+	});
+
+	it("hides the line when the snapshot predates evals", () => {
+		const tree = renderEvals(undefined);
+		expect(textsByClass(tree, "dce-stats").some((line) => line.includes("上次四臂"))).toBe(false);
+	});
+
+	it("ships the template in zh and en dictionaries", () => {
+		const registered: Array<{ ns: string; dicts: Record<string, Record<string, string>> }> = [];
+		const locale = {
+			register: (ns: string, dicts: Record<string, Record<string, string>>) => {
+				registered.push({ ns, dicts });
+				return () => undefined;
+			},
+			bind: (_ns: string) => (key: string) => `en:${key}`,
+		};
+		const { exports } = loadBundle(makeReact());
+		const { ctx } = makeCtx(locale);
+		(exports.apply as (ctx: unknown) => void)(ctx);
+		const { zh, en } = registered[0].dicts;
+		expect(zh.evalLine).toContain("上次四臂");
+		expect(en.evalLine).toContain("four-arm");
+	});
+});
+
 describe("loadCardModel", () => {
 	it("assembles one snapshot entry per known workspace", async () => {
 		const { exports } = loadBundle(makeReact());

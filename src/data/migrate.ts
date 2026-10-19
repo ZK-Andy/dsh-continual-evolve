@@ -8,12 +8,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import { LEDGER_OCCURRENCES } from "../store-types.js";
 import { backfillArchiveReasons } from "./archive-backfill.js";
+import { evalCasesDdl } from "./eval-cases.js";
 import { extractionLogDdl, itemEventsDdl, memoriesDdl, rebuildDriftedTables, reviewLogDdl } from "./schema.js";
 import { INJECTION_LOG_DDL } from "./injection-log.js";
 
 const SCHEMA_DDL = `
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;${memoriesDdl("memories")};
+${evalCasesDdl("eval_cases")};
 CREATE INDEX IF NOT EXISTS idx_mem_ws_status ON memories(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_mem_ws_updated ON memories(workspace_id, updated_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(

@@ -118,6 +118,10 @@ window.__ModuleLoader__.load({
 			buildUnknown: "代际不可读（无法定位入口文件）",
 			injectionLine: "近 {days} 天 {sessions} 次会话：索引召回 {latest}/{total} · 正文取回 {read}（转化 {readThrough}）",
 			injectionLineSmall: "近 {days} 天 {sessions} 次会话：索引召回 {latest}/{total} · 正文取回 {read}（样本不足，暂不显示比率）",
+			evalLine: "上次四臂 {four} · 上次外锚 {external}",
+			evalDaysAgo: "{days} 天前",
+			evalNever: "—",
+			evalStale: "（超 60 天未跑）",
 			notWhenLabel: "不适用：",
 						readError: "读取失败：",
 			previewLoading: "正在加载记忆…",
@@ -178,6 +182,10 @@ window.__ModuleLoader__.load({
 			buildUnknown: "Generation unreadable (entry file not locatable)",
 			injectionLine: "Last {days} days, {sessions} sessions: index recall {latest}/{total} · text reads {read} ({readThrough} read-through)",
 			injectionLineSmall: "Last {days} days, {sessions} sessions: index recall {latest}/{total} · text reads {read} (too few sessions to show a rate)",
+			evalLine: "Last four-arm {four} · last external anchor {external}",
+			evalDaysAgo: "{days}d ago",
+			evalNever: "—",
+			evalStale: " (stale, over 60 days)",
 			notWhenLabel: "Not when: ",
 						readError: "Read failed: ",
 			previewLoading: "Loading memory…",
@@ -913,6 +921,23 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		/** Last manual eval runs and their staleness (P5a: 60-day outer loop). */
+		function evalLine(t, evals) {
+			if (evals === null || evals === undefined || typeof evals !== "object") {
+				return null;
+			}
+			function part(entry) {
+				if (entry === null || entry === undefined || typeof entry !== "object" || typeof entry.daysAgo !== "number") {
+					return t("evalNever");
+				}
+				return t("evalDaysAgo", { days: entry.daysAgo });
+			}
+			var stale = (evals.fourArm !== null && evals.fourArm !== undefined && evals.fourArm.stale === true) ||
+				(evals.external !== null && evals.external !== undefined && evals.external.stale === true);
+			var text = t("evalLine", { four: part(evals.fourArm), external: part(evals.external) });
+			return createElement("div", { key: "evals", className: stale ? "dce-warn" : "dce-stats", }, stale ? text + " " + t("evalStale") : text);
+		}
+
 		/** A memory row's badge: the global marker and the export advice, whichever apply. */
 		function memoryBadge(t, file) {
 			var labels = [];
@@ -961,6 +986,7 @@ window.__ModuleLoader__.load({
 				createElement("div", { key: "stats", className: "dce-stats" }, t("stats", { files: vm.snapshot.fileCount })),
 				buildLine(t, vm.snapshot.build),
 				injectionLine(t, vm.snapshot.injection, vm.snapshot.fileCount),
+				evalLine(t, vm.snapshot.evals),
 				quarantineLine(t, vm.snapshot.quarantined),
 				fileSearchInput(t, vm.query, vm.onQueryChange),
 				createElement(

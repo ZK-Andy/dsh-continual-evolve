@@ -207,6 +207,19 @@ export const GATE_CASES: readonly GateCase[] = [
 		clean: (fx) => ({ args: [fx, "--baseline", join(fx, "baseline.json")], cwd: root }),
 		fixtures: ["violation/evil.ts", "violation/baseline.json", "clean/small.ts", "clean/baseline.json"],
 	},
+	{
+		id: "eval-freshness",
+		script: "scripts/verify-eval-freshness.ts",
+		violation: (fx) => ({
+			args: ["--runs", join(fx, "runs"), "--tag", "v0.0.1", "--head", "abcdef1234567890", "--changed", "src/data/records.ts"],
+			cwd: root,
+		}),
+		clean: (fx) => ({
+			args: ["--runs", join(fx, "runs"), "--tag", "v0.0.1", "--head", "abcdef1234567890", "--changed", "src/data/records.ts"],
+			cwd: root,
+		}),
+		fixtures: ["violation/runs/2026-01-01/compare.md", "clean/runs/2026-01-01/compare.md"],
+	},
 ];
 
 /** A gate run's outcome. */

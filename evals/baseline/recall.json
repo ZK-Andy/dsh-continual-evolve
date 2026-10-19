@@ -1,0 +1,45 @@
+{
+	"recall1": 1,
+	"recall3": 1,
+	"falseHits": 0,
+	"perQuery": [
+		{
+			"task": "task-001",
+			"query": "CI 没绿能发版吗",
+			"negative": false,
+			"top3": [
+				"release-gate-ci-green"
+			]
+		},
+		{
+			"task": "task-002",
+			"query": "Clash Verge 用哪个",
+			"negative": false,
+			"top3": [
+				"proxy-chengdu-telecom"
+			]
+		},
+		{
+			"task": "task-003",
+			"query": "memory.db 在哪",
+			"negative": false,
+			"top3": [
+				"sqlite-single-store"
+			]
+		},
+		{
+			"task": "task-004",
+			"query": "今天天气怎么样",
+			"negative": true,
+			"top3": []
+		},
+		{
+			"task": "task-005",
+			"query": "改了源码桌面端为什么没变",
+			"negative": false,
+			"top3": [
+				"desktop-copy-vs-symlink"
+			]
+		}
+	]
+}

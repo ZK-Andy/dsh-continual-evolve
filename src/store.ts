@@ -334,6 +334,7 @@ function buildCommonMethods(
 		| "recentSkill"
 		| "recentPrompt"
 		| "prune"
+		| "evalPrune"
 		| "skillPrune"
 		| "promptPrune"
 		| "reviewPrune"
@@ -376,7 +377,8 @@ function buildCommonMethods(
 			const reviews = Number(stmts.reviewPrune.run(beforeIso).changes);
 			const events = Number(stmts.itemEventPrune.run(beforeIso).changes);
 			const logs = Number(stmts.pluginLogPrune.run(beforeIso).changes);
-			return memory + skillRows + promptRows + reviews + events + logs;
+			const evalRows = Number(stmts.evalPrune.run(beforeIso).changes);
+			return memory + skillRows + promptRows + reviews + events + logs + evalRows;
 		},
 		close() {
 			database.close();

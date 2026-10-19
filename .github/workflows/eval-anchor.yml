@@ -1,0 +1,47 @@
+# Eval anchor check (P5a): monthly staleness probe over committed eval reports.
+# The online runs stay manual (they spend tokens — CI never auto-spends); this
+# workflow only re-runs the offline recall and fails past the 67-day grace.
+name: Eval anchor check
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"
+  workflow_dispatch:
+
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Offline recall (zero model cost)
+        run: pnpm eval:recall 2>&1 | tee recall.log
+
+      - name: Anchor staleness
+        run: ./node_modules/.bin/tsx scripts/check-eval-anchor.ts 2>&1 | tee anchor.log; test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Eval anchor check (P5a)"
+            tail -5 recall.log
+            tail -2 anchor.log
+          } >> "$GITHUB_STEP_SUMMARY"

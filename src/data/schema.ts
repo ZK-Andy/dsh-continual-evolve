@@ -18,7 +18,8 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { ITEM_EVENT_KINDS } from "./item-events.js";
-import { ARCHIVE_REASONS } from "./records.js";
+import { ARCHIVE_REASONS, EVAL_ARMS } from "./records.js";
+import { EVAL_CASES_COLUMNS, evalCasesDdl } from "./eval-cases.js";
 import { REVIEW_VERDICTS } from "./review-accounts.js";
 import { LEDGER_OCCURRENCES, LEDGER_TRIGGERS } from "../store-types.js";
 
@@ -232,6 +233,12 @@ export const GUARDED_TABLES: readonly GuardedTable[] = [
 		ddl: reviewLogDdl,
 		columns: REVIEW_LOG_COLUMNS,
 		checks: [{ column: "verdict", values: REVIEW_VERDICTS }],
+	},
+	{
+		table: "eval_cases",
+		ddl: evalCasesDdl,
+		columns: EVAL_CASES_COLUMNS,
+		checks: [{ column: "arm", values: EVAL_ARMS }],
 	},
 ];
 

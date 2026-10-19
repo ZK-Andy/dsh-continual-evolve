@@ -40,6 +40,15 @@ export const ARCHIVE_REASONS = ["", "promoted-source", "review-archive", "demote
 /** One `archive_reason` value (derived from {@link ARCHIVE_REASONS}, never hand-written). */
 export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
 
+/**
+ * The closed eval arm value set (P5): the four GDPevo arms. Single home for
+ * the `eval_cases` whitelist, mirroring {@link ARCHIVE_REASONS}.
+ */
+export const EVAL_ARMS = ["base", "current", "candidate", "reflect"] as const;
+
+/** One eval arm value (derived from {@link EVAL_ARMS}, never hand-written). */
+export type EvalArm = (typeof EVAL_ARMS)[number];
+
 /** One stored memory record (snake_case columns camelCased). */
 export interface MemoryRecord {
 	workspaceId: string;

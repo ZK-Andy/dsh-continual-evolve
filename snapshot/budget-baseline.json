@@ -17,6 +17,10 @@
       "lines": 31,
       "outDegree": 0
     },
+    "data/eval-cases.ts": {
+      "lines": 131,
+      "outDegree": 2
+    },
     "data/injection-log.ts": {
       "lines": 121,
       "outDegree": 1
@@ -26,7 +30,7 @@
       "outDegree": 1
     },
     "data/ledger.ts": {
-      "lines": 272,
+      "lines": 274,
       "outDegree": 1
     },
     "data/memory-lifecycle.ts": {
@@ -34,15 +38,15 @@
       "outDegree": 2
     },
     "data/migrate.ts": {
-      "lines": 398,
-      "outDegree": 4
+      "lines": 400,
+      "outDegree": 5
     },
     "data/patrol.ts": {
       "lines": 120,
       "outDegree": 4
     },
     "data/records.ts": {
-      "lines": 232,
+      "lines": 241,
       "outDegree": 0
     },
     "data/repository.ts": {
@@ -58,15 +62,15 @@
       "outDegree": 3
     },
     "data/schema.ts": {
-      "lines": 393,
-      "outDegree": 4
+      "lines": 400,
+      "outDegree": 5
     },
     "data/search-query.ts": {
       "lines": 55,
       "outDegree": 0
     },
     "data/secret.ts": {
-      "lines": 59,
+      "lines": 77,
       "outDegree": 0
     },
     "data/tiering.ts": {
@@ -174,7 +178,7 @@
       "outDegree": 8
     },
     "services/memory-rules.ts": {
-      "lines": 249,
+      "lines": 248,
       "outDegree": 1
     },
     "services/model-route.ts": {
@@ -266,7 +270,7 @@
       "outDegree": 8
     },
     "store.ts": {
-      "lines": 385,
+      "lines": 387,
       "outDegree": 12
     },
     "surfaces/evolve-fields.ts": {
@@ -298,8 +302,8 @@
       "outDegree": 4
     },
     "surfaces/memory-snapshot.ts": {
-      "lines": 285,
-      "outDegree": 3
+      "lines": 336,
+      "outDegree": 4
     },
     "surfaces/prompt-snapshot.ts": {
       "lines": 143,

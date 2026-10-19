@@ -256,7 +256,7 @@ export interface MemoryStore {
 	 * because the host's logger has no exporter on a stock install.
 	 */
 	logPlugin(entry: PluginLogEntry): void;
-	/** Ledger and log rows older than the cutoff, removed (the unbounded tables). */
+	/** Ledger, eval-case, and log rows older than the cutoff, removed (the unbounded tables). */
 	pruneLedger(beforeIso: string): number;
 	/**
 	 * Record one session's injection (the ids the index named and its estimated

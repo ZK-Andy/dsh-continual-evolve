@@ -34,7 +34,7 @@ Status: implemented
 
 **确定性提案预筛**（`services/pre-screen.ts`）：`duplicate`（正文归一后与既有 active 记忆全等）与 `no-change`（update 携带的字段均未变）两类提案不落盘；整批被筛掉时推进游标并以 `pre-screen: duplicate×N` 记入 `extraction_log.skip_reason`。**只省写入与账本噪声，不省 token**——提案在模型作答后才存在，token 节省仍归 cheap gate。「正文太短」规则被否（见 Alternatives）。
 
-**检索评测**（`scripts/eval-recall.ts` + `test/fixtures/recall/queries.json`，`npm run eval:recall`）：临时库播种固定记忆，跑固定查询，报 hit@1 与 MRR；空 fixture 或指向未知记忆一律退出 1。首次运行暴露两处真实缺陷（见下），修后 9 查询 / 5 记忆 hit@1 100%——**这是冒烟级基线，不是基准测试**。
+**检索评测**（`scripts/eval-recall.ts` + `evals/tasks/*.json`，`npm run eval:recall`）：临时库播种固定记忆，跑固定查询，报 recall@1/recall@3；空 fixture 或指向未知记忆一律退出 1，相对基线不一致退出 2。首次运行暴露两处真实缺陷（见下），修后 9 查询 / 5 记忆 hit@1 100%——**这是冒烟级基线，不是基准测试**。
 
 ### 首次评测暴露并修掉的两处检索缺陷
 

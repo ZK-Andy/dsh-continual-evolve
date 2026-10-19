@@ -244,4 +244,25 @@ describe("listCardWorkspaces", () => {
 		}) as unknown as MemoryStore;
 		expect(listCardWorkspaces(hostile)).toEqual([]);
 	});
+
+	it("reads null eval freshness before any manual run (P5a state-key contract)", () => {
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.evals).toEqual({ fourArm: null, external: null });
+	});
+
+	it("projects eval state keys to days-ago with the 60-day stale flag", () => {
+		const daysAgo = (days: number): string => new Date(Date.now() - days * 86400000).toISOString();
+		store.setState("", "eval:last-four-arm", JSON.stringify({ date: daysAgo(12), commit: "abc123" }));
+		store.setState("", "eval:last-external", JSON.stringify({ date: daysAgo(61), commit: "def456" }));
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.evals.fourArm).toMatchObject({ daysAgo: 12, commit: "abc123", stale: false });
+		expect(snapshot.evals.external).toMatchObject({ daysAgo: 61, commit: "def456", stale: true });
+	});
+
+	it("degrades garbage eval state to never-ran instead of throwing", () => {
+		store.setState("", "eval:last-four-arm", "{not json");
+		store.setState("", "eval:last-external", JSON.stringify({ date: "yesterday", commit: 7 }));
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.evals).toEqual({ fourArm: null, external: null });
+	});
 });

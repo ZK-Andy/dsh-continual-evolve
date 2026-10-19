@@ -119,14 +119,15 @@ export function latestWorkspaceId(rows: readonly ({ workspace_id?: unknown; ts?:
 }
 /**
  * The prepared ledger and log statements (extraction/skill/prompt ledgers,
- * recency probes, prune deletes, plugin log). Preparation lives here with
- * the writers; the store assembly only composes the bundle.
+ * eval cases, recency probes, prune deletes, plugin log). Preparation lives
+ * here with the writers; the store assembly only composes the bundle.
  */
 export interface LedgerStmts {
 	ledger: StatementSync;
 	latestSkip: StatementSync;
 	bumpSkip: StatementSync;
 	prune: StatementSync;
+	evalPrune: StatementSync;
 	skillLog: StatementSync;
 	skillPrune: StatementSync;
 	promptLog: StatementSync;
@@ -188,6 +189,7 @@ export function prepareLedgerStmts(database: DatabaseSync): LedgerStmts {
 			`UPDATE extraction_log SET ts = ?, ${LEDGER_OCCURRENCES} = ${LEDGER_OCCURRENCES} + 1 WHERE rowid = ?`,
 		),
 		prune: database.prepare("DELETE FROM extraction_log WHERE ts < ?"),
+		evalPrune: database.prepare("DELETE FROM eval_cases WHERE created_at < ?"),
 		skillLog: database.prepare(
 			"INSERT INTO skill_log (run_id, ts, session_id, workspace_id, trigger, decision, status, files, warnings) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

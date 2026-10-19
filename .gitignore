@@ -31,3 +31,8 @@ pnpm-debug.log*
 
 # Workspace memory (personal context — plugin-managed, see docs/design.md)
 .evolve/
+
+# Eval run detail (P5a): local only; compare/external summaries committed
+evals/runs/*/*
+!evals/runs/*/compare.md
+!evals/runs/*/external-*.md

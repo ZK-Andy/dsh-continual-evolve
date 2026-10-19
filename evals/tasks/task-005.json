@@ -1,0 +1,24 @@
+{
+	"id": "task-005",
+	"from": "session-eval-seed#seq-005",
+	"prompt": "改了插件源码，桌面端为什么还是旧样子？",
+	"expect": [{ "kind": "output-contains", "any": ["实体拷贝", "发版"] }],
+	"tags": ["memory", "conflict"],
+	"seed_memories": [
+		{
+			"id": "desktop-copy-vs-symlink",
+			"type": "reference",
+			"title": "桌面端插件是实体拷贝",
+			"description": "判断改源码是否直接生效时查",
+			"body": "dotnet-desktop profile 下是 npm 实体拷贝，改源码必须先发版才生效。"
+		},
+		{
+			"id": "no-retry-unstable-network",
+			"type": "feedback",
+			"title": "网络不稳时不重试",
+			"description": "代理或网关抖动导致调用失败时用",
+			"body": "不自动重试，直接上报。\n**Why:** 重试只是再烧 token。\n**How to apply:** 失败即 fail-open。"
+		}
+	],
+	"recall": { "query": "改了源码桌面端为什么没变", "expect_ids": ["desktop-copy-vs-symlink"] }
+}

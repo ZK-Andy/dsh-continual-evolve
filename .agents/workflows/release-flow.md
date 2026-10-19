@@ -3,7 +3,7 @@
 > npm 发版全链路；历史踩坑沉淀于此（0.1.0~0.4.0）。
 
 1. **版本基线**：只改 `package.json` 的 `version`——pnpm v9 lockfile 无 root version 字段，勿找 lockfile。
-2. **预检**：`pnpm typecheck && pnpm lint && pnpm test` 全绿；双语 README 数据同步已完成（测试徽章与文件数、配置表、功能清单）。
+2. **预检**：`pnpm typecheck && pnpm lint && pnpm test` 全绿；双语 README 数据同步已完成（测试徽章与文件数、配置表、功能清单）；`tsx scripts/verify-eval-freshness.ts` 必须先过——自上次 tag 起三面（记忆/技能/注入）有改动而无覆盖 HEAD 的 `compare.md` 即拦停发版（纯文档/版本号改动豁免；代价见 P5a ADR：每个带三面改动的发版先跑一次四臂）。
 3. **提交 + tag**：`chore(release): vX.Y.Z` 提交 → 写 notes 并提交（下一步 4 的 `docs(release)`）→ **annotated tag `vX.Y.Z` 打在 notes 提交上**，再推送 origin。tag 落点以 v0.7.3–v0.7.6 为准：notes 文件必须随 tag 一起可审计；先打 tag 再补 notes 会让 tag 指向 bump 提交，需删远端 tag 重推（无 Release 时方可）。
 4. **GitHub Release**（DSH 版式，见 `implemented/process/2026-09-24-github-release-notes`）：
    ```sh

@@ -25,6 +25,12 @@
       "empty-catch": 0,
       "console-log": 0
     },
+    "src/data/eval-cases.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
     "src/data/injection-log.ts": {
       "params": 0,
       "return-any": 0,

@@ -68,3 +68,18 @@ CREATE TABLE IF NOT EXISTS review_log (
   applied INTEGER NOT NULL DEFAULT 0,
   evolve_count INTEGER NOT NULL DEFAULT 0
 );
+
+-- table: eval_cases
+-- columns: run_id, task_id, arm, workspace_id, query, injection_preview, reply, created_at
+-- check arm IN ('base','current','candidate','reflect')
+CREATE TABLE IF NOT EXISTS eval_cases (
+  run_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  arm TEXT NOT NULL CHECK (arm IN ('base','current','candidate','reflect')),
+  workspace_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  injection_preview TEXT NOT NULL,
+  reply TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (run_id, task_id, arm)
+);

@@ -1,0 +1,24 @@
+{
+	"id": "task-004",
+	"from": "session-eval-seed#seq-004",
+	"prompt": "今天天气怎么样？",
+	"expect": [{ "kind": "output-contains", "any": ["不知道"] }],
+	"tags": ["memory", "negative"],
+	"seed_memories": [
+		{
+			"id": "release-gate-ci-green",
+			"type": "feedback",
+			"title": "发版前必须 CI 全绿",
+			"description": "准备 publish、打 tag 或发 Release 时用",
+			"body": "发版前 CI 未绿不得 publish。\n**Why:** 本地全绿不等于 CI 绿。\n**How to apply:** 先看 CI 状态再决定。"
+		},
+		{
+			"id": "proxy-chengdu-telecom",
+			"type": "user",
+			"title": "网络环境成都电信",
+			"description": "涉及代理选型或机场预算时用",
+			"body": "成都电信，预算低，用 Clash Verge Rev，备用机场可临时切换。"
+		}
+	],
+	"recall": { "query": "今天天气怎么样", "expect_ids": [], "negative": true }
+}
