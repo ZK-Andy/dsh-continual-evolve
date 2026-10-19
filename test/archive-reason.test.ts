@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/data/database.js";
 import { migrateDatabase } from "../src/data/migrate.js";
+import { recordOf } from "../src/data/records.js";
 import { openRepositories } from "../src/data/repository.js";
 import { driftedTables, GUARDED_TABLES } from "../src/data/schema.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
@@ -79,6 +80,17 @@ describe("writers stamp reasons", () => {
 		const { memories } = openRepositories(db);
 		expect(() => memories.archiveWithReason(WS, "m-a", new Date().toISOString(), "bogus" as never, null)).toThrow();
 		db.close();
+	});
+
+	it("reads an unlisted reason as unclassified", () => {
+		expect(
+			recordOf({
+				workspace_id: WS, id: "m-x", type: "user", title: "t", description: "d", body: "b", status: "archived",
+				scope: "project", probation_until: null, origin_workspace: null, not_when: "", source_session: null,
+				source_seqs: null, source_run: null, corrects: null, archive_reason: "bogus", merged_into: null,
+				created_at: "2026-01-01", updated_at: "2026-01-02",
+			}).archiveReason,
+		).toBe("");
 	});
 });
 

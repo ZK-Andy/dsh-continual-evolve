@@ -87,6 +87,28 @@ describe("skillSnapshot", () => {
 		const broken = { listAllSkills: () => { throw new Error("boom"); } } as unknown as MemoryStore;
 		expect(skillSnapshot(broken, ws).readError).toBe("boom");
 	});
+
+	it("stringifies non-Error failures", () => {
+		const broken = {
+			listAllSkills: (): never => {
+				throw "boom";
+			},
+		} as unknown as MemoryStore;
+		expect(skillSnapshot(broken, ws).readError).toBe("boom");
+	});
+
+	it("degrades usage to zeros when the counters are unreadable", () => {
+		const stub = {
+			listAllSkills: () => [
+				{ id: "s-1", title: "t", description: "d", body: "b", status: "active", updatedAt: "2026-10-19T00:00:00.000Z", workspaceId: ws },
+			],
+			getSkillUse: () => {
+				throw new Error("no table");
+			},
+			state: () => undefined,
+		} as unknown as MemoryStore;
+		expect(skillSnapshot(stub, ws).files[0]).toMatchObject({ id: "s-1", useCount: 0, lastUsedAt: null });
+	});
 });
 
 describe("skillEntryContent", () => {
@@ -104,6 +126,15 @@ describe("skillEntryContent", () => {
 		insertLegacy(ws, "deploy", "Project title");
 		const content = skillEntryContent(store, ws, "deploy");
 		expect(content).toMatchObject({ ok: true, scope: "project" });
+	});
+
+	it("reads content as absent when the store fails", () => {
+		const broken = {
+			listAllSkills: () => {
+				throw new Error("locked");
+			},
+		} as unknown as MemoryStore;
+		expect(skillEntryContent(broken, ws, "deploy")).toEqual({ ok: false, reason: "absent" });
 	});
 });
 
