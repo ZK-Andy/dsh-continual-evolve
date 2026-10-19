@@ -6,13 +6,17 @@
  *   Exempt: config.yml (form config, not a template); test_feedback.yml
  *   (30s lightweight feedback form, triage fills governance fields later).
  * - PR template must contain the Reviewer Checklist + change-scope pointer.
+ *
+ * Usage: tsx scripts/verify-governance.ts [repo_root]
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const defaultRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
 function main(): number {
+	// G3-red-green: optional repo root for fixture testing; default is the repo itself.
+	const root = process.argv[2] ?? defaultRoot;
 	let ok = true;
 	const issueDir = join(root, ".github/ISSUE_TEMPLATE");
 	if (existsSync(issueDir)) {

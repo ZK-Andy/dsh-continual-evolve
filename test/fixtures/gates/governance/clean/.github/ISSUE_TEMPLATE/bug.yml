@@ -1,0 +1,12 @@
+name: Bug report
+description: 好样本
+body:
+  - type: input
+    attributes:
+      label: Owner
+  - type: input
+    attributes:
+      label: Priority
+  - type: input
+    attributes:
+      label: Class

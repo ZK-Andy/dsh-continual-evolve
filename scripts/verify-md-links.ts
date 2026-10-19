@@ -12,6 +12,10 @@
  * By default, `skills/` and `node_modules/` directories are excluded: vendored
  * skill sources keep their upstream path references, and node_modules is
  * third-party dependency content. Pass --include-skills to check skills/ anyway.
+ * The G3 red-sample tree `test/fixtures/gates/` is always excluded: it holds
+ * intentionally-broken links that must fail only under directed
+ * `verify-gate-fixtures` runs (invoked with cwd inside the fixture dir), never
+ * under the repo-wide gate.
  *
  * Usage: tsx scripts/verify-md-links.ts [root_dir] [--include-skills]
  * Exit code 0 = pass, 1 = violations.
@@ -68,6 +72,7 @@ function main(): number {
 		const parts = md.split("/");
 		if (parts.includes("node_modules")) continue;
 		if (!includeSkills && parts.includes("skills")) continue;
+		if (parts.includes("test") && parts.includes("fixtures") && parts.includes("gates")) continue;
 		const text = readFileSync(md, "utf-8");
 		for (const match of text.matchAll(LINK_RE)) {
 			let target = (match[1] ?? "").trim();

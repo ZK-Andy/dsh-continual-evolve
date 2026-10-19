@@ -1,0 +1,8 @@
+{
+  "budgets": [
+    {
+      "path": "doc.md",
+      "max_words": 5
+    }
+  ]
+}

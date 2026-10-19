@@ -14,11 +14,13 @@
  *
  * `lib/` absent (clean checkout, not built yet) → skip: nothing to audit.
  * See ADR `2026-10-06-pack-contents-gate`.
+ *
+ * Usage: tsx scripts/verify-pack-contents.ts [repo_root]
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const defaultRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
 /** Every file under `dir`, as slash-joined paths relative to it. */
 function walk(dir: string, prefix = ""): string[] {
@@ -66,6 +68,8 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 function main(): number {
+	// G3-red-green: optional repo root for fixture testing; default is the repo itself.
+	const root = process.argv[2] ?? defaultRoot;
 	const libDir = join(root, "lib");
 	if (!existsSync(libDir)) {
 		console.log("SKIP lib/ 未构建——先 `npm run build` 再跑本门禁");

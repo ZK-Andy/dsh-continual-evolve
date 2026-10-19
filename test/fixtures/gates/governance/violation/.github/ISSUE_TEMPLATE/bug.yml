@@ -1,0 +1,9 @@
+name: Bug report
+description: 坏样本 Woo — 缺 priority 字段
+body:
+  - type: input
+    attributes:
+      label: Owner
+  - type: input
+    attributes:
+      label: Class

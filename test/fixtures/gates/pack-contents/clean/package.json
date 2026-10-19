@@ -1,0 +1,7 @@
+{
+  "name": "g3-pack-fixture",
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts"
+  ]
+}
