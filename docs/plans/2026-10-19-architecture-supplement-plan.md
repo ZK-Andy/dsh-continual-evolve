@@ -28,7 +28,7 @@ PilotDeck 的任何借鉴均为**设计重写**（AGPL-3.0，代码不得进入�
 | D8 | `prompt_json` 全量落库会撑爆中央共享单库 | **只存失败与抽样**（成功调用按固定采样率），单条截断上限，随四账本统一 30 天 retention 裁剪 | `~/.dsh/evolve/memory.db` 全工作区共享；既有裁剪纪律在 `src/services/retention.ts` |
 | D9 | 同源去重「upsert 而非新增」与 update 现状语义相撞 | **承认这是 update 语义变更**：现状 `updateMemory`（`memory-apply.ts:224-243`）为覆盖式 UPDATE 且**不写** `source_session`/`source_seqs`，去重路径改版本行后，普通 update 须同语义、不得双轨；版本链指针：旧行归档（`archive_reason='merged-duplicate'`）并回链新行 id，回链字段与主键策略由 P4 ADR 定死（归档行与 active 行主键不冲突为验收） | 只约束去重路径会留下双语义；旧"覆盖污染来源"论证与现状代码矛盾（现状根本不写来源列），已撤回 |
 | D10 | 统一 `evals/` 后阻塞语义与 judge 观打架（召回 A 进 CI 红 vs RSI P3 非阻塞；`acc` 两次一致 vs judge 波动） | **双 gate + 双 runner**：检索层 recall 退化进 CI 红；任务层 fitness 非阻塞 warning；确定性任务集执行 flaky 判定，judge 型 QA 单独 report、不进 flaky | 同一 runner 两种退出语义必然漂移 |
-| D11 | 四臂/QA runner 在哪跑、用什么身份调模型 | **待拍板（二选一，P5 开工前必须定；定完再重估 P5 工时，在此之前 P5 不开工）**：A 宿主平面命令（走 `ctx.get("agentDefaultModel")` 既有 `llm-call` 路由，推荐，符合单写者与现有传输纪律）；B 独立 runner 自带 key（需新增密钥保管与费用纪律） | 独立 `tsx` 脚本拿不到宿主 ctx（`model-route.ts:28`）；`eval-recall.ts` 能跑只因纯离线（fixture + 本地检索，零 LLM 调用） |
+| D11 | 四臂/QA runner 在哪跑、用什么身份调模型 | **已拍板 A（2026-10-19 会话问答，记录见 P5a ADR 拍板记录节；P5b 工时待 P5a 实测后单独重估）**：宿主平面命令（走 `ctx.get("agentDefaultModel")` 既有 `llm-call` 路由，符合单写者与现有传输纪律）；B 落败（新增密钥保管与费用纪律）。任务臂与 judge 同一模型（用户真实配置）；judge 同一模型独立判两次、一致才算 | 独立 `tsx` 脚本拿不到宿主 ctx（`model-route.ts:28`）；`eval-recall.ts` 能跑只因纯离线（fixture + 本地检索，零 LLM 调用） |
 
 ## 3. 阶段（P0–P6）
 
@@ -66,7 +66,7 @@ PilotDeck 的任何借鉴均为**设计重写**（AGPL-3.0，代码不得进入�
 - **G-batch2**（2.5 天）：G5 导出面快照 → G12 归层白名单 → G9 测试配对
 - **G-batch3**（2.5 天）：G7 历史词 → G8 Alternatives 质量 → G11 ast-grep → G10 变异抽样
 
-注：缺口清单 §3 原「批次 A/B/C（P1/P2/P3）」命名与本计划阶段号撞车，以本节 G-batch 命名为准（缺口清单已加注记）；G-batch2/3 与 P5a 改动面零重叠（`scripts/` vs `evals/`），**可并行**；P5b 待 D11，不参与并行。
+注：缺口清单 §3 原「批次 A/B/C（P1/P2/P3）」命名与本计划阶段号撞车，以本节 G-batch 命名为准（缺口清单已加注记）；G-batch2/3 与 P5a 改动面零重叠（`scripts/` vs `evals/`），**可并行**；P5b（D11=A 已定，待 P5a 实测后重估开工）不参与并行。
 
 架构落点：G12 初始允许集从标准 §1 推导（本计划 §1）；`evals/` 为仓库根新建目录，G12 只管 `src/`，不触发；G4 棘轮基线在 G-batch1 落地时按当时 `src/` 现状一次拍快照（含 P1/P2 新增在内，只约束未来增长）。
 
@@ -81,7 +81,7 @@ PilotDeck 的任何借鉴均为**设计重写**（AGPL-3.0，代码不得进入�
 
 架构落点：`archive_reason` 为 `memories` 真新增列（`schema.ts` 现只有 verdict 白名单），走 `data/migrate.ts` 迁移链；同源去重复用既有 `source_session` 列（`data/records.ts`），不加列；卡片归档区走 `pages/memory-card/` 只读投影，不开写入口（归档 ADR Alternatives 第 4 条）；提级事务入口为 `data/tiering.ts:promoteMemory`，staged 评估先看该事务的失败面再定。
 
-### P5 评测基建统一（执行细节走 RSI 计划 §5，口径按 D1/D10 修订；拆 a/b：P5a 实现可与 G-batch 并行，P5b 跑批待 D11 定案后单独重估——24 人日总数为占位符，对外不承诺）
+### P5 评测基建统一（执行细节走 RSI 计划 §5，口径按 D1/D10 修订；拆 a/b：P5a 实现（fixture + recall 接线 + 表结构 + 防忘 infra，零 ctx 代码；runner 移 P5b，见 P5a ADR）→ P5b 跑批与 runner（D11=A 已定 2026-10-19，工时待 P5a 实测后单独重估——24 人日总数为占位符，对外不承诺）
 
 #### P5a 实现（不需执行平面，可与 G-batch2/3 并行）
 
@@ -89,15 +89,16 @@ PilotDeck 的任何借鉴均为**设计重写**（AGPL-3.0，代码不得进入�
 |---|---|
 | fixture/负例统一住 `evals/` | P0 回归集同时承载召回 A 的"每类记忆 + 负例 + 逐条覆盖" |
 | **双 gate 接线**（D10） | 检索层 recall 退化进 CI 红；任务层 fitness 缺失只 warning（RSI P3 原语义） |
-| **双 runner 脚本**（D10） | 确定性任务集执行 flaky 判定；judge 型 QA（召回 B）单独 report，不进 flaky 判定 |
-| **caseTrace 落库实现**（评审补位，gap §5.1-1） | query / 注入预览 / 回复三件套的数据形状与写入实现；跑批验证归 P5b |
+| **runner 设计与脚本**（D10，**移 P5b**：需 ctx/模型，P5a 只含零 ctx 代码） | P5b 落：宿主命令边界、多轮 tool_calls 求解环路、`--repeat 2` flaky 双跑、同一模型双 judge；`scripts/eval-tasks.ts` + `pnpm eval:tasks` |
+| **caseTrace 落库实现**（评审补位，gap §5.1-1） | 新表 `eval_cases` 的形状 + data 层写入函数 + 迁移/G6/retention/脱敏（完整设计见 P5a ADR）；调用方 runner 与跑批验证归 P5b |
 
-#### P5b 跑批与报告（需 D11 定案，不开工直到执行平面落实）
+#### P5b 跑批与报告（D11=A 已定 2026-10-19；runner 设计与脚本归本批，开工前按 P5a 实测重估）
 
 | 项 | 说明 |
 |---|---|
 | 确定性任务集跑批 | 同批两次 `acc` 必须一致，不一致标 `flaky` |
-| judge 型 QA + 四臂报告 | 含 `recall_hit`（读注入账本）；P4 季度外锚不变 |
+| judge 型 QA + 四臂报告 | 含 `recall_hit`（读注入账本）；外锚改双月 60 天（见 P5a ADR） |
+| **runner 设计与脚本**（D11=A） | 宿主命令边界（scripts 离线 vs 宿主在线）、多轮求解环路、`--repeat 2`、同一模型双 judge；`scripts/eval-tasks.ts` + `pnpm eval:tasks --list/--dry-run/--subset` |
 
 架构落点：执行平面待 D11 拍板（P5b 不开工直到定案，P5a 可先行）；caseTrace 落库同 D8 纪律（截断上限、采样率、回复脱敏规则，P5 ADR 定死；列还是新表由 P5 ADR 定——若新表，G6 加的是表，"同列入快照"说法随之改）；`evals/` 为仓库根新建目录（G12 只管 `src/`，不触发）；runner 若走宿主平面，模型路由复用 `services/llm-call.ts` + `model-route.ts`（`ctx.get("agentDefaultModel")`），不自建传输。
 
