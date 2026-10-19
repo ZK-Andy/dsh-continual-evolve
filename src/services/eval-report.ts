@@ -88,7 +88,7 @@ function liftOf(report: CompareReport, arm: EvalArm): string {
  * @returns The markdown body.
  */
 export function renderCompare(report: CompareReport): string {
-	const head = `# 四臂对照 ${report.runId}\n\n- date: ${report.date}\n- commit: ${report.commit}\n- tasks: ${report.taskCount}\n- arms: ${EVAL_ARMS.join("/")}\n- 结论: base ${pct(report.arms.base.totals.acc)} / current ${pct(report.arms.current.totals.acc)}（lift ${liftOf(report, "current")}）/ candidate ${pct(report.arms.candidate.totals.acc)}（lift ${liftOf(report, "candidate")}）/ reflect ${pct(report.arms.reflect.totals.acc)}（lift ${liftOf(report, "reflect")}）\n`;
+	const head = `# 四臂对照 ${report.runId}\n\n- date: ${report.date}\n- commit: ${report.commit}\n- tasks: ${report.taskCount}\n- arms: ${EVAL_ARMS.join("/")}\n- 说明: candidate/reflect 尚无候选机制，恒等于 current（如实记录、不伪造对照差），只解读 base vs current 的 lift\n- 结论: base ${pct(report.arms.base.totals.acc)} / current ${pct(report.arms.current.totals.acc)}（lift ${liftOf(report, "current")}）/ candidate ${pct(report.arms.candidate.totals.acc)}（lift ${liftOf(report, "candidate")}）/ reflect ${pct(report.arms.reflect.totals.acc)}（lift ${liftOf(report, "reflect")}）\n`;
 	const rows = EVAL_ARMS.map((arm) => {
 		const totals = report.arms[arm].totals;
 		return `| ${arm} | ${pct(totals.acc)} | ${totals.rounds.toFixed(2)} | ${totals.toolCalls.toFixed(2)} | ${totals.cost} | ${totals.recallHits}/${totals.recallTotal} |`;

@@ -48,10 +48,10 @@ describe("screenProposal", () => {
 		});
 	});
 
-	it("drops a create colliding with an active id", () => {
+	it("keeps a create colliding with an active id (P4-b M1 versions it downstream)", () => {
 		expect(
-			screenProposals([{ action: "create", id: "rule-a", type: "user", title: "t", description: "d", body: "b" }], existing).dropped,
-		).toEqual(["id-collision"]);
+			screenProposals([{ action: "create", id: "rule-a", type: "user", title: "t", description: "d", body: "b" }], existing).kept,
+		).toHaveLength(1);
 	});
 
 	it("drops a forged action and a bad type with a counted reason", () => {

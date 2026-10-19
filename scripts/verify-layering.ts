@@ -9,7 +9,9 @@
  * (client function hard 80) is owned by `verify-src-budgets.ts`.
  *
  * New files must extend EDGES below — an unlisted file or edge fails the
- * gate. Line counts use wc -l semantics (newline characters).
+ * gate. Line counts use wc -l semantics (newline characters). A new
+ * top-level directory additionally needs scripts/layers.json (G12 gate) —
+ * the two whitelists share one source (architecture-standard §1).
  *
  * Usage: tsx scripts/verify-layering.ts [src_root]
  * Exit code 0 = pass, 1 = violations found.

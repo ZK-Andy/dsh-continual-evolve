@@ -38,8 +38,8 @@ export interface ScreenedExisting {
 	notWhen?: string | undefined;
 }
 
-/** Why a proposal was rejected (P2 adds the four identity reasons). */
-export type ScreenReason = "duplicate" | "no-change" | "unknown-action" | "unknown-id" | "id-collision" | "bad-type";
+/** Why a proposal was rejected (P2 adds the identity reasons; colliding creates pass through to M1 versioning, see memory-rules.ts). */
+export type ScreenReason = "duplicate" | "no-change" | "unknown-action" | "unknown-id" | "bad-type";
 
 /** The decision for one proposal. */
 export type ScreenVerdict = { keep: true } | { keep: false; reason: ScreenReason };

@@ -8,7 +8,7 @@ describe("memoryGuideIntro", () => {
 		expect(intro).toContain("当前工作区：`/ws`");
 		expect(intro).toContain("evolve_read");
 		expect(intro).toContain("evolve_write");
-		expect(intro).toContain("feedback");
+		expect(intro).toContain("Feedback Memory");
 	});
 
 	it("names the extraction pipeline as the owner of automatic sedimentation", () => {

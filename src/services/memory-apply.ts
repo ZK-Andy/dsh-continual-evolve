@@ -146,7 +146,7 @@ interface MemoryApplyJob {
 	files: MemoryLedgerFile[];
 }
 
-/** Validate one proposal and land it; appends the audit payload on success. */
+/** Validate one proposal and land it (covenant 2026-10-20: identity checks restate `identityRejectReason` — same decisions except an exact-duplicate colliding create, which passes soft but fails closed here). */
 function applyOne(
 	db: ApplyDatabase,
 	ctx: ProposalContext,

@@ -27,7 +27,7 @@
 ## 亮点
 
 - **一个库，一个写者**——全部状态住一个 SQLite 文件；只有插件代码能写它。
-- **开局注入索引**——本工作区的钩子作为单个 prompt section 注入，会话内冻结，feedback > user > reference 排序。
+- **开局注入索引**——本工作区的钩子作为单个 prompt section 注入，会话内冻结，按 User Profile / Project Meta / Project Memory / Feedback Memory 四组排列。
 - **预算超了降级，不丢条**——CJK 感知的 token 预算（默认 6000）：完整钩子行 → 只留 id 行 → 「其余 N 条」计数行。
 - **三个工具**——`evolve_write` 落记忆、技能与提示词补充；`evolve_read` 按 id 取正文、按关键词检索（trigram FTS，CJK 感知）；`evolve_eval_run` 手动跑四臂评测（发版前/双月，返回 `compare.md`）。
 - **提案制提取**——按会话隔离的轮级自动化：无空闲计时器、便宜预检门、duplicate/no-change 预筛，每次跳过都记账。
@@ -73,7 +73,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ### 开局注入
 
-- 只注册一个 system-prompt section（`order 400`）：本工作区的索引，只含钩子（id、标题、描述截 20 字、可选「不适用」）；类型不逐行标注，由块内 feedback > user > reference 排序承担。外加库路径与两段指南，并列按 id 稳定。
+- 只注册一个 system-prompt section（`order 400`）：本工作区的索引，只含钩子（id、标题、描述截 20 字、可选「不适用」）；类型不逐行标注，由块内四组分组承担（组内行序 feedback > user > reference）。外加库路径与两段指南，并列按 id 稳定。
 - 每会话只算一次并逐字节复用——prompt cache 持续命中；空 store 零 token。
 - 预算按 token 计，CJK 感知（中文 1.5 token/字，其余 4 字符/token）。装不下分三档降级：完整钩子行 → 只留 `- [id]` 行 → `（其余 N 条未展开…）` 计数行。被裁掉的记忆仍能靠 `evolve_read` 捞回。
 

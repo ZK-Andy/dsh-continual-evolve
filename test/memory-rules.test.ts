@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	feedbackWhyHowMissing,
@@ -10,6 +13,7 @@ import {
 	secretLeakReason,
 	slugifyId,
 } from "../src/services/memory-rules.js";
+import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 describe("isValidMemoryId", () => {
 	it("accepts kebab slugs", () => {
@@ -132,13 +136,84 @@ describe("identityRejectReason (P2 mechanical gate, single home)", () => {
 		expect(identityRejectReason({ action: "update" }, allowed)).toBe("unknown-id");
 	});
 
-	it("rejects creates colliding with an active id (explicit or title-derived)", () => {
-		expect(identityRejectReason({ action: "create", id: "rule-a", type: "user" }, allowed)).toBe("id-collision");
-		expect(identityRejectReason({ action: "create", type: "user", title: "Rule A" }, new Set(["rule-a"]))).toBe("id-collision");
+	it("lets colliding creates through (P4-b M1 versions them, no soft drop)", () => {
+		expect(identityRejectReason({ action: "create", id: "rule-a", type: "user" }, allowed)).toBeUndefined();
+		expect(identityRejectReason({ action: "create", type: "user", title: "Rule A" }, new Set(["rule-a"]))).toBeUndefined();
 	});
 
 	it("rejects bad types on any action", () => {
 		expect(identityRejectReason({ action: "create", id: "n", type: "project" }, allowed)).toBe("bad-type");
 		expect(identityRejectReason({ action: "update", id: "rule-a", type: "dream" }, allowed)).toBe("bad-type");
+	});
+});
+
+describe("hard-gate parity (applyOne restates identityRejectReason)", () => {
+	const WS = "/tmp/work/rules-parity";
+
+	async function seededStore(): Promise<MemoryStore> {
+		const dbPath = join(mkdtempSync(join(tmpdir(), "evolve-rules-parity-")), "memory.db");
+		const fresh = await openMemoryStore(dbPath);
+		expect(
+			fresh.applyProposals(
+				{ workspaceId: WS, trigger: "explicit", sessionId: "s1" },
+				[{ action: "create", type: "user", title: "Rule A", description: "d", body: "b" }],
+			)[0]?.ok,
+		).toBe(true);
+		return fresh;
+	}
+
+	it("agrees accept/reject with identityRejectReason (wording may differ)", () => {
+		const cases = [
+			{ action: "upsert", id: "rule-a" },
+			{ action: "update", id: "forged-id", type: "user", title: "t", description: "d", body: "b" },
+			{ action: "delete", id: "Bad_Id" },
+		] as const;
+		return (async () => {
+			for (const proposal of cases) {
+				const store = await seededStore();
+				try {
+					const allowed = new Set(store.list(WS).map((row) => row.id));
+					const soft = identityRejectReason(proposal, allowed) === undefined;
+					const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s1" }, [proposal]);
+					expect(outcome?.ok, JSON.stringify(proposal)).toBe(soft);
+				} finally {
+					store.close();
+				}
+			}
+		})();
+	});
+
+	it("versions a substantive colliding create (M1) instead of dropping it", async () => {
+		const store = await seededStore();
+		try {
+			const allowed = new Set(store.list(WS).map((row) => row.id));
+			const proposal = { action: "create", id: "rule-a", type: "user", title: "t", description: "d", body: "b" } as const;
+			expect(identityRejectReason(proposal, allowed)).toBeUndefined();
+			const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s1" }, [proposal]);
+			expect(outcome?.ok).toBe(true);
+			// M1 versions: the old row archives, exactly one versioned row goes active
+			// (suffixes start at v2 by design).
+			expect(store.list(WS).map((row) => row.id)).toEqual(["rule-a-v2"]);
+			expect(store.get(WS, "rule-a")?.status).toBe("archived");
+		} finally {
+			store.close();
+		}
+	});
+
+	it("fails closed on an exact-duplicate colliding create (soft passes, hard rejects)", async () => {
+		// Intended divergence, pinned: the extraction screen drops body
+		// duplicates first, so the hard gate only sees this on the explicit
+		// path — where failing closed beats a silent double active row.
+		const store = await seededStore();
+		try {
+			const allowed = new Set(store.list(WS).map((row) => row.id));
+			const proposal = { action: "create", id: "rule-a", type: "user", title: "Rule A", description: "d", body: "b" } as const;
+			expect(identityRejectReason(proposal, allowed)).toBeUndefined();
+			const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s1" }, [proposal]);
+			expect(outcome?.ok).toBe(false);
+			expect(store.list(WS)).toHaveLength(1);
+		} finally {
+			store.close();
+		}
 	});
 });

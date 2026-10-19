@@ -27,7 +27,7 @@ Every memory, skill and prompt note lives in one central SQLite database (`~/.ds
 ## Highlights
 
 - **One store, one writer** — all state in one SQLite file; the plugin is the only code that writes it.
-- **Session-start index** — hooks for the current workspace injected as one prompt section, frozen per session, ordered feedback > user > reference.
+- **Session-start index** — hooks for the current workspace injected as one prompt section, frozen per session, grouped into User Profile / Project Meta / Project Memory / Feedback Memory.
 - **A budget that degrades, not drops** — CJK-aware token budget (default 6000) steps from full hooks to id-only lines to an "N more" counter.
 - **Three tools** — `evolve_write` lands memories, skills and prompt notes; `evolve_read` serves bodies and searches by keyword (trigram FTS, CJK-aware); `evolve_eval_run` runs the four-arm eval on demand (pre-release/bi-monthly, returns `compare.md`).
 - **Proposal-based extraction** — per-session turn-level automation: no idle timer, a cheap pre-gate, a duplicate/no-change pre-screen, every skip ledgered.
@@ -73,7 +73,7 @@ Writes made mid-session become visible in the next session — the injected sect
 
 ### Session-start injection
 
-- One system-prompt section (`order 400`): the workspace's index as hooks only — id, title, description clipped to 20 characters, optional `notWhen`; the type is carried by the block's feedback > user > reference ordering rather than a per-line tag. Plus the store path and a two-paragraph guide, ties by id.
+- One system-prompt section (`order 400`): the workspace's index as hooks only — id, title, description clipped to 20 characters, optional `notWhen`; the type is carried by the block's four-group layout rather than a per-line tag (row order within a group stays feedback > user > reference). Plus the store path and a two-paragraph guide, ties by id.
 - Computed once per session and reused byte-for-byte — the prompt cache stays warm; an empty store costs zero tokens.
 - Token budget, CJK-aware (1.5 tokens per Chinese character, 4 characters per token otherwise). Over-budget indexes degrade in tiers: full hook lines → `- [id]`-only lines → a `（其余 N 条未展开…）` counter. A cut memory stays reachable through `evolve_read`.
 

@@ -80,16 +80,8 @@ export interface CheapVerdict {
 
 /** Parse the pre-gate answer. `null` means fail-open: run the full call. */
 export function parseCheapAnswer(text: string): CheapVerdict | null {
-	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-	const start = stripped.indexOf("{");
-	const end = stripped.lastIndexOf("}");
-	if (start < 0 || end <= start) {
-		return null;
-	}
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(stripped.slice(start, end + 1));
-	} catch {
+	const { parsed } = parseFencedJsonObject(text);
+	if (parsed === undefined) {
 		return null;
 	}
 	// Defensive: the sliced text always starts with "{", so a successful
@@ -141,16 +133,8 @@ export function classifyPrompt(input: { incrementHead: string; userSeqs: readonl
  * "nothing worth keeping" the caller short-circuits on.
  */
 export function parseClassifyAnswer(text: string): ClassifyResult | null {
-	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-	const start = stripped.indexOf("{");
-	const end = stripped.lastIndexOf("}");
-	if (start < 0 || end <= start) {
-		return null;
-	}
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(stripped.slice(start, end + 1));
-	} catch {
+	const { parsed } = parseFencedJsonObject(text);
+	if (parsed === undefined) {
 		return null;
 	}
 	/* v8 ignore next 3 */
@@ -307,6 +291,31 @@ function tryParseJson(candidate: string): { parsed?: unknown; message?: string }
 }
 
 /**
+ * Shared fenced-JSON parse with one sanitized retry: strip code fences,
+ * slice the outer `{…}`, parse, then strip JSON-illegal bare control
+ * characters and retry once. Returns the parsed value, or undefined when
+ * unparseable. All three parse sites share this tolerance.
+ */
+function parseFencedJsonObject(text: string): { parsed?: unknown; message?: string } {
+	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+	const start = stripped.indexOf("{");
+	const end = stripped.lastIndexOf("}");
+	if (start < 0 || end <= start) {
+		return { message: "no JSON object found" };
+	}
+	const candidate = stripped.slice(start, end + 1);
+	const first = tryParseJson(candidate);
+	if (first.parsed !== undefined) {
+		return first;
+	}
+	const retried = tryParseJson(candidate.replace(BARE_CONTROL_RE, ""));
+	if (retried.parsed !== undefined) {
+		return retried;
+	}
+	return first;
+}
+
+/**
  * Parse the model's JSON answer. Tolerates code fences and bare control
  * characters (one sanitized retry); rejects anything that is not the agreed
  * shape. A genuine "skip" is a model decision the caller may act on (consume
@@ -314,24 +323,10 @@ function tryParseJson(candidate: string): { parsed?: unknown; message?: string }
  * which must never land as a silent success.
  */
 export function parseExtractionAnswer(text: string): ParsedAnswer {
-	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-	const start = stripped.indexOf("{");
-	const end = stripped.lastIndexOf("}");
-	if (start < 0 || end <= start) {
-		return { decision: "error", reason: "unparseable output: no JSON object found", proposals: [] };
-	}
-	const candidate = stripped.slice(start, end + 1);
-	const first = tryParseJson(candidate);
-	// P1: a single control character no longer drops the batch — strip the
-	// JSON-illegal ones and retry once. Still failing keeps the old error
-	// path (raw head ledgered, increment unconsumed, next trigger retries).
-	const parsed = first.parsed ?? tryParseJson(candidate.replace(BARE_CONTROL_RE, "")).parsed;
+	const { parsed, message } = parseFencedJsonObject(text);
 	if (parsed === undefined) {
-		return {
-			decision: "error",
-			reason: `unparseable output: ${first.message ?? "unknown parse error"}`,
-			proposals: [],
-		};
+		const reason = message === "no JSON object found" ? "unparseable output: no JSON object found" : `unparseable output: ${message ?? "unknown parse error"}`;
+		return { decision: "error", reason, proposals: [] };
 	}
 	// Defensive: the sliced text always starts with "{", so a successful
 	// JSON.parse here is always an object — the branch is unreachable today

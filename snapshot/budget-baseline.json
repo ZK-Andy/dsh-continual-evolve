@@ -150,7 +150,7 @@
       "outDegree": 5
     },
     "services/extraction-prompt.ts": {
-      "lines": 386,
+      "lines": 381,
       "outDegree": 0
     },
     "services/extraction-propose.ts": {
@@ -186,7 +186,7 @@
       "outDegree": 1
     },
     "services/memory-apply.ts": {
-      "lines": 394,
+      "lines": 400,
       "outDegree": 8
     },
     "services/memory-linkage.ts": {
@@ -198,7 +198,7 @@
       "outDegree": 8
     },
     "services/memory-rules.ts": {
-      "lines": 249,
+      "lines": 250,
       "outDegree": 1
     },
     "services/model-route.ts": {
@@ -322,7 +322,7 @@
       "outDegree": 0
     },
     "surfaces/memory-section.ts": {
-      "lines": 388,
+      "lines": 392,
       "outDegree": 4
     },
     "surfaces/memory-snapshot.ts": {

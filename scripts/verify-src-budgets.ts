@@ -16,6 +16,7 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { lineCount, outDegree } from "./budget-measure.js";
 
 const MAX_FILE_LINES = 400;
 const MAX_OUT_DEGREE = 12;
@@ -45,32 +46,8 @@ function collectJs(dir: string, out: string[] = []): string[] {
 	return out;
 }
 
-/** wc -l semantics: the number of newline characters. */
-function lineCount(text: string): number {
-	let n = 0;
-	for (const ch of text) {
-		if (ch === "\n") n += 1;
-	}
-	return n;
-}
-
-const STATIC_IMPORT_RE = /^[ \t]*import\s+(?:[^;"']*?\sfrom\s+)?["'](\.[^"']+)["']/gm;
-const DYNAMIC_IMPORT_RE = /import\s*\(\s*["'](\.[^"']+)["']\s*\)/g;
-const REEXPORT_RE = /^[ \t]*export\s+[^;]*?\sfrom\s+["'](\.[^"']+)["']/gm;
-
-/** Distinct relative module specifiers imported by one file. */
-function outDegree(text: string): string[] {
-	const seen = new Set<string>();
-	for (const re of [STATIC_IMPORT_RE, DYNAMIC_IMPORT_RE, REEXPORT_RE]) {
-		re.lastIndex = 0;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(text)) !== null) {
-			const spec = m[1];
-			if (spec !== undefined) seen.add(spec.replace(/\.js$/, ""));
-		}
-	}
-	return [...seen];
-}
+/** Out-degree counts and function spans live in their single homes:
+ * specifiers in `./budget-measure.js`, spans below (warning channel only). */
 
 const FN_START_RES = [
 	/^\t{0,2}(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/,

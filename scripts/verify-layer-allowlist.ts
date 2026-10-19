@@ -6,7 +6,9 @@
  * The initial allowlist is derived from docs/architecture-standard.md section 1
  * (data / pages / services / surfaces). A new directory outside the set fails
  * the gate; adding it requires editing layers.json in the same PR with an ADR
- * (the allowlist change itself is the human approval point).
+ * (the allowlist change itself is the human approval point). New files under
+ * the directory additionally need EDGES entries in verify-layering.ts —
+ * the two whitelists share one source (architecture-standard §1).
  *
  * Usage: tsx scripts/verify-layer-allowlist.ts [src_root] [--layers PATH]
  * Exit code 0 = pass (or SKIP when the tree does not exist), 1 = unknown layers found.

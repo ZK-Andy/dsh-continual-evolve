@@ -23,7 +23,7 @@ export function memoryGuideIntro(storePath: string, workspaceId: string, toolsAv
 	if (toolsAvailable) {
 		return `# 持久记忆
 
-持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`）。下方索引只有钩子（id、标题、截断的描述，feedback > user > reference 排序），不含正文；要正文或按关键词检索，用 \`evolve_read\`（kind=memory）。
+持久记忆存放在中央库 \`${storePath}\`（按工作区分区，当前工作区：\`${workspaceId}\`）。下方索引只有钩子（id、标题、截断的描述，按 User Profile / Project Meta / Project Memory / Feedback Memory 四组排列），不含正文；要正文或按关键词检索，用 \`evolve_read\`（kind=memory）。
 
 用户明确要求记住时用 \`evolve_write\`（kind=memory，action: create；feedback 正文必带 **Why:** 与 **How to apply:**），忘掉用 delete，情况变用 update。其余沉淀归会话结束后的专职提取流程，执行任务途中不要维护记忆。`;
 	}

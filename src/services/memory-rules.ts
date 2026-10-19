@@ -79,13 +79,17 @@ export function isValidMemoryId(id: string): boolean {
  * - `unknown-action`: outside the closed `create/update/delete` set.
  * - `unknown-id`: an `update`/`delete` whose id is absent, malformed, or not
  *   among the workspace's active ids (a forged out-of-allowlist id lands here).
- * - `id-collision`: a `create` whose explicit (or title-derived) id already
- *   exists — the pre-moved twin of `createMemory`'s "already exists" failure,
- *   moved out of the atomic gate so one bad id no longer kills a good batch.
  * - `bad-type`: a carried `type` outside `MEMORY_TYPES` (the pre-moved twin
  *   of the field gate's first check, same reason).
+ *
+ * A `create` colliding with an active id is NOT rejected here (P4-b M1:
+ * same-id substantive proposals always version, regardless of verb — the
+ * 2026-10-20 parity probe caught the old `id-collision` drop disagreeing
+ * with the hard gate's version path). Collisions flow downstream: the content
+ * gate drops exact body duplicates, the hard gate versions substantive ones
+ * and fails closed on the rest (`createMemory` "already exists").
  */
-export type IdentityRejectReason = "unknown-action" | "unknown-id" | "id-collision" | "bad-type";
+export type IdentityRejectReason = "unknown-action" | "unknown-id" | "bad-type";
 
 /** The identity fields the gate reads; everything else passes through. */
 export interface IdentityProposal {
@@ -114,11 +118,8 @@ export function identityRejectReason(
 		return "bad-type";
 	}
 	if (action === "create") {
-		const raw = typeof proposal.id === "string" ? proposal.id.trim() : "";
-		const id = raw.length > 0 ? raw : typeof proposal.title === "string" ? slugifyId(proposal.title) : "";
-		if (id.length > 0 && allowedIds.has(id)) {
-			return "id-collision";
-		}
+		// No allowlist check: a colliding create versions (M1) or fails
+		// closed downstream — never a silent duplicate, never a soft drop.
 		return undefined;
 	}
 	const id = typeof proposal.id === "string" ? proposal.id.trim() : "";

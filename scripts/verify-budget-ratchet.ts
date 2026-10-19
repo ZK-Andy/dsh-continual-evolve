@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { lineCount, outDegree } from "./budget-measure.js";
 
 export interface ModuleBudget {
 	readonly lines: number;
@@ -33,31 +34,12 @@ export interface RatchetResult {
 	readonly messages: readonly string[];
 }
 
-const STATIC_IMPORT_RE = /^[ \t]*import\s+(?:[^;"']*?\sfrom\s+)?["'](\.[^"']+)["']/gm;
-const DYNAMIC_IMPORT_RE = /import\s*\(\s*["'](\.[^"']+)["']\s*\)/g;
-const REEXPORT_RE = /^[ \t]*export\s+[^;]*?\sfrom\s+["'](\.[^"']+)["']/gm;
-
-/** wc -l semantics: the number of newline characters. */
-export function lineCount(text: string): number {
-	let n = 0;
-	for (const ch of text) {
-		if (ch === "\n") n += 1;
-	}
-	return n;
-}
+/** wc -l semantics (single home: `./budget-measure.js`). */
+export { lineCount } from "./budget-measure.js";
 
 /** Distinct relative module specifiers (same semantics as verify-src-budgets). */
 export function outDegreeOf(text: string): number {
-	const seen = new Set<string>();
-	for (const re of [STATIC_IMPORT_RE, DYNAMIC_IMPORT_RE, REEXPORT_RE]) {
-		re.lastIndex = 0;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(text)) !== null) {
-			const spec = m[1];
-			if (spec !== undefined) seen.add(spec.replace(/\.js$/, ""));
-		}
-	}
-	return seen.size;
+	return outDegree(text).length;
 }
 
 function collectTs(dir: string, out: string[] = []): string[] {

@@ -4,8 +4,11 @@
  * `2026-10-06-sqlite-single-store`).
  *
  * The injected index is a query result, not a file: one line per active
- * memory of the assembling agent's workspace, feedback > user > reference,
- * hooks only (title + description). Bodies live in the database and are
+ * memory of the assembling agent's workspace, hooks only (title +
+ * description), grouped since P6 into User Profile / Project Meta /
+ * Project Memory / Feedback Memory (`layerOf` decides the group, the SQL
+ * `MEMORIES_ORDER` in `data/resource-kinds.ts` decides the row order
+ * within it). Bodies live in the database and are
  * fetched on demand with `evolve_read`; there is no MEMORY.md to maintain
  * and nothing for the model to write directly.
  *
@@ -47,7 +50,8 @@ export function memoryDirFor(cwd: string): string {
 /**
  * One index line: hook only — bodies are an `evolve_read` call away. The hook
  * is the id, the title and the head of the description: the type is carried by
- * the block's ordering (feedback > user > reference) instead of a per-line tag,
+ * the block's P6 grouping (User Profile / Project Meta / Project Memory /
+ * Feedback Memory) instead of a per-line tag,
  * and the description is clipped so one long hook cannot price out five peers.
  * A row on probation says so: a trial memory is visible on purpose (an unseen
  * memory cannot earn the cross-project use that confirms it), and the marker is

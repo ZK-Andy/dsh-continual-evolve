@@ -183,6 +183,12 @@ describe("cheap pre-gate", () => {
 		expect(parseCheapAnswer(JSON.stringify({ decision: "apply", proposals: [] }))).toBeNull();
 		expect(parseCheapAnswer(JSON.stringify({ worthExtracting: "yes", reason: "x" }))).toBeNull();
 	});
+
+	it("tolerates one bare control character like the main parse site", () => {
+		const ctrl = String.fromCharCode(1);
+		const withControl = '{"worthExtracting": true, "reason": "环境' + ctrl + '事实"}';
+		expect(parseCheapAnswer(withControl)).toEqual({ worth: true, reason: "环境事实" });
+	});
 });
 
 describe("classification pass (P2 two-stage)", () => {
@@ -215,6 +221,12 @@ describe("classification pass (P2 two-stage)", () => {
 		expect(parseClassifyAnswer("胡言乱语")).toBeNull();
 		expect(parseClassifyAnswer(JSON.stringify({ decision: "apply", proposals: [] }))).toBeNull();
 		expect(parseClassifyAnswer(JSON.stringify({ worthy: "yes" }))).toBeNull();
+	});
+
+	it("tolerates one bare control character like the main parse site", () => {
+		const ctrl = String.fromCharCode(1);
+		const withControl = '{"worthy": [{"kind": "user", "evidence": "Fedora' + ctrl + '上工作", "test": "Identity"}], "reason": "环境事实"}';
+		expect(parseClassifyAnswer(withControl)?.worthy).toHaveLength(1);
 	});
 
 	it("renders the generation prior, including the empty verdict", () => {

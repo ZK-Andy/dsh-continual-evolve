@@ -41,14 +41,14 @@ Status: implemented
 
 - `action` 不在 `create/update/delete` → `unknown-action`。
 - `update`/`delete` 的 `id` 不在允许集 → `unknown-id`（伪造越界 id 在此被丢，不进写门）。
-- `create` 携带的显式 `id` 已在允许集 → `id-collision`（与 `createMemory` "已存在" 同语义，前移为逐条丢弃，不杀整批）。
+- `create` 携带的显式 `id` 已在允许集 → `id-collision`（与 `createMemory` "已存在" 同语义，前移为逐条丢弃，不杀整批）。【已 superseded：2026-10-20 bug-fix 起撞 id create 放行走 P4-b M1 版本行，见 `bug-fix/2026-10-20-identity-colliding-create-passthrough.md`】
 - `type` 不在 `MEMORY_TYPES` → `bad-type`（现状在 `fieldGateReasons` 整批失败，前移为逐条丢弃）。
 
 `parseExtractionAnswer` 的静默 `continue` 保留（解析层形状卫生），机械层做**计数型二次校验**（ defense in depth，不改 parse 返回形状）。`applyProposals` 的原子语义不动：机械层已丢弃后仍坏的提案才走整批 rejected（理论不可达，守卫保留）。
 
 收敛方向：`memory-rules.ts` 为唯一家，`extraction-prompt.ts` / `memory-apply.ts` / `pre-screen.ts` 只调用它。三处校验长期收敛即刻完成，不留漂移窗口。
 
-`ScreenReason` 扩展为 `duplicate | no-change | unknown-action | unknown-id | id-collision | bad-type`，`screenSkipReason` 聚合口径不变（`reason×n`）。
+`ScreenReason` 扩展为 `duplicate | no-change | unknown-action | unknown-id | id-collision | bad-type`，`screenSkipReason` 聚合口径不变（`reason×n`）。【`id-collision` 已随 2026-10-20 bug-fix 从两处枚举移除，见 `bug-fix/2026-10-20-identity-colliding-create-passthrough.md`】
 
 ### 3. 审计：`prompt_json`＋`dropped_warnings`＋分类用量列（D8 纪律）
 
