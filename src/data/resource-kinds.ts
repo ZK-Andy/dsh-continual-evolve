@@ -47,6 +47,8 @@ export const MEMORIES: ResourceKind = {
 	deleteSql: "DELETE FROM memories WHERE workspace_id = ? AND id = ?",
 	archiveReasonedSql:
 		"UPDATE memories SET status = 'archived', archive_reason = ?, merged_into = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+	repointSql: "UPDATE memories SET corrects = ? WHERE workspace_id = ? AND corrects = ?",
+	restoreTrialSql: "UPDATE memories SET probation_until = ?, origin_workspace = ? WHERE workspace_id = ? AND id = ?",
 	ftsDropSql: "DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE workspace_id = ? AND id = ?)",
 	ftsInsertSql:
 		"INSERT INTO memories_fts (workspace_id, id, title, description, body) " +
@@ -91,6 +93,8 @@ export const PROMPTS: ResourceKind = {
 	updateSql: "UPDATE prompts SET title = ?, description = ?, body = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
 	deleteSql: "DELETE FROM prompts WHERE workspace_id = ? AND id = ?",
 	archiveReasonedSql: null,
+	repointSql: null,
+	restoreTrialSql: null,
 	ftsDropSql: "DELETE FROM prompts_fts WHERE rowid IN (SELECT rowid FROM prompts_fts WHERE workspace_id = ? AND id = ?)",
 	ftsInsertSql:
 		"INSERT INTO prompts_fts (workspace_id, id, title, description, body) " +
@@ -131,6 +135,8 @@ export const SKILLS: ResourceKind = {
 	updateSql: "UPDATE skills SET title = ?, description = ?, body = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
 	deleteSql: "DELETE FROM skills WHERE workspace_id = ? AND id = ?",
 	archiveReasonedSql: null,
+	repointSql: null,
+	restoreTrialSql: null,
 	ftsDropSql: "DELETE FROM skills_fts WHERE rowid IN (SELECT rowid FROM skills_fts WHERE workspace_id = ? AND id = ?)",
 	ftsInsertSql:
 		"INSERT INTO skills_fts (workspace_id, id, title, description, body) " +

@@ -10,6 +10,7 @@
  * delete never happens here — archive is a status bit, not a deletion.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { archiveWithReason } from "./memory-lifecycle.js";
 import type { MemoryRow } from "./records.js";
 import type { Repository } from "./repository.js";
 
@@ -142,7 +143,7 @@ export function promoteMemory(
 		]);
 		memories.syncFts("", id);
 		stmts.setProbation.run(until, workspaceId, "", id);
-		memories.archiveWithReason(workspaceId, id, ts, "promoted-source", null);
+		archiveWithReason(database, workspaceId, id, ts, "promoted-source", null);
 		stmts.logVerdict.run(ts, "", id, "promote", "提级落地（实习期开始）");
 		database.exec("COMMIT");
 	} catch (error) {
@@ -191,7 +192,7 @@ export function demoteMemory(
 		// The restored row is not on probation; the global one is only archived,
 		// so its probation stamp stays as history.
 		stmts.clearProbation.run(origin, request.id);
-		memories.archiveWithReason("", request.id, ts, "demoted-source", null);
+		archiveWithReason(database, "", request.id, ts, "demoted-source", null);
 		stmts.logVerdict.run(ts, origin, request.id, "demote", "降级落地（回到来源分区）");
 		database.exec("COMMIT");
 	} catch (error) {
@@ -297,7 +298,7 @@ export function createTieringMethods(
 		},
 		archiveMemory(workspaceId, id) {
 			try {
-				memories.archiveWithReason(workspaceId, id, now().toISOString(), "review-archive", null);
+				archiveWithReason(database, workspaceId, id, now().toISOString(), "review-archive", null);
 				return true;
 			} catch {
 				return false;

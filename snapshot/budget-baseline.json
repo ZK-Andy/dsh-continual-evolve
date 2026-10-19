@@ -10,7 +10,7 @@
       "outDegree": 5
     },
     "data/archive-backfill.ts": {
-      "lines": 97,
+      "lines": 96,
       "outDegree": 0
     },
     "data/database.ts": {
@@ -29,6 +29,10 @@
       "lines": 272,
       "outDegree": 1
     },
+    "data/memory-lifecycle.ts": {
+      "lines": 83,
+      "outDegree": 2
+    },
     "data/migrate.ts": {
       "lines": 393,
       "outDegree": 3
@@ -42,11 +46,11 @@
       "outDegree": 0
     },
     "data/repository.ts": {
-      "lines": 359,
+      "lines": 345,
       "outDegree": 3
     },
     "data/resource-kinds.ts": {
-      "lines": 142,
+      "lines": 148,
       "outDegree": 1
     },
     "data/review-accounts.ts": {
@@ -58,7 +62,7 @@
       "outDegree": 4
     },
     "data/search-query.ts": {
-      "lines": 56,
+      "lines": 55,
       "outDegree": 0
     },
     "data/secret.ts": {
@@ -66,11 +70,11 @@
       "outDegree": 0
     },
     "data/tiering.ts": {
-      "lines": 341,
-      "outDegree": 2
+      "lines": 342,
+      "outDegree": 3
     },
     "data/usage-accounts.ts": {
-      "lines": 84,
+      "lines": 115,
       "outDegree": 3
     },
     "index.ts": {
@@ -166,8 +170,8 @@
       "outDegree": 3
     },
     "services/memory-merge.ts": {
-      "lines": 233,
-      "outDegree": 6
+      "lines": 247,
+      "outDegree": 8
     },
     "services/memory-rules.ts": {
       "lines": 249,

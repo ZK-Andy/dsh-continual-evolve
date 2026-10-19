@@ -59,7 +59,9 @@ describe("the memory channel", () => {
 			const ctx: ProposalContext = { workspaceId: WORKSPACE, trigger: "explicit", sessionId: "s1" };
 			// A later session edits: same-session repeats merge (P4a), and this
 			// test pins rollback atomicity, not merge routing.
-			const later: ProposalContext = { ...ctx, sessionId: "s2" };
+			// Review-path edits keep the in-place contract (P4b): this test pins
+			// rollback atomicity, not merge routing.
+			const later: ProposalContext = { ...ctx, trigger: "item-review", sessionId: "s2" };
 			const apply = (statement: StatementSync, proposals: Parameters<typeof applyProposals>[2], now = "2026-10-16T00:00:00.000Z") =>
 				applyProposals({ database, now: () => now, memories, ledger: statement }, ctx, proposals);
 			const applyLater = (statement: StatementSync, proposals: Parameters<typeof applyProposals>[2], now = "2026-10-16T00:00:00.000Z") =>

@@ -8,7 +8,7 @@
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { MEMORIES, PROMPTS, SKILLS } from "./resource-kinds.js";
-import type { ArchiveReason, MemoryRow, PromptRow, SkillRow } from "./records.js";
+import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
 import { ftsPhrase, likePattern, queryTokens, searchAlternatives } from "./search-query.js";
 
 /** Bindable column value (the subset of node:sqlite's SQLInputValue we use). */
@@ -54,6 +54,17 @@ export interface ResourceKind {
 	 * columns (only memories archives with a reason today).
 	 */
 	readonly archiveReasonedSql: string | null;
+	/**
+	 * Correction-pointer follow (`UPDATE … SET corrects = ? WHERE corrects
+	 * = ?`), `null` when the kind has no `corrects` column (memories only).
+	 */
+	readonly repointSql: string | null;
+	/**
+	 * Trial-clock carry (`UPDATE … SET probation_until = ?,
+	 * origin_workspace = ?`), `null` when the kind has no trial columns
+	 * (memories only).
+	 */
+	readonly restoreTrialSql: string | null;
 	readonly ftsDropSql: string;
 	readonly ftsInsertSql: string;
 	readonly usageGetSql: string;
@@ -106,7 +117,6 @@ export class Repository<Row> {
 	private readonly usageGet: StatementSync;
 	private readonly usageUpsert: StatementSync;
 	private archiveStmt: StatementSync | undefined;
-	private archiveReasonedStmt: StatementSync | undefined;
 	/** LIKE fallback: one statement per token count — the query set repeats, the counts don't grow. */
 	private readonly likeStmts = new Map<string, StatementSync>();
 
@@ -307,30 +317,6 @@ export class Repository<Row> {
 			this.archiveStmt = stmt;
 		}
 		stmt.run(ts, workspaceId, id);
-	}
-
-	/**
-	 * Archive one row stamping why (and, for merges, what it folded into).
-	 * Only kinds carrying archive-reason columns declare the SQL — calling it
-	 * anywhere else is a programming error, so it throws instead of writing
-	 * a reason nowhere.
-	 * @param workspaceId - The partition.
-	 * @param id - The row id.
-	 * @param ts - The archiving instant.
-	 * @param reason - The closed `archive_reason` value.
-	 * @param mergedInto - The surviving row id for merges, `null` otherwise.
-	 */
-	archiveWithReason(workspaceId: string, id: string, ts: string, reason: ArchiveReason, mergedInto: string | null): void {
-		const sql = this.kind.archiveReasonedSql;
-		if (sql === null) {
-			throw new Error(`archiveWithReason unsupported for ${this.kind.table}`);
-		}
-		let stmt = this.archiveReasonedStmt;
-		if (stmt === undefined) {
-			stmt = this.database.prepare(sql);
-			this.archiveReasonedStmt = stmt;
-		}
-		stmt.run(reason, mergedInto, ts, workspaceId, id);
 	}
 
 	/**

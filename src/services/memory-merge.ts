@@ -1,32 +1,39 @@
 /**
- * Same-session duplicate merges (P4a): when a session re-proposes a fact it
- * already landed, the write gate folds the old row into a versioned new row
+ * Duplicate merges (P4): when a proposal repeats a fact the store already
+ * holds, the write gate folds the old row into a versioned new row
  * (`merged-duplicate` + `merged_into`) instead of overwriting in place, so the
- * superseded text stays visible in the card's archive zone. Anything outside
- * the session scope — ordinary updates, review rewrites, tool edits — keeps
- * the legacy in-place path (P4b unifies them).
+ * superseded text stays visible in the card's archive zone.
  *
- * This module never calls the model: both triggers are mechanical (same id,
- * same normalized title in the same session). It speaks only the repository
- * and the linkage helper, so `memory-apply` stays its single caller and no
- * import cycle exists.
+ * Two triggers, both mechanical (P4a proved them; P4b unified them):
+ * - M1 same id: the proposal names an active row. Ids are unique keys, so
+ *   reusing one asserts identity across sessions and verbs — a substantive
+ *   same-id proposal always versions.
+ * - M2 same title: a create whose normalized title repeats a same-session row
+ *   under a different id. Title matching stays session-bound: common titles
+ *   recur across authors, and cross-author auto-merges would be误删.
+ *
+ * Review rewrites (`item-review`) are a second author by design and always
+ * keep the in-place path; deletes stay physical. This module never calls the
+ * model. It speaks only the repository and the linkage/usage helpers, so
+ * `memory-apply` stays its single caller and no import cycle exists.
  */
+import type { DatabaseSync } from "node:sqlite";
+import { archiveWithReason, repointCorrects, restoreTrial } from "../data/memory-lifecycle.js";
 import { recordOf, type MemoryRecord, type MemoryRow } from "../data/records.js";
 import type { Repository } from "../data/repository.js";
+import { moveMemoryUsage } from "../data/usage-accounts.js";
 import type { LedgerFile } from "../store-types.js";
 import type { ItemEventEntry } from "../store-types.js";
-import { createLinkages } from "./memory-linkage.js";
+import { createLinkages, updateLinkages } from "./memory-linkage.js";
 import type { MemoryProposal, ProposedFields } from "./memory-rules.js";
 import { normalize } from "./pre-screen.js";
-
-/** Merged body pairs above this stay on the legacy in-place path (P4 cap). */
-export const MERGE_INPUT_CHAR_CAP = 8000;
 
 /** Version-suffix attempts before a merge fails closed. */
 export const MERGE_VERSION_CAP = 100;
 
 /** The write face a merge needs (a structural subset of the gate's database). */
 export interface MergeDatabase {
+	database: DatabaseSync;
 	now(): string;
 	memories: Repository<MemoryRow>;
 	/** Review-queue linkage writer, absent in gate-only unit tests. */
@@ -48,13 +55,10 @@ export interface MergePlan {
 }
 
 /**
- * Decide whether a proposal merges instead of writing in place. Only
- * same-session repeats on the authoring path qualify: the proposal's session
- * must equal the stored row's `source_session`, the change must be
- * substantive, the old row must not be a correction target, and the pair must
- * fit the input cap. Review rewrites (`item-review`) are a second author by
- * design and always keep the in-place path. Anything else answers `undefined`
- * and the caller keeps its legacy path.
+ * Decide whether a proposal merges instead of writing in place. A substantive
+ * same-id proposal always versions (M1); a create repeating a same-session
+ * title versions (M2). Anything else answers `undefined` and the caller keeps
+ * its legacy path (in-place update, plain create, legacy failures, deletes).
  * @param args - The store, the proposal, and what the gate already resolved.
  * @returns The merge target, or `undefined` for the legacy path.
  */
@@ -72,35 +76,13 @@ export function planMerge(args: {
 	if (proposal.action === "delete" || trigger === "item-review") {
 		return undefined;
 	}
-	if (sessionId === undefined || sessionId.length === 0) {
-		return undefined;
+	if (existing !== undefined && existing.status === "active" && substantiveChange(fields, existing)) {
+		return { oldId: existing.id, oldRecord: existing };
 	}
-	if (existing !== undefined && existing.status === "active" && existing.sourceSession === sessionId) {
-		return planSameId(memories, workspaceId, fields, existing);
-	}
-	if (proposal.action === "create" && existing === undefined) {
+	if (proposal.action === "create" && existing === undefined && sessionId !== undefined && sessionId.length > 0) {
 		return planSameTitle(memories, workspaceId, sessionId, id, fields);
 	}
 	return undefined;
-}
-
-/**
- * The M1 trigger: the proposal names an active row from the same session.
- * @returns The merge plan, or `undefined` for the legacy path.
- */
-function planSameId(
-	memories: Repository<MemoryRow>,
-	workspaceId: string,
-	fields: ProposedFields,
-	existing: MemoryRecord,
-): MergePlan | undefined {
-	if (!substantiveChange(fields, existing) || overCap(fields.body, existing.body)) {
-		return undefined;
-	}
-	if (isCorrectedTarget(memories, workspaceId, existing.id)) {
-		return undefined;
-	}
-	return { oldId: existing.id, oldRecord: existing };
 }
 
 /**
@@ -126,10 +108,7 @@ function planSameTitle(
 		return undefined;
 	}
 	const oldRecord = recordOf(hit);
-	if (!substantiveChange(fields, oldRecord) || overCap(fields.body, oldRecord.body)) {
-		return undefined;
-	}
-	if (isCorrectedTarget(memories, workspaceId, hit.id)) {
+	if (!substantiveChange(fields, oldRecord)) {
 		return undefined;
 	}
 	return { oldId: hit.id, oldRecord };
@@ -138,6 +117,8 @@ function planSameTitle(
 /**
  * Whether the merged fields change anything the screen compares (the same
  * field set `pre-screen` drops no-change updates on, so the two never disagree).
+ * A proposal that only (re)names a correction target is not substantive: the
+ * link edit stays a cheap in-place write, never a version.
  */
 function substantiveChange(fields: ProposedFields, existing: MemoryRecord): boolean {
 	return (
@@ -147,16 +128,6 @@ function substantiveChange(fields: ProposedFields, existing: MemoryRecord): bool
 		normalize(fields.body) !== normalize(existing.body) ||
 		normalize(fields.notWhen) !== normalize(existing.notWhen)
 	);
-}
-
-/** Whether the old/new body pair exceeds the merge input cap. */
-function overCap(next: string, current: string): boolean {
-	return next.length + current.length > MERGE_INPUT_CHAR_CAP;
-}
-
-/** Whether an active row points at the id with `corrects` (merging would strand it). */
-function isCorrectedTarget(memories: Repository<MemoryRow>, workspaceId: string, id: string): boolean {
-	return memories.listRows(workspaceId).some((row) => row.corrects === id);
 }
 
 /**
@@ -184,8 +155,12 @@ export function allocateVersionId(
 
 /**
  * Land a planned merge inside the batch's own transaction: archive the old row
- * with its reason and forward pointer, insert the versioned row, sync the
- * index, and ledger the before/after pair. The caller commits or rolls back.
+ * with its reason and forward pointer, repoint live `corrects` links, carry
+ * the usage heartbeat and the trial clock to the new row, insert the versioned
+ * row, sync the index, and ledger the before/after pairs. The caller commits
+ * or rolls back. `review_log` is deliberately not carried: the new text starts
+ * its own review lifecycle; the old verdicts stay with the archived text they
+ * judged.
  * @param args - The database, the plan, and what the gate already resolved.
  * @returns The successful outcome under the new row's id.
  * @throws When the just-inserted row is unreadable (fail loud: the batch must roll back).
@@ -203,7 +178,10 @@ export function landMerge(args: {
 }): { id: string; action: MemoryProposal["action"]; ok: true } {
 	const { db, ctx, proposal, action, plan, newId, fields, link, files } = args;
 	const now = db.now();
-	db.memories.archiveWithReason(ctx.workspaceId, plan.oldId, now, "merged-duplicate", newId);
+	const old = plan.oldRecord;
+	archiveWithReason(db.database, ctx.workspaceId, plan.oldId, now, "merged-duplicate", newId);
+	followCorrects(db, ctx.workspaceId, files, action, plan.oldId, newId);
+	moveMemoryUsage(db.database, ctx.workspaceId, plan.oldId, newId);
 	db.memories.insertRow([
 		ctx.workspaceId,
 		newId,
@@ -220,14 +198,50 @@ export function landMerge(args: {
 		now,
 		now,
 	]);
+	if (old.probationUntil !== null || old.originWorkspace !== null) {
+		restoreTrial(db.database, ctx.workspaceId, newId, old.probationUntil, old.originWorkspace);
+	}
 	db.memories.syncFts(ctx.workspaceId, newId);
 	const after = db.memories.getRow(ctx.workspaceId, newId);
 	if (after === undefined) {
 		throw new Error(`merge landed "${newId}" but cannot read it back`);
 	}
-	files.push({ id: newId, action, before: plan.oldRecord, after: recordOf(after) });
-	db.events?.(
-		createLinkages({ workspaceId: ctx.workspaceId, memories: db.memories }, newId, { type: fields.type, title: fields.title }, link),
-	);
+	files.push({ id: newId, action, before: old, after: recordOf(after) });
+	if (action === "create") {
+		// A new arrival announces itself to its neighbours, like any create.
+		db.events?.(
+			createLinkages({ workspaceId: ctx.workspaceId, memories: db.memories }, newId, { type: fields.type, title: fields.title }, link),
+		);
+	} else {
+		// A revision stays quiet, like any update: neighbours are not dragged
+		// back into the review queue by a retouch.
+		db.events?.(updateLinkages({ workspaceId: ctx.workspaceId, memories: db.memories }, newId, link));
+	}
 	return { id: newId, action, ok: true };
+}
+
+/**
+ * Repoint live `corrects` links from the folded row to its successor, so the
+ * correction graph follows the live truth instead of rotting on history.
+ * Each repoint lands its own ledger pair: silent pointer surgery is how
+ * untraceable graphs are made.
+ */
+function followCorrects(
+	db: MergeDatabase,
+	workspaceId: string,
+	files: LedgerFile<MemoryProposal["action"], MemoryRecord>[],
+	action: MemoryProposal["action"],
+	oldId: string,
+	newId: string,
+): void {
+	const pointers = db.memories.listRows(workspaceId).filter((row) => row.corrects === oldId);
+	if (pointers.length === 0) {
+		return;
+	}
+	const moved = repointCorrects(db.database, workspaceId, oldId, newId);
+	for (const row of pointers.slice(0, moved)) {
+		const before = recordOf(row);
+		const after = recordOf({ ...row, corrects: newId });
+		files.push({ id: row.id, action, before, after });
+	}
 }

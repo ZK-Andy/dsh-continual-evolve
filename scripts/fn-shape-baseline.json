@@ -43,6 +43,12 @@
       "empty-catch": 1,
       "console-log": 0
     },
+    "src/data/memory-lifecycle.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
     "src/data/migrate.ts": {
       "params": 0,
       "return-any": 0,
@@ -62,7 +68,7 @@
       "console-log": 0
     },
     "src/data/repository.ts": {
-      "params": 1,
+      "params": 0,
       "return-any": 0,
       "empty-catch": 0,
       "console-log": 0
@@ -248,7 +254,7 @@
       "console-log": 0
     },
     "src/services/memory-merge.ts": {
-      "params": 1,
+      "params": 2,
       "return-any": 0,
       "empty-catch": 0,
       "console-log": 0

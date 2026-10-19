@@ -196,7 +196,8 @@ describe("runExtraction — model round-trip", () => {
 		});
 		const result = await runExtraction(d, target, { trigger: "turn-debounce" });
 		expect(result.status).toBe("applied");
-		expect(store.get(WS, "env")?.body).toBe("Fedora 44 + Zed");
+		expect(store.get(WS, "env-v2")?.body).toBe("Fedora 44 + Zed");
+		expect(store.get(WS, "env")?.status).toBe("archived");
 		const prompt = String(d.llm.calls[2]?.messages && (d.llm.calls[2].messages as { content: { text: string }[] }[])[0].content[0].text);
 		expect(prompt).toContain("id=env｜type=user");
 		expect(prompt).toContain("旧正文");

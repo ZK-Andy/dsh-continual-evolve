@@ -163,8 +163,10 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/memory-linkage.ts": ["data/records", "data/repository", "store-types"],
 	// Same-session duplicate merges: mechanical version rows, no model calls.
 	"services/memory-merge.ts": [
+		"data/memory-lifecycle",
 		"data/records",
 		"data/repository",
+		"data/usage-accounts",
 		"services/memory-linkage",
 		"services/memory-rules",
 		"services/pre-screen",
@@ -232,7 +234,8 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/review-row.ts": ["services/review-prompt", "services/review", "store"],
 	// The tiering exits: archive / promote / demote / probation resolution.
 	"services/review-tiering.ts": ["services/review-prompt", "services/review-ring", "services/review-row"],
-	"data/tiering.ts": ["data/records", "data/repository"],
+	"data/tiering.ts": ["data/memory-lifecycle", "data/records", "data/repository"],
+	"data/memory-lifecycle.ts": ["data/records", "data/resource-kinds"],
 	"data/accounts.ts": ["data/injection-log", "data/item-events", "data/review-accounts", "data/tiering", "data/usage-accounts"],
 	"services/skill-apply.ts": [
 		"data/ledger",

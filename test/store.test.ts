@@ -84,21 +84,21 @@ describe("applyProposals — create/update/delete", () => {
 		expect(record.sourceSeqs).toBeNull();
 	});
 
-	it("update merges fields, keeps created_at, and stays FTS-searchable by new text", () => {
+	it("update versions the row with merged fields, searchable by new text", () => {
 		expect(create({ title: "env facts" })).toBe(true);
-		const before = store.get(WS, "env-facts")!;
 		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
 			{ action: "update", id: "env-facts", body: "now mentions openSUSE too" },
 		]);
 		expect(outcome?.ok).toBe(true);
-		const after = store.get(WS, "env-facts")!;
+		expect(outcome?.id).toBe("env-facts-v2");
+		const after = store.get(WS, "env-facts-v2")!;
 		expect(after.body).toContain("openSUSE");
-		expect(after.createdAt).toBe(before.createdAt);
-		expect(after.updatedAt >= before.updatedAt).toBe(true);
-		expect(store.search(WS, "openSUSE").map((r) => r.id)).toEqual(["env-facts"]);
+		expect(after.title).toBe("env facts");
+		expect(store.search(WS, "openSUSE").map((r) => r.id)).toEqual(["env-facts-v2"]);
+		expect(store.get(WS, "env-facts")?.status).toBe("archived");
 	});
 
-	it("update preserves the creation provenance by default (P1: no refresh)", () => {
+	it("update versions with fresh provenance while the archived row keeps its own", () => {
 		const [created] = store.applyProposals(
 			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
 			[{ action: "create", type: "user", title: "provenance", description: "d", body: "b", sourceSeqs: "10-12" }],
@@ -109,10 +109,14 @@ describe("applyProposals — create/update/delete", () => {
 			[{ action: "update", id: created?.id ?? "", body: "b2" }],
 		);
 		expect(updated?.ok).toBe(true);
-		const after = store.get(WS, created?.id ?? "")!;
+		expect(updated?.id).toBe(`${created?.id ?? ""}-v2`);
+		const old = store.get(WS, created?.id ?? "")!;
+		expect(old.body).toBe("b");
+		expect(old.sourceSession).toBe("sess-1");
+		expect(old.sourceSeqs).toBe("10-12");
+		const after = store.get(WS, updated?.id ?? "")!;
 		expect(after.body).toBe("b2");
-		expect(after.sourceSession).toBe("sess-1");
-		expect(after.sourceSeqs).toBe("10-12");
+		expect(after.sourceSession).toBe("sess-2");
 	});
 
 	it("delete removes the row and its FTS entry", () => {
@@ -132,7 +136,8 @@ describe("applyProposals — create/update/delete", () => {
 		expect(runs({ action: "create", type: "user", title: "t", description: "d", body: "b" })).toBe(true); // id derived from the title
 		expect(run({ action: "update", id: "ghost" })).toBe(true);
 		expect(run({ action: "delete", id: "ghost" })).toBe(true);
-		expect(run({ action: "create", id: "t", type: "user", title: "t again", description: "d", body: "b" })).toBe(true); // duplicate of the derived-id create above
+		expect(runs({ action: "create", id: "t", type: "user", title: "t again", description: "d", body: "b2" })).toBe(true); // same id, new text: versions instead of failing
+		expect(run({ action: "create", id: "t", type: "user", title: "t", description: "d", body: "b" })).toBe(true); // byte-identical create still fails
 		expect(run({ action: "create", type: "user" })).toBe(true); // no id derivable (no title)
 		expect(run({ action: "create", title: "no type", description: "d", body: "b" })).toBe(true); // required field missing
 	});
