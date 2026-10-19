@@ -178,7 +178,7 @@
       "outDegree": 8
     },
     "services/memory-rules.ts": {
-      "lines": 248,
+      "lines": 249,
       "outDegree": 1
     },
     "services/model-route.ts": {
