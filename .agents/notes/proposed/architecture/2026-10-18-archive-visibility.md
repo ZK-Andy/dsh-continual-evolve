@@ -58,3 +58,5 @@ Status: proposed
 - **schema 变更加迁移**：`memories` 已是 STRICT 表，加列的迁移必须与既有迁移链同风格（`ensure*` 幂等）。
 - **枚举漂移**：归档原因会成为事实来源，将来新增出口（如合并）要同步扩枚举与卡片文案。
 - **卡片信息量**：归档区会占版面；默认折叠或放在底部，避免把"当前记忆"挤下去。
+
+> 前向指针：本提案已由 P4（ADR [2026-10-19-p4-lifecycle-rescope](../../implemented/feature/2026-10-19-p4-lifecycle-rescope.md)）落地，不要当活待办重做。

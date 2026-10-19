@@ -24,8 +24,9 @@ export interface EvalToolFixed {
 const EVAL_RUN_PARAMETERS = {
 	type: "object",
 	properties: {
-		subset: { type: "number", description: "只跑前 N 条任务（默认全量，上限 30）。" },
-		repeat: { type: "number", description: "整批重复次数（默认 2；两次 acc 不一致标 flaky）。" },
+		subset: { type: "number", description: "只跑前 N 条任务（默认全量，上限 30，超限截断）。" },
+		repeat: { type: "number", description: "整批重复次数（默认 2；两次 acc 不一致标 flaky；上限 2，超限截断）。" },
+		runId: { type: "string", description: "轮次标识（默认按日期；同日重跑会替换上一轮，自定义可保留多轮）。" },
 		budgetCapTokens: { type: "number", description: "token 上限（默认无；超限记 budget_exceeded）。" },
 		dryRun: { type: "boolean", description: "只校验任务集、不发起模型调用。" },
 	},
@@ -33,9 +34,24 @@ const EVAL_RUN_PARAMETERS = {
 	additionalProperties: false,
 } as const;
 
-function numArg(args: Record<string, unknown>, key: string): number | undefined {
+/** Subset ceiling, matching the documented上限. */
+const EVAL_SUBSET_MAX = 30;
+
+function numArg(args: Record<string, unknown>, key: string, max?: number): number | undefined {
 	const value = args[key];
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+	if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+		return undefined;
+	}
+	const floored = Math.floor(value);
+	return max === undefined ? floored : Math.min(floored, max);
+}
+
+function strArg(args: Record<string, unknown>, key: string): string | undefined {
+	const value = args[key];
+	if (typeof value !== "string" || value.trim().length === 0) {
+		return undefined;
+	}
+	return value.trim().slice(0, 80);
 }
 
 /**
@@ -77,8 +93,9 @@ export async function executeEvalRun(
 		},
 		{
 			workspaceId,
-			...(numArg(args, "subset") === undefined ? {} : { subset: numArg(args, "subset") }),
+			...(numArg(args, "subset", EVAL_SUBSET_MAX) === undefined ? {} : { subset: numArg(args, "subset", EVAL_SUBSET_MAX) }),
 			...(numArg(args, "repeat") === undefined ? {} : { repeat: numArg(args, "repeat") }),
+			...(strArg(args, "runId") === undefined ? {} : { runId: strArg(args, "runId") }),
 			...(numArg(args, "budgetCapTokens") === undefined ? {} : { budgetCapTokens: numArg(args, "budgetCapTokens") }),
 		},
 	);

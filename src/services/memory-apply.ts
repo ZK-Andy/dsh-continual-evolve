@@ -180,9 +180,10 @@ function applyOne(
 	if (reasons.length > 0) {
 		return fail(proposal, reasons[0] ?? "invalid record");
 	}
-	// Same-session repeat: fold the old row into a versioned new one instead of
-	// overwriting it. Anything outside that scope falls through to the legacy
-	// create/update paths below (P4a).
+	// Versioning merge (M1 same-id across sessions, M2 same-session title):
+	// fold the old row into a versioned new one instead of overwriting it.
+	// Anything outside that scope falls through to the legacy create/update
+	// paths below (P4a).
 	const merge = planMerge({
 		memories: db.memories,
 		workspaceId: ctx.workspaceId,

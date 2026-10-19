@@ -235,4 +235,33 @@ describe("judgeOf", () => {
 			cleanup();
 		}
 	});
+	it("clamps repeat past 2 to the same two rounds (no cost hole)", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const out = await runEvalBatch(depsOf(store, steadyLlm()), { workspaceId: REPO, subset: 1, repeat: 100 });
+			expect(out.cases).toBe(1 * 4 * 2);
+		} finally {
+			cleanup();
+		}
+	});
+	it("stamps a custom runId on case rows", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "evolve-eval-runid-"));
+		const store = await openMemoryStore(join(dir, "memory.db"));
+		try {
+			const out = await runEvalBatch(depsOf(store, steadyLlm()), {
+				workspaceId: REPO,
+				subset: 1,
+				repeat: 1,
+				runId: "op-7",
+			});
+			expect(out.report.runId).toBe("op-7");
+			const { DatabaseSync } = await import("node:sqlite");
+			const db = new DatabaseSync(join(dir, "memory.db"));
+			const rows = db.prepare("SELECT DISTINCT run_id AS runId FROM eval_cases").all() as { runId: string }[];
+			db.close();
+			expect(rows.map((row) => row.runId).sort()).toEqual(["op-7-r1"]);
+		} finally {
+			store.close();
+		}
+	});
 });

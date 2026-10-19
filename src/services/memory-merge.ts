@@ -25,6 +25,7 @@ import { moveMemoryUsage } from "../data/usage-accounts.js";
 import type { LedgerFile } from "../store-types.js";
 import type { ItemEventEntry } from "../store-types.js";
 import { createLinkages, updateLinkages } from "./memory-linkage.js";
+import { MEMORY_ID_LIMIT } from "./memory-rules.js";
 import type { MemoryProposal, ProposedFields } from "./memory-rules.js";
 import { normalize } from "./pre-screen.js";
 
@@ -133,7 +134,10 @@ function substantiveChange(fields: ProposedFields, existing: MemoryRecord): bool
 /**
  * Allocate the new row's id: `<base>-vN`, first free suffix in partition order.
  * `getRow` ignores status, so archived versions block reuse by construction —
- * the primary key can never collide with history.
+ * the primary key can never collide with history. Candidates that would break
+ * the store id bound (`MEMORY_ID_LIMIT`) are skipped: a versioned row that
+ * cannot be named readably fails closed here instead of landing an
+ * un-updatable row (a later update would be rejected by `isValidMemoryId`).
  * @param memories - The memories repository.
  * @param workspaceId - The partition.
  * @param base - The folded row's id.
@@ -146,6 +150,9 @@ export function allocateVersionId(
 ): string | undefined {
 	for (let version = 2; version < 2 + MERGE_VERSION_CAP; version += 1) {
 		const candidate = `${base}-v${String(version)}`;
+		if (candidate.length > MEMORY_ID_LIMIT) {
+			return undefined;
+		}
 		if (memories.getRow(workspaceId, candidate) === undefined) {
 			return candidate;
 		}
@@ -193,7 +200,12 @@ export function landMerge(args: {
 		ctx.sessionId ?? null,
 		proposal.sourceSeqs ?? null,
 		ctx.runId ?? (ctx.trigger === "explicit" ? "explicit" : null),
-		link,
+		// An omitted link inherits the folded row's edge: the successor keeps
+		// correcting what its predecessor corrected (an explicit unlink path
+		// does not exist — the gate rejects empty `corrects`, so `null` here
+		// always means "omitted", never "remove"). The in-place path does the
+		// same via `COALESCE(?, corrects)`; the two must never disagree.
+		link ?? old.corrects,
 		fields.notWhen,
 		now,
 		now,

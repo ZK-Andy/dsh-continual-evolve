@@ -50,7 +50,10 @@ export const MEMORIES: ResourceKind = {
 	deleteSql: "DELETE FROM memories WHERE workspace_id = ? AND id = ?",
 	archiveReasonedSql:
 		"UPDATE memories SET status = 'archived', archive_reason = ?, merged_into = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
-	repointSql: "UPDATE memories SET corrects = ? WHERE workspace_id = ? AND corrects = ?",
+	// Live rows only: archived rows are history, their pointers freeze with
+	// them (the collector reads `listRows`, i.e. active rows, and every move
+	// lands a ledger pair — an unledgered archived move would break that).
+	repointSql: "UPDATE memories SET corrects = ? WHERE workspace_id = ? AND corrects = ? AND status = 'active'",
 	restoreTrialSql: "UPDATE memories SET probation_until = ?, origin_workspace = ? WHERE workspace_id = ? AND id = ?",
 	ftsDropSql: "DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE workspace_id = ? AND id = ?)",
 	ftsInsertSql:

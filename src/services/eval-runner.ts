@@ -38,6 +38,9 @@ export interface EvalRunOptions {
 	readonly budgetCapTokens?: number | undefined;
 }
 
+/** Repeat ceiling: the merge is pairwise (first vs second), so anything past 2 runs the same two rounds. */
+const EVAL_REPEAT_MAX = 2;
+
 /** A finished batch: the report, its markdown, and the write count. */
 export interface EvalBatchOut {
 	readonly report: CompareReport;
@@ -164,7 +167,10 @@ export async function runEvalBatch(deps: EvalRunDeps, options: EvalRunOptions): 
 	}
 	const tasks = options.subset === undefined ? loaded.tasks : loaded.tasks.slice(0, options.subset);
 	const runId = options.runId ?? `eval-${deps.today.slice(0, 10)}`;
-	const repeats = options.repeat ?? 2;
+	// Clamped: the flaky merge compares exactly two rounds, so repeat is
+	// boolean in practice (1 vs 2) — a larger ask runs the same two rounds
+	// instead of a cost hole.
+	const repeats = Math.min(Math.max(options.repeat ?? 2, 1), EVAL_REPEAT_MAX);
 	const arms = {} as Record<EvalArm, ArmResult>;
 	const flakyIds: string[] = [];
 	const rows: EvalCaseWrite[] = [];

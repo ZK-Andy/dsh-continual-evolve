@@ -54,7 +54,7 @@
       "outDegree": 3
     },
     "data/resource-kinds.ts": {
-      "lines": 148,
+      "lines": 154,
       "outDegree": 1
     },
     "data/review-accounts.ts": {
@@ -130,7 +130,7 @@
       "outDegree": 1
     },
     "services/eval-runner.ts": {
-      "lines": 215,
+      "lines": 221,
       "outDegree": 10
     },
     "services/eval-solver.ts": {
@@ -186,7 +186,7 @@
       "outDegree": 1
     },
     "services/memory-apply.ts": {
-      "lines": 393,
+      "lines": 394,
       "outDegree": 8
     },
     "services/memory-linkage.ts": {
@@ -194,7 +194,7 @@
       "outDegree": 3
     },
     "services/memory-merge.ts": {
-      "lines": 247,
+      "lines": 259,
       "outDegree": 8
     },
     "services/memory-rules.ts": {
@@ -294,7 +294,7 @@
       "outDegree": 12
     },
     "surfaces/eval-tools.ts": {
-      "lines": 116,
+      "lines": 133,
       "outDegree": 8
     },
     "surfaces/evolve-fields.ts": {
@@ -322,7 +322,7 @@
       "outDegree": 0
     },
     "surfaces/memory-section.ts": {
-      "lines": 386,
+      "lines": 388,
       "outDegree": 4
     },
     "surfaces/memory-snapshot.ts": {

@@ -232,3 +232,69 @@ describe("merge follows", () => {
 		expect(announced).toEqual([{ id: "m-n", event: "similar" }]);
 	});
 });
+
+describe("merge edge carry (retro review)", () => {
+	it("inherits the folded row's corrects when the proposal omits it", () => {
+		create("m-t", "目标", "目标正文", "s1");
+		const [linked] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s1" }, [
+			{ action: "create", id: "m-a", type: "user", title: "标题", description: "钩子", body: "旧正文", corrects: "m-t" },
+		]);
+		expect(linked?.ok).toBe(true);
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s2" }, [
+			{ action: "update", id: "m-a", body: "新正文" },
+		]);
+		expect(outcome?.ok).toBe(true);
+		expect(outcome?.id).toBe("m-a-v2");
+		// The successor keeps correcting what its predecessor corrected: an
+		// omitted link is inheritance, never an unlink (no unlink path exists).
+		expect(store.get(WS, "m-a-v2")?.corrects).toBe("m-t");
+		expect(rowOf("m-a").status).toBe("archived");
+	});
+
+	it("freezes archived pointers on repoint: live rows only", () => {
+		create("m-a", "标题", "旧正文", "s1");
+		const [linked] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s1" }, [
+			{ action: "create", id: "m-x", type: "user", title: "指正", description: "钩子", body: "指正正文", corrects: "m-a" },
+		]);
+		expect(linked?.ok).toBe(true);
+		const db = new DatabaseSync(dbPath);
+		db.prepare(
+			"INSERT INTO memories (workspace_id, id, type, title, description, body, status, source_session, source_seqs, source_run, corrects, scope, probation_until, origin_workspace, not_when, archive_reason, merged_into, created_at, updated_at) VALUES (?, 'm-z', 'user', '旧指正', 'd', 'b', 'archived', NULL, NULL, NULL, 'm-a', 'project', NULL, NULL, '', 'review-archive', NULL, '2026-01-01', '2026-01-02')",
+		).run(WS);
+		db.close();
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s2" }, [
+			{ action: "update", id: "m-a", body: "新正文" },
+		]);
+		expect(outcome?.id).toBe("m-a-v2");
+		expect(store.get(WS, "m-x")?.corrects).toBe("m-a-v2");
+		const frozen = new DatabaseSync(dbPath);
+		const kept = frozen.prepare("SELECT corrects FROM memories WHERE workspace_id = ? AND id = 'm-z'").get(WS) as {
+			corrects: string | null;
+		};
+		frozen.close();
+		expect(kept.corrects).toBe("m-a");
+	});
+
+	it("fails closed when the versioned id would break the id bound", () => {
+		const base = "y".repeat(78);
+		create(base, "标题", "旧正文", "s1");
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s2" }, [
+			{ action: "update", id: base, body: "新正文" },
+		]);
+		// 78 + "-v2" (3) = 81 > 80: no readable versioned id exists, so the
+		// merge refuses instead of landing an un-updatable row.
+		expect(outcome?.ok).toBe(false);
+		expect(store.get(WS, base)?.body).toBe("旧正文");
+	});
+
+	it("versions a base that still fits the bound exactly", () => {
+		const base = "y".repeat(77);
+		create(base, "标题", "旧正文", "s1");
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit", sessionId: "s2" }, [
+			{ action: "update", id: base, body: "新正文" },
+		]);
+		// 77 + "-v2" (3) = 80: the bound edge still names a legal row.
+		expect(outcome?.ok).toBe(true);
+		expect(outcome?.id).toBe(`${base}-v2`);
+	});
+});

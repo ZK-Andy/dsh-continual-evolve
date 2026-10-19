@@ -118,4 +118,22 @@ describe("executeEvalRun", () => {
 			cleanup();
 		}
 	});
+	it("passes a custom runId through so reruns keep their own rows", async () => {
+		const { store, dir, cleanup } = await testStore();
+		try {
+			const text = await executeEvalRun(store, fixedWith(steadyLlm(), true), dir, execWith(dir), {
+				subset: 1,
+				repeat: 1,
+				runId: "op-9",
+			});
+			expect(text).toMatch(/# 四臂对照/);
+			const { DatabaseSync } = await import("node:sqlite");
+			const db = new DatabaseSync(join(dir, "memory.db"));
+			const rows = db.prepare("SELECT DISTINCT run_id AS runId FROM eval_cases").all() as { runId: string }[];
+			db.close();
+			expect(rows.map((row) => row.runId).sort()).toEqual(["op-9-r1"]);
+		} finally {
+			cleanup();
+		}
+	});
 });

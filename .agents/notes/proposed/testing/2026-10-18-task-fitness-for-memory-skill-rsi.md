@@ -42,3 +42,5 @@ Status: proposed
 − 新增一套评测工程：任务集维护、判据修复、跑批成本（每批 4 臂 × 20–30 任务）。
 − 小样本（<20 任务）结论按噪声处理，短期可能给不出显著 lift，需要容忍"暂时看不出差别"。
 − 判据只覆盖可判定任务，主观质量维度仍只能进 `OBSERVATION.md`，评测范围有天花板。
+
+> 前向指针：本提案已由 P5a＋P5b（ADR [2026-10-19-p5a-eval-infra](../../implemented/testing/2026-10-19-p5a-eval-infra.md) 与 [2026-10-19-p5b-eval-runner](../../implemented/testing/2026-10-19-p5b-eval-runner.md)）落地，不要当活待办重做；回归集替换周期以 P5a 拍板的双月 60 天为准（正文"季度"已过期）。
