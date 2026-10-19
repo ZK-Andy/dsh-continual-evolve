@@ -1282,4 +1282,30 @@ describe("runExtraction — P2 mechanical screen and prompt audit", () => {
 			raw.close();
 		}
 	});
+
+	it("ledgers an all-dropped batch as a skip with per-item warnings", async () => {
+		store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", id: "known", type: "user", title: "已知", description: "钩子", body: "已存在的正文内容" },
+		]);
+		const main = JSON.stringify({
+			decision: "apply",
+			reason: "重复提案",
+			proposals: [{ action: "create", type: "user", title: "已知", description: "钩子", body: "已存在的正文内容" }],
+		});
+		const llm = triLlm(GATE_YES_P2, CLASSIFY_YES_P2, main);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("skipped");
+		expect(result.skipReason).toContain("pre-screen");
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT skip_reason, dropped_warnings FROM extraction_log WHERE status = 'skipped'").get() as {
+				skip_reason: string; dropped_warnings: string | null;
+			};
+			expect(row.skip_reason).toContain("pre-screen");
+			expect(JSON.parse(row.dropped_warnings ?? "null")).toEqual([{ id: "", reason: "duplicate" }]);
+		} finally {
+			raw.close();
+		}
+	});
 });
