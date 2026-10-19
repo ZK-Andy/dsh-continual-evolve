@@ -22,8 +22,9 @@
  * instead of vanishing.
  */
 import { join, resolve } from "node:path";
+import { GLOBAL_WORKSPACE } from "../store.js";
 import { cwdOf } from "../services/agent.js";
-import { fitTiered, type IndexRow } from "../services/token-budget.js";
+import { estimateTokens, fitTiered, type IndexRow } from "../services/token-budget.js";
 import { memoryGuideIntro, MEMORY_GUIDE_RULES } from "./memory-guide.js";
 import type { MemoryStore } from "../store.js";
 
@@ -75,6 +76,31 @@ const NOT_WHEN_RENDER_LIMIT = 60;
 /** Clip a rendered fragment at a character boundary, marking the cut. */
 function clip(text: string, limit: number): string {
 	return text.length <= limit ? text : `${text.slice(0, limit)}…`;
+}
+
+/** The four injection layers, rendered in this fixed order (P6). */
+export const INJECTION_LAYERS = ["User Profile", "Project Meta", "Project Memory", "Feedback Memory"] as const;
+
+/** One injection layer name. */
+export type InjectionLayer = (typeof INJECTION_LAYERS)[number];
+
+/** The conflict rule rendered last inside the block: this round wins over memory. */
+export const INJECTION_CONFLICT_RULE = "与本轮指令冲突以本轮为准";
+
+/**
+ * Map one listed record to its layer: person-level facts first, then global
+ * reference, project reference, and feedback last. The partition
+ * (`workspaceId === GLOBAL_WORKSPACE`) is the scope signal — the row `scope`
+ * column carries legacy values and is not read here.
+ */
+export function layerOf(record: { type: string; workspaceId: string }): InjectionLayer {
+	if (record.type === "user") {
+		return "User Profile";
+	}
+	if (record.type === "feedback") {
+		return "Feedback Memory";
+	}
+	return record.workspaceId === GLOBAL_WORKSPACE ? "Project Meta" : "Project Memory";
 }
 
 /** Options for {@link buildSection}. */
@@ -136,14 +162,45 @@ export function buildSection(agent: unknown, opts: SectionOptions): SectionBuild
 		id: record.id,
 		line: indexLineOf({ ...record, notWhen: record.notWhen }),
 	}));
+	// Rows and records share `list` order, so the layer of row i is the layer
+	// of record i. The fit stays global (one budget for the whole index);
+	// grouping only decides where each fitted line renders.
+	const layerByIndex = records.map((record) => layerOf(record));
 	const fit = fitTiered(rows, maxTokens);
 	const ids = [...rows.slice(0, fit.fullCount + fit.idOnlyCount).map((row) => row.id)];
+	let fittedTokens = fit.tokens;
 
 	const parts: string[] = [];
 	if (records.length === 0) {
 		parts.push("<memories>\n（暂无记忆）\n</memories>");
-	} else if (fit.text.length > 0) {
-		parts.push(`<memories>\n${fit.text}\n</memories>`);
+	} else if (fit.fullCount + fit.idOnlyCount > 0) {
+		const lines: string[] = [];
+		const chrome: string[] = [];
+		for (const layer of INJECTION_LAYERS) {
+			const group: string[] = [];
+			for (let i = 0; i < fit.fullCount; i++) {
+				if (layerByIndex[i] === layer) {
+					group.push(rows[i]?.line ?? "");
+				}
+			}
+			for (let i = fit.fullCount; i < fit.fullCount + fit.idOnlyCount; i++) {
+				if (layerByIndex[i] === layer) {
+					group.push(`- [${rows[i]?.id ?? ""}]`);
+				}
+			}
+			if (group.length === 0) {
+				continue;
+			}
+			const heading = `## ${layer}`;
+			chrome.push(heading);
+			lines.push(heading, ...group);
+		}
+		chrome.push(INJECTION_CONFLICT_RULE);
+		lines.push(INJECTION_CONFLICT_RULE);
+		parts.push(`<memories>\n${lines.join("\n")}\n</memories>`);
+		// Headings and the rule ride outside the row budget, but the ledger
+		// still accounts them so `estTokens` stays honest.
+		fittedTokens = fit.tokens + estimateTokens(chrome.join("\n"));
 	} else {
 		parts.push(`（索引超出 ${String(maxTokens)} token 预算，一条都放不下——记忆用 \`evolve_read\` 关键词检索）`);
 	}
@@ -155,7 +212,7 @@ export function buildSection(agent: unknown, opts: SectionOptions): SectionBuild
 	return {
 		text: body,
 		ids,
-		tokens: fit.tokens,
+		tokens: fittedTokens,
 		fullCount: fit.fullCount,
 		idOnlyCount: fit.idOnlyCount,
 		omittedCount: fit.omittedCount,
@@ -277,6 +334,12 @@ export interface FrozenMemorySection {
 	size(): number;
 	/** Drop every frozen session (tests; a restart rebuilds naturally). */
 	clear(): void;
+	/**
+	 * Drop one session's frozen text (post-compact re-injection, P6): the next
+	 * assembly for that session rebuilds, other sessions keep their cache.
+	 * Unknown ids are a no-op. The key is the agent id `sessionIdOf` reads.
+	 */
+	invalidate(sessionId: string): void;
 }
 
 /**
@@ -316,5 +379,8 @@ export function createFrozenMemorySection(maxSessions: number = DEFAULT_FROZEN_S
 		textForMeta: meta.textForMeta,
 		size: () => frozen.size,
 		clear: () => frozen.clear(),
+		invalidate: (sessionId) => {
+			frozen.delete(sessionId);
+		},
 	};
 }

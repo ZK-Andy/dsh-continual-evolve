@@ -124,7 +124,7 @@
     "src/index.ts": {
       "params": 0,
       "return-any": 0,
-      "empty-catch": 1,
+      "empty-catch": 2,
       "console-log": 0
     },
     "src/pages/memory-card/card-http.ts": {

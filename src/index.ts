@@ -57,6 +57,7 @@ import {
 	createSectionRenderer,
 	DEFAULT_MEMORY_SECTION_ORDER,
 	MEMORY_SECTION_NAME,
+	type FrozenMemorySection,
 	type SectionRenderer,
 } from "./surfaces/memory-section.js";
 import { resolveStoredBudget } from "./services/token-budget.js";
@@ -170,6 +171,8 @@ interface RendererDeps {
 	readToolsAvailable: () => boolean;
 	config: EvolveConfig;
 	log: PluginLog;
+	/** The per-session freeze (owned by `apply`, so compaction can invalidate it). */
+	frozen: FrozenMemorySection;
 }
 
 /**
@@ -181,7 +184,7 @@ function buildRenderer(deps: RendererDeps): SectionRenderer {
 	const { config, log } = deps;
 	return createSectionRenderer({
 		readStore: deps.readStore,
-		frozen: createFrozenMemorySection(),
+		frozen: deps.frozen,
 		readBudget: () =>
 			resolveStoredBudget(
 				deps.readStore(),
@@ -287,12 +290,35 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			// failed — the host's logger has no sink to fall back on.
 		},
 	);
+	// The per-session freeze lives here (not inside the renderer) so the
+	// compaction listener below can invalidate one session without touching
+	// the others (P6 post-compact re-injection).
+	const frozen = createFrozenMemorySection();
 	const renderer = buildRenderer({
 		readStore: () => state.store,
 		readToolsAvailable: () => state.toolsAvailable,
 		config,
 		log,
+		frozen,
 	});
+	// Post-compact re-injection: the same `session/event` + `compaction/start`
+	// the extraction scheduler drains on (no new host capability assumed). A
+	// host without session events keeps the previous freeze behavior.
+	const events = host as HostContext & Partial<{ on: (event: string, handler: (...args: never[]) => void) => unknown }>;
+	if (typeof events.on === "function") {
+		try {
+			events.on("session/event", (session: unknown, event: unknown) => {
+				const id = (session as { id?: unknown } | undefined)?.id;
+				const type = (event as { type?: unknown } | undefined)?.type;
+				if (type === "compaction/start" && typeof id === "string" && id.length > 0) {
+					frozen.invalidate(id);
+				}
+			});
+		} catch {
+			// A host that refuses the subscription keeps frozen sections;
+			// nothing to report through a store that may not be open yet.
+		}
+	}
 	host.systemPrompt.section({
 		name: MEMORY_SECTION_NAME,
 		order: config.memoryIndex?.order ?? DEFAULT_MEMORY_SECTION_ORDER,

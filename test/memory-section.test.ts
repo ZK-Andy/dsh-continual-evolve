@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildSection, createFrozenMemorySection, indexLineOf, memoryDirFor } from "../src/surfaces/memory-section.js";
+import { buildSection, createFrozenMemorySection, indexLineOf, INJECTION_CONFLICT_RULE, layerOf, memoryDirFor } from "../src/surfaces/memory-section.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let workspace = "";
@@ -74,7 +74,9 @@ describe("memorySectionText", () => {
 		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000 }).text;
 		expect(text).toContain("# 持久记忆");
 		expect(text).toContain(store.path);
-		expect(text).toContain(`<memories>\n- [fedora-env] Fedora 环境 — Fedora 环境 的钩子\n</memories>`);
+		expect(text).toContain("## User Profile");
+		expect(text).toContain("- [fedora-env] Fedora 环境 — Fedora 环境 的钩子");
+		expect(text).toContain(INJECTION_CONFLICT_RULE);
 		expect(text).toContain("evolve_read");
 		expect(text).toContain("evolve_write");
 	});
@@ -98,15 +100,32 @@ describe("memorySectionText", () => {
 		expect(text).not.toContain("小作文");
 	});
 
-	it("orders the index feedback > user > reference and shows hooks, not bodies", () => {
+	it("groups the index into User Profile / Project Memory / Feedback Memory with the conflict rule", () => {
 		seed("zzz-reference", "reference", "参照");
 		seed("aaa-user", "user", "画像");
 		seed("mmm-feedback", "feedback", "规矩");
 		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000, guide: false }).text;
 		const lines = text.split("\n").filter((line) => line.startsWith("- ["));
-		expect(lines.map((line) => line.slice(3, line.indexOf("]")))).toEqual(["mmm-feedback", "aaa-user", "zzz-reference"]);
+		expect(lines.map((line) => line.slice(3, line.indexOf("]")))).toEqual(["aaa-user", "zzz-reference", "mmm-feedback"]);
+		expect(text).toContain("## User Profile");
+		expect(text).toContain("## Project Memory");
+		expect(text).toContain("## Feedback Memory");
+		// Empty layers render no heading.
+		expect(text).not.toContain("## Project Meta");
+		expect(text).toContain(INJECTION_CONFLICT_RULE);
 		expect(text).not.toContain("的正文");
 		expect(text).not.toContain("Why:");
+	});
+
+	it("renders a global reference under Project Meta ahead of project rows", () => {
+		store.applyProposals({ workspaceId: "", trigger: "explicit" }, [
+			{ action: "create", id: "g-ref", type: "reference", title: "全局事实", description: "钩子", body: "正文" },
+		]);
+		seed("p-ref", "reference", "项目事实");
+		const text = buildSection(agentAt(workspace), { store, maxTokens: 6000, guide: false }).text;
+		expect(text).toContain("## Project Meta");
+		expect(text.indexOf("## Project Meta")).toBeLessThan(text.indexOf("## Project Memory"));
+		expect(text.indexOf("g-ref")).toBeLessThan(text.indexOf("p-ref"));
 	});
 
 	it("shows the empty marker when the workspace has no memories", () => {
@@ -189,6 +208,31 @@ describe("createFrozenMemorySection", () => {
 		let builds = 0;
 		expect(frozen.textFor({}, () => `t${++builds}`)).toBe("t1");
 		expect(frozen.textFor({}, () => `t${++builds}`)).toBe("t2");
+	});
+
+	it("invalidates one session without touching the others", () => {
+		const frozen = createFrozenMemorySection();
+		let builds = 0;
+		const build = () => `text-${++builds}`;
+		expect(frozen.textFor({ id: "a" }, build)).toBe("text-1");
+		expect(frozen.textFor({ id: "b" }, build)).toBe("text-2");
+		frozen.invalidate("a");
+		expect(frozen.textFor({ id: "a" }, build)).toBe("text-3");
+		expect(frozen.textFor({ id: "b" }, build)).toBe("text-2");
+		// Unknown ids are a no-op.
+		frozen.invalidate("missing");
+		expect(frozen.size()).toBe(2);
+	});
+});
+
+describe("layerOf", () => {
+	it("maps user and feedback by type, reference by partition", () => {
+		expect(layerOf({ type: "user", workspaceId: "proj" })).toBe("User Profile");
+		expect(layerOf({ type: "user", workspaceId: "" })).toBe("User Profile");
+		expect(layerOf({ type: "feedback", workspaceId: "proj" })).toBe("Feedback Memory");
+		expect(layerOf({ type: "feedback", workspaceId: "" })).toBe("Feedback Memory");
+		expect(layerOf({ type: "reference", workspaceId: "" })).toBe("Project Meta");
+		expect(layerOf({ type: "reference", workspaceId: "proj" })).toBe("Project Memory");
 	});
 });
 

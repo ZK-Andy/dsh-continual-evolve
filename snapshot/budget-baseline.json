@@ -82,7 +82,7 @@
       "outDegree": 3
     },
     "index.ts": {
-      "lines": 301,
+      "lines": 327,
       "outDegree": 11
     },
     "pages/memory-card/card-http.ts": {
@@ -322,7 +322,7 @@
       "outDegree": 0
     },
     "surfaces/memory-section.ts": {
-      "lines": 320,
+      "lines": 386,
       "outDegree": 4
     },
     "surfaces/memory-snapshot.ts": {
