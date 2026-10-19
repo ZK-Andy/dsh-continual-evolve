@@ -6,8 +6,10 @@
  * the runner's replay input (P5b). Pruned with the ledgers at 30 days.
  */
 import type { DatabaseSync } from "node:sqlite";
-import { EVAL_ARMS, type EvalArm } from "./records.js";
+import { EVAL_ARMS, type EvalCaseWrite } from "./records.js";
 import { redactText } from "./secret.js";
+/** The case-write shape lives in `records.js`; re-exported so P5a import sites keep working. */
+export type { EvalCaseWrite } from "./records.js";
 
 /**
  * Last manual eval runs, written by the runner (P5b) and read by the card
@@ -57,18 +59,6 @@ export function evalCasesDdl(name: string): string {
   created_at TEXT NOT NULL,
   PRIMARY KEY (run_id, task_id, arm)
 )`;
-}
-
-/** One eval case write: the triple plus its run identity. */
-export interface EvalCaseWrite {
-	readonly runId: string;
-	readonly taskId: string;
-	readonly arm: EvalArm;
-	readonly workspaceId: string;
-	readonly query: string;
-	readonly injectionPreview: string;
-	readonly reply: string;
-	readonly createdAt: string;
 }
 
 /** Truncate to the cap ( over-long previews/replies stay observable, never reject). */

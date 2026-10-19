@@ -1,0 +1,16 @@
+{
+	"id": "task-013",
+	"from": "session-eval-seed#seq-013",
+	"prompt": "当前环境的 node 能正常启动吗？",
+	"expect": [{ "kind": "test-pass", "cmd": "node -e \"process.exit(0)\"" }],
+	"tags": ["memory", "health"],
+	"seed_memories": [
+		{
+			"id": "no-retry-unstable-network",
+			"type": "feedback",
+			"title": "网络不稳时不重试",
+			"description": "代理或网关抖动导致调用失败时用",
+			"body": "不自动重试，直接上报。\n**Why:** 重试只是再烧 token。\n**How to apply:** 失败即 fail-open。"
+		}
+	]
+}

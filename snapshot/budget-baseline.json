@@ -2,12 +2,12 @@
   "version": 1,
   "modules": {
     "assemble.ts": {
-      "lines": 207,
-      "outDegree": 9
+      "lines": 274,
+      "outDegree": 11
     },
     "data/accounts.ts": {
-      "lines": 29,
-      "outDegree": 5
+      "lines": 30,
+      "outDegree": 6
     },
     "data/archive-backfill.ts": {
       "lines": 96,
@@ -18,7 +18,7 @@
       "outDegree": 0
     },
     "data/eval-cases.ts": {
-      "lines": 131,
+      "lines": 121,
       "outDegree": 2
     },
     "data/injection-log.ts": {
@@ -46,7 +46,7 @@
       "outDegree": 4
     },
     "data/records.ts": {
-      "lines": 241,
+      "lines": 253,
       "outDegree": 0
     },
     "data/repository.ts": {
@@ -82,7 +82,7 @@
       "outDegree": 3
     },
     "index.ts": {
-      "lines": 285,
+      "lines": 301,
       "outDegree": 11
     },
     "pages/memory-card/card-http.ts": {
@@ -119,6 +119,26 @@
     },
     "services/chain.ts": {
       "lines": 39,
+      "outDegree": 0
+    },
+    "services/eval-judge.ts": {
+      "lines": 68,
+      "outDegree": 1
+    },
+    "services/eval-report.ts": {
+      "lines": 102,
+      "outDegree": 1
+    },
+    "services/eval-runner.ts": {
+      "lines": 214,
+      "outDegree": 10
+    },
+    "services/eval-solver.ts": {
+      "lines": 142,
+      "outDegree": 5
+    },
+    "services/eval-taskset.ts": {
+      "lines": 163,
       "outDegree": 0
     },
     "services/extraction-failure.ts": {
@@ -270,8 +290,12 @@
       "outDegree": 8
     },
     "store.ts": {
-      "lines": 387,
+      "lines": 391,
       "outDegree": 12
+    },
+    "surfaces/eval-tools.ts": {
+      "lines": 116,
+      "outDegree": 8
     },
     "surfaces/evolve-fields.ts": {
       "lines": 27,

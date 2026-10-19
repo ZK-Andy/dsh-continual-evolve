@@ -1,0 +1,17 @@
+{
+	"id": "task-007",
+	"from": "session-eval-seed#seq-007",
+	"prompt": "publish 之前要核验哪几层？",
+	"expect": [{ "kind": "output-contains", "any": ["CI", "npm"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "release-gate-ci-green",
+			"type": "feedback",
+			"title": "发版前必须 CI 全绿",
+			"description": "准备 publish、打 tag 或发 Release 时用",
+			"body": "发版前 CI 未绿不得 publish。\n**Why:** 本地全绿不等于 CI 绿。\n**How to apply:** 先看 CI 状态再决定。"
+		}
+	],
+	"recall": { "query": "publish 前检查什么", "expect_ids": ["release-gate-ci-green"] }
+}

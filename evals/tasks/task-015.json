@@ -1,0 +1,17 @@
+{
+	"id": "task-015",
+	"from": "session-eval-seed#seq-015",
+	"prompt": "调用失败了，要不要多试几次？",
+	"expect": [{ "kind": "output-contains", "any": ["不重试", "fail-open", "直接上报"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "no-retry-unstable-network",
+			"type": "feedback",
+			"title": "网络不稳时不重试",
+			"description": "代理或网关抖动导致调用失败时用",
+			"body": "不自动重试，直接上报。\n**Why:** 重试只是再烧 token。\n**How to apply:** 失败即 fail-open。"
+		}
+	],
+	"recall": { "query": "失败重试几次", "expect_ids": ["no-retry-unstable-network"] }
+}

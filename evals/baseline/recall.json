@@ -1,6 +1,6 @@
 {
-	"recall1": 1,
-	"recall3": 1,
+	"recall1": 0.7333333333333333,
+	"recall3": 0.7333333333333333,
 	"falseHits": 0,
 	"perQuery": [
 		{
@@ -39,6 +39,98 @@
 			"negative": false,
 			"top3": [
 				"desktop-copy-vs-symlink"
+			]
+		},
+		{
+			"task": "task-006",
+			"query": "备用机场怎么切",
+			"negative": false,
+			"top3": [
+				"proxy-chengdu-telecom"
+			]
+		},
+		{
+			"task": "task-007",
+			"query": "publish 前检查什么",
+			"negative": false,
+			"top3": [
+				"release-gate-ci-green"
+			]
+		},
+		{
+			"task": "task-008",
+			"query": "EXA_API_KEY 放哪",
+			"negative": false,
+			"top3": [
+				"exa-key-home-env"
+			]
+		},
+		{
+			"task": "task-009",
+			"query": "斐波那契数列",
+			"negative": true,
+			"top3": []
+		},
+		{
+			"task": "task-010",
+			"query": "能建 goal 跟踪吗",
+			"negative": false,
+			"top3": [
+				"never-create-goals"
+			]
+		},
+		{
+			"task": "task-015",
+			"query": "失败重试几次",
+			"negative": false,
+			"top3": []
+		},
+		{
+			"task": "task-016",
+			"query": "临时方案能顶吗",
+			"negative": false,
+			"top3": [
+				"dislike-temporary-solutions"
+			]
+		},
+		{
+			"task": "task-017",
+			"query": "界面旧是谁的错",
+			"negative": false,
+			"top3": [
+				"cache-first-suspect"
+			]
+		},
+		{
+			"task": "task-018",
+			"query": "发版要批准吗",
+			"negative": false,
+			"top3": []
+		},
+		{
+			"task": "task-019",
+			"query": "提级多久转正",
+			"negative": false,
+			"top3": []
+		},
+		{
+			"task": "task-020",
+			"query": "讲个笑话",
+			"negative": true,
+			"top3": []
+		},
+		{
+			"task": "task-021",
+			"query": "开源怎么变现",
+			"negative": false,
+			"top3": []
+		},
+		{
+			"task": "task-022",
+			"query": "谁能写记忆库",
+			"negative": false,
+			"top3": [
+				"sqlite-single-store"
 			]
 		}
 	]

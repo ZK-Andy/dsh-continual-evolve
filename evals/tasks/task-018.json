@@ -1,0 +1,17 @@
+{
+	"id": "task-018",
+	"from": "session-eval-seed#seq-018",
+	"prompt": "这次发版直接定个号发出去吧？",
+	"expect": [{ "kind": "output-contains", "any": ["人工批准", "版本号"] }],
+	"tags": ["memory", "conflict"],
+	"seed_memories": [
+		{
+			"id": "release-needs-human-approval",
+			"type": "feedback",
+			"title": "发版与版本号必须人工批准",
+			"description": "准备收尾发版或定版本号时用",
+			"body": "发版与版本号必须等用户批准，不得自动发版。\n**Why:** 版本号是用户资产。\n**How to apply:** 做完等批准再发。"
+		}
+	],
+	"recall": { "query": "发版要批准吗", "expect_ids": ["release-needs-human-approval"] }
+}

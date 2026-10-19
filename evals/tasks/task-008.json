@@ -1,0 +1,24 @@
+{
+	"id": "task-008",
+	"from": "session-eval-seed#seq-008",
+	"prompt": "Exa 的 key 应该放在哪里？",
+	"expect": [{ "kind": "output-contains", "any": [".env", "EXA_API_KEY"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "sqlite-single-store",
+			"type": "reference",
+			"title": "记忆库是中央 SQLite 单库",
+			"description": "需要确认记忆存哪里时查",
+			"body": "全部记忆住 ~/.dsh/evolve/memory.db，按工作区路径行分区，代码是唯一写者。"
+		},
+		{
+			"id": "exa-key-home-env",
+			"type": "reference",
+			"title": "Exa key 放 home 下的 .env",
+			"description": "配搜索通道或 key 失效时查",
+			"body": "EXA_API_KEY 放 ~/.dsh/.env（0600），DSH 启动自动加载，不用终端 export。"
+		}
+	],
+	"recall": { "query": "EXA_API_KEY 放哪", "expect_ids": ["exa-key-home-env"] }
+}

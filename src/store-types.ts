@@ -4,14 +4,13 @@
  * injection) programs against. Record shapes live with their row twins in
  * `./data/records.js` (single home) and are re-exported here so existing
  * importers keep working. Implementation lives in `./store.js` (assembly),
- * `./data/*` ( SQL and accounts), and `./services/skill-apply.js` (skill
- * writes); this file carries no SQL.
+ * `./data/*` (SQL/accounts), `./services/skill-apply.js` (skill writes); no SQL here.
  */
 import type { MemoryProposal } from "./services/memory-rules.js";
 import type { PromptProposal } from "./services/prompt-rules.js";
 import type { SkillProposal } from "./services/skill-rules.js";
 import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.js";
-import type { InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
+import type { EvalCaseWrite, InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
 import type { ItemEventEntry, ReviewSettled } from "./data/item-events.js";
 import type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
 import type { TieringOutcome } from "./data/tiering.js";
@@ -83,7 +82,6 @@ export type LedgerTrigger = (typeof LEDGER_TRIGGERS)[number];
 
 /** The ledger column counting the wake-ups one coalesced row stands for. */
 export const LEDGER_OCCURRENCES = "occurrences";
-
 
 /** What a single skill proposal produced. */
 export interface SkillProposalOutcome {
@@ -258,6 +256,8 @@ export interface MemoryStore {
 	logPlugin(entry: PluginLogEntry): void;
 	/** Ledger, eval-case, and log rows older than the cutoff, removed (the unbounded tables). */
 	pruneLedger(beforeIso: string): number;
+	/** Eval case rows for one manual run (the runner writes, the card reads staleness). */
+	writeEvalCases(cases: readonly EvalCaseWrite[]): number;
 	/**
 	 * Record one session's injection (the ids the index named and its estimated
 	 * tokens). The section is frozen per session, so this writes once per

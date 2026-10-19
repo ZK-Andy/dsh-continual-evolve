@@ -1,0 +1,17 @@
+{
+	"id": "task-019",
+	"from": "session-eval-seed#seq-019",
+	"prompt": "被提级的记忆什么时候转正？",
+	"expect": [{ "kind": "output-contains", "any": ["30", "实习", "引用"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "probation-30d-promotion",
+			"type": "reference",
+			"title": "提级带 30 天实习期",
+			"description": "问全局记忆何时转正时查",
+			"body": "提级进全局带 30 天实习，到期按非来源分区引用数转正或退回。"
+		}
+	],
+	"recall": { "query": "提级多久转正", "expect_ids": ["probation-30d-promotion"] }
+}

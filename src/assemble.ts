@@ -1,15 +1,17 @@
 /**
- * Shared mount assembly: the four host wiring behind tools, extraction,
- * review, and the bundled creator skills. Split out of the plugin entry so
- * the entry keeps only config, host shapes, and the apply orchestration —
- * this module owns the nested-inject mounting the entry delegates. Config
- * unpacking (volatile `.get()`) stays the entry's job: these functions only
- * receive the resolved config the entry built.
+ * Shared mount assembly: the five host wirings — tools, extraction,
+ * review, the bundled creator skills, and the manual eval trigger. Split
+ * out of the plugin entry so the entry keeps only config, host shapes, and
+ * the apply orchestration — this module owns the nested-inject mounting the
+ * entry delegates. Config unpacking (volatile `.get()`) stays the entry's
+ * job: these functions only receive the resolved config the entry built.
  */
 import { createExtractionScheduler, type LlmRuntime, type SchedulerHost } from "./services/extraction.js";
 import { resolveCallRoute, type RouteResolver } from "./services/model-route.js";
 import { createReviewScheduler, type ReviewSchedulerHost } from "./services/review-scheduler.js";
 import type { SurfaceReader } from "./services/extraction-surface.js";
+import { registerEvalTools, type EvalToolFixed } from "./surfaces/eval-tools.js";
+import { buildSection } from "./surfaces/memory-section.js";
 import { registerEvolveTools } from "./surfaces/evolve-tools.js";
 import { packageAssetsDir, registerCreatorSkills } from "./surfaces/skill-provider.js";
 import type { PluginLog } from "./services/plugin-log.js";
@@ -116,6 +118,71 @@ export function mountExtractionWhenAvailable(host: HostContext, store: MemorySto
 			store, surface, llm,
 			...(resolveRoute === undefined ? {} : { resolveRoute }),
 		}));
+	});
+}
+
+/** The token budget the eval's current arm renders under (resolved by the entry). */
+export interface EvalMountBudget {
+	readBudget: () => number;
+}
+
+/**
+ * Register the manual eval trigger through a nested inject: the tools
+ * service takes the tool, the sibling `llm` service plus `ctx.get` supply
+ * the model route per call (D11=A — the existing `llm-call` path, no new
+ * transport). A host without either service simply never registers it.
+ */
+export function mountEvalWhenAvailable(host: HostContext, store: MemoryStore, budget: EvalMountBudget, log: PluginLog): void {
+	const nested = host as HostContext & Partial<NestedInjectHost>;
+	if (typeof nested.inject !== "function") {
+		log.warn(
+			"eval-not-mounted",
+			"host context exposes no inject — eval trigger not registered (injection unaffected)",
+		);
+		return;
+	}
+	nested.inject(["tools", "llm"], (scoped: unknown) => {
+		const context = scoped as {
+			tools?: unknown;
+			llm?: unknown;
+			get?: (name: string) => unknown;
+		};
+		const tools = context.tools as Parameters<typeof registerEvalTools>[0] | undefined;
+		if (tools === undefined || typeof tools.register !== "function") {
+			log.warn(
+				"eval-tools-empty",
+				"tools service present but empty — eval trigger not registered (injection unaffected)",
+			);
+			return;
+		}
+		const llm = (context.llm ?? context.get?.("llm")) as LlmRuntime | undefined;
+		if (llm === undefined) {
+			log.warn("eval-no-llm", "llm service absent — eval trigger not registered (injection unaffected)");
+			return;
+		}
+		const resolveRoute = routeResolverOf(scoped, context.get);
+		if (resolveRoute === undefined) {
+			log.warn("eval-no-route", "host exposes no model route — eval trigger not registered (injection unaffected)");
+			return;
+		}
+		const fixed: EvalToolFixed = {
+			llm,
+			resolveRoute: (agent) => resolveRoute(agent)?.selection,
+			injectionFor: (arm, workspaceId) => {
+				if (arm === "base") {
+					return { system: "", preview: "" };
+				}
+				const built = buildSection({ session: { header: { cwd: workspaceId } } }, {
+					store,
+					maxTokens: budget.readBudget(),
+					guide: true,
+					toolsAvailable: true,
+				});
+				return { system: built.text, preview: built.text };
+			},
+		};
+		registerEvalTools(tools, store, fixed);
+		log.info("eval-trigger-registered", "evolve_eval_run registered (manual four-arm trigger)");
 	});
 }
 

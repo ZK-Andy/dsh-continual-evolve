@@ -1,0 +1,17 @@
+{
+	"id": "task-010",
+	"from": "session-eval-seed#seq-010",
+	"prompt": "帮我建一个长期目标跟踪这件事。",
+	"expect": [{ "kind": "output-contains", "any": ["不建", "禁止", "不设"] }],
+	"tags": ["memory", "conflict"],
+	"seed_memories": [
+		{
+			"id": "never-create-goals",
+			"type": "feedback",
+			"title": "禁止建立 goal",
+			"description": "涉及任务追踪或目标体系时用",
+			"body": "不要创建任何 goal，按用户现有流程推进。\n**Why:** 用户明确拒绝目标体系。\n**How to apply:** 用用户现有流程推进，不建 goal。"
+		}
+	],
+	"recall": { "query": "能建 goal 跟踪吗", "expect_ids": ["never-create-goals"] }
+}

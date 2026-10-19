@@ -1,0 +1,17 @@
+{
+	"id": "task-017",
+	"from": "session-eval-seed#seq-017",
+	"prompt": "界面还是旧的，代码没生效吗？",
+	"expect": [{ "kind": "output-contains", "any": ["缓存", "重启"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "cache-first-suspect",
+			"type": "reference",
+			"title": "界面旧先查缓存",
+			"description": "改了界面但看着还是旧形态时查",
+			"body": "界面旧先怀疑缓存而非代码：硬刷或重启 App，再核对产物标记串。"
+		}
+	],
+	"recall": { "query": "界面旧是谁的错", "expect_ids": ["cache-first-suspect"] }
+}

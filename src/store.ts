@@ -36,6 +36,7 @@ import {
 	prepareItemEventStmts,
 	prepareReviewStmts,
 	prepareTieringStmts,
+	writeEvalCases as writeEvalCaseRows,
 	type InjectionStmts,
 	type ItemEventStmts,
 	type ReviewAccountStmts,
@@ -342,7 +343,7 @@ function buildCommonMethods(
 		| "pluginLogPrune"
 		| "pluginLog"
 	>,
-): Pick<MemoryStore, "mostRecentlyActiveWorkspace" | "patrol" | "logPlugin" | "pruneLedger" | "close"> {
+): Pick<MemoryStore, "mostRecentlyActiveWorkspace" | "patrol" | "logPlugin" | "pruneLedger" | "writeEvalCases" | "close"> {
 	return {
 		mostRecentlyActiveWorkspace() {
 			return latestWorkspaceId([
@@ -379,6 +380,9 @@ function buildCommonMethods(
 			const logs = Number(stmts.pluginLogPrune.run(beforeIso).changes);
 			const evalRows = Number(stmts.evalPrune.run(beforeIso).changes);
 			return memory + skillRows + promptRows + reviews + events + logs + evalRows;
+		},
+		writeEvalCases(cases) {
+			return writeEvalCaseRows(database, cases);
 		},
 		close() {
 			database.close();

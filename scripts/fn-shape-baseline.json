@@ -181,6 +181,36 @@
       "empty-catch": 0,
       "console-log": 0
     },
+    "src/services/eval-judge.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/eval-report.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/eval-runner.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/eval-solver.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/eval-taskset.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
     "src/services/extraction-failure.ts": {
       "params": 2,
       "return-any": 0,
@@ -404,6 +434,12 @@
       "console-log": 0
     },
     "src/store.ts": {
+      "params": 1,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/eval-tools.ts": {
       "params": 1,
       "return-any": 0,
       "empty-catch": 0,

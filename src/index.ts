@@ -4,7 +4,7 @@
  * The v0.15 SQLite single-store redesign (ADR
  * `2026-10-06-sqlite-single-store`): every memory lives in one central
  * database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace path)
- * and the plugin's code is the literal sole writer. This entry wires four
+ * and the plugin's code is the literal sole writer. This entry wires five
  * surfaces over the store:
  *
  * - the session-start section (`memory-section.ts`): a store query rendered
@@ -17,10 +17,12 @@
  *   through the store's gates;
  * - the memory + settings cards (`pages/memory-card/`): the memory
  *   projection plus the global review-settings surface in the official
- *   plugin manager.
+ *   plugin manager;
+ * - the manual eval trigger (`surfaces/eval-tools.ts`): `evolve_eval_run`
+ *   runs the four-arm batch on the host plane, returning `compare.md`.
  *
- * Mounting itself is delegated: the four generic mounts (tools, extraction,
- * review, creator skills) live in `./assemble.js`, the card mounts in
+ * Mounting itself is delegated: the five generic mounts (tools, extraction,
+ * review, creator skills, eval) live in `./assemble.js`, the card mounts in
  * `./pages/memory-card/mount.js` — this entry keeps config, host shapes,
  * and the apply orchestration.
  *
@@ -38,6 +40,7 @@ import { mountCardWhenAvailable, mountSettingsPresentation } from "./pages/memor
 import type { ReviewSettingsSnapshot } from "./pages/memory-card/settings.js";
 import {
 	mountCreatorSkillsWhenAvailable,
+	mountEvalWhenAvailable,
 	mountExtractionWhenAvailable,
 	mountReviewWhenAvailable,
 	mountToolsWhenAvailable,
@@ -248,6 +251,19 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 				log.warn("prune-failed", `ledger retention skipped: ${error instanceof Error ? error.message : String(error)}`);
 			}
 			mountToolsWhenAvailable(host, store, state, log);
+			mountEvalWhenAvailable(
+				host,
+				store,
+				{
+					readBudget: () =>
+						resolveStoredBudget(
+							store,
+							{ maxTokens: config.memoryIndex?.maxTokens, maxChars: config.memoryIndex?.maxChars },
+							GLOBAL_WORKSPACE,
+						).tokens,
+				},
+				log,
+			);
 			mountCreatorSkillsWhenAvailable(host, log);
 			mountExtractionWhenAvailable(host, store, config, log);
 			// One live reader built by the root, shared by the loop and the card:

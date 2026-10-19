@@ -1,0 +1,17 @@
+{
+	"id": "task-022",
+	"from": "session-eval-seed#seq-022",
+	"prompt": "模型能直接改记忆库吗？",
+	"expect": [{ "kind": "output-contains", "any": ["唯一写者", "提案", "门禁"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "sqlite-single-store",
+			"type": "reference",
+			"title": "记忆库是中央 SQLite 单库",
+			"description": "需要确认记忆存哪里时查",
+			"body": "全部记忆住 ~/.dsh/evolve/memory.db，按工作区路径行分区，代码是唯一写者。"
+		}
+	],
+	"recall": { "query": "谁能写记忆库", "expect_ids": ["sqlite-single-store"] }
+}

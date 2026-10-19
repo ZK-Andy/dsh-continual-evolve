@@ -1,0 +1,17 @@
+{
+	"id": "task-021",
+	"from": "session-eval-seed#seq-021",
+	"prompt": "开源项目往哪个方向做能赚钱？",
+	"expect": [{ "kind": "output-contains", "any": ["付费", "变现"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "open-source-monetization-goal",
+			"type": "user",
+			"title": "开源想变现但缺方向",
+			"description": "讨论开源做什么功能或产品时用",
+			"body": "开源项目长期想变现，真正卡点是做什么有人付费。"
+		}
+	],
+	"recall": { "query": "开源怎么变现", "expect_ids": ["open-source-monetization-goal"] }
+}

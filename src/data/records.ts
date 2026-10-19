@@ -49,6 +49,18 @@ export const EVAL_ARMS = ["base", "current", "candidate", "reflect"] as const;
 /** One eval arm value (derived from {@link EVAL_ARMS}, never hand-written). */
 export type EvalArm = (typeof EVAL_ARMS)[number];
 
+/** One eval case write: the query / injection-preview / reply triple plus run identity. */
+export interface EvalCaseWrite {
+	readonly runId: string;
+	readonly taskId: string;
+	readonly arm: EvalArm;
+	readonly workspaceId: string;
+	readonly query: string;
+	readonly injectionPreview: string;
+	readonly reply: string;
+	readonly createdAt: string;
+}
+
 /** One stored memory record (snake_case columns camelCased). */
 export interface MemoryRecord {
 	workspaceId: string;

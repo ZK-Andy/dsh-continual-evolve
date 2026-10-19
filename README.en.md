@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-878%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-936%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -29,7 +29,7 @@ Every memory, skill and prompt note lives in one central SQLite database (`~/.ds
 - **One store, one writer** — all state in one SQLite file; the plugin is the only code that writes it.
 - **Session-start index** — hooks for the current workspace injected as one prompt section, frozen per session, ordered feedback > user > reference.
 - **A budget that degrades, not drops** — CJK-aware token budget (default 6000) steps from full hooks to id-only lines to an "N more" counter.
-- **Two tools** — `evolve_write` lands memories, skills and prompt notes; `evolve_read` serves bodies and searches by keyword (trigram FTS, CJK-aware).
+- **Three tools** — `evolve_write` lands memories, skills and prompt notes; `evolve_read` serves bodies and searches by keyword (trigram FTS, CJK-aware); `evolve_eval_run` runs the four-arm eval on demand (pre-release/bi-monthly, returns `compare.md`).
 - **Proposal-based extraction** — per-session turn-level automation: no idle timer, a cheap pre-gate, a duplicate/no-change pre-screen, every skip ledgered.
 - **Autonomous quality review** — own prompts, budget and ledger; verdicts rewrite / quarantine / archive / advice-only; deletion is never automatic; dry-run by default.
 - **Layered memory** — L0 about the person, L1 about a project, L2 never stored; L0 is reachable only through two independent judgements plus a 30-day probation.
@@ -157,7 +157,7 @@ Every `review.*` field is volatile: the settings card edits it without a remount
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (878 tests)
+pnpm test                    # vitest (936 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds (91/83)
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR format, doc budgets, links, governance, handoff
@@ -167,11 +167,11 @@ pnpm eval:recall             # offline recall baseline (hit@1 / MRR over a fixtu
 
 | Path | Contents |
 |---|---|
-| `src/` | 77 modules: registration, store, `data/` back end, `services/` application services, `surfaces/` presentation, `pages/memory-card/` |
+| `src/` | 85 modules: registration, store, `data/` back end, `services/` application services (incl. four-arm eval runner), `surfaces/` presentation, `pages/memory-card/` |
 | `client/` | hand-written client bundle for the cards |
 | `locale/` | localized display name and description (zh/en) |
 | `scripts/` | gates (ADR, docs, layering, budgets, pack) and `eval:recall` |
-| `test/` | vitest suite, 71 files |
+| `test/` | vitest suite, 81 files |
 | `docs/` | `design.md` (design) · `FAQ.md` (real-world pitfalls) |
 | `.agents/` | AI collaboration layer (AGENTS.md, skills, ADR notes) |
 

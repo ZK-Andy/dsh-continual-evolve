@@ -1,0 +1,17 @@
+{
+	"id": "task-016",
+	"from": "session-eval-seed#seq-016",
+	"prompt": "线上出问题了，先重启顶一下行吗？",
+	"expect": [{ "kind": "output-contains", "any": ["根因", "临时"] }],
+	"tags": ["memory"],
+	"seed_memories": [
+		{
+			"id": "dislike-temporary-solutions",
+			"type": "feedback",
+			"title": "排斥临时方案要查根因",
+			"description": "想拿临时手段顶过去时用",
+			"body": "拒绝临时方案，先查根因。\n**Why:** 临时手段掩盖问题。\n**How to apply:** 先查根因再动手。"
+		}
+	],
+	"recall": { "query": "临时方案能顶吗", "expect_ids": ["dislike-temporary-solutions"] }
+}

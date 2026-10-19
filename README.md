@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-878%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-936%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -29,7 +29,7 @@
 - **一个库，一个写者**——全部状态住一个 SQLite 文件；只有插件代码能写它。
 - **开局注入索引**——本工作区的钩子作为单个 prompt section 注入，会话内冻结，feedback > user > reference 排序。
 - **预算超了降级，不丢条**——CJK 感知的 token 预算（默认 6000）：完整钩子行 → 只留 id 行 → 「其余 N 条」计数行。
-- **两个工具**——`evolve_write` 落记忆、技能与提示词补充；`evolve_read` 按 id 取正文、按关键词检索（trigram FTS，CJK 感知）。
+- **三个工具**——`evolve_write` 落记忆、技能与提示词补充；`evolve_read` 按 id 取正文、按关键词检索（trigram FTS，CJK 感知）；`evolve_eval_run` 手动跑四臂评测（发版前/双月，返回 `compare.md`）。
 - **提案制提取**——按会话隔离的轮级自动化：无空闲计时器、便宜预检门、duplicate/no-change 预筛，每次跳过都记账。
 - **内容质量自进化环**——自有提示词、预算与账本；判词为改写／隔离／归档／仅建议；删除永不自动；默认试运行。
 - **记忆分层**——L0 跟人走，L1 跟项目走，L2 不进库；L0 只能经两次独立判定 + 30 天实习进入。
@@ -157,7 +157,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ```bash
 pnpm install && pnpm build   # 装依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（878 个测试）
+pnpm test                    # vitest（936 个测试）
 pnpm test:coverage           # v8 覆盖率，CI 门禁 91/83
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR 格式、文档预算、链接、治理、交接
@@ -167,11 +167,11 @@ pnpm eval:recall             # 离线检索基线（fixture 上的 hit@1 / MRR�
 
 | 路径 | 内容 |
 |---|---|
-| `src/` | 77 个模块：注册、存储、`data/` 后端、`services/` 应用服务、`surfaces/` 表现层、`pages/memory-card/` |
+| `src/` | 85 个模块：注册、存储、`data/` 后端、`services/` 应用服务（含四臂评测 runner）、`surfaces/` 表现层、`pages/memory-card/` |
 | `client/` | 手写客户端 bundle（记忆卡 + 评审设置卡） |
 | `locale/` | 双语显示名与描述（zh/en） |
 | `scripts/` | 门禁（ADR/文档/分层/预算/产物）+ `eval:recall` |
-| `test/` | vitest 套件，71 个文件 |
+| `test/` | vitest 套件，81 个文件 |
 | `docs/` | `design.md`（设计）· `FAQ.md`（踩坑记录） |
 | `.agents/` | AI 协作层（AGENTS.md、技能、ADR） |
 

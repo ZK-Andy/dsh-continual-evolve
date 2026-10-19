@@ -41,7 +41,7 @@ export interface ToolDefinition {
 	execute(args: Record<string, unknown>, exec: ToolExec): Promise<{ text: string }>;
 }
 
-function textTool(
+export function textTool(
 	name: string,
 	description: string,
 	parameters: Record<string, unknown>,

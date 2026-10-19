@@ -13,6 +13,7 @@ export {
 	type ItemEventStmts,
 } from "./item-events.js";
 export { createUsageCounters } from "./usage-accounts.js";
+export { writeEvalCases } from "./eval-cases.js";
 export {
 	createInjectionMethods,
 	prepareInjectionStmts,
