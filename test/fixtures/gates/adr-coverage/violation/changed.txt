@@ -1,0 +1,2 @@
+src/services/foo.ts
+docs/guide.md

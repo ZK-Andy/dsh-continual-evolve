@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "modules": {
+    "small.ts": {
+      "lines": 2,
+      "outDegree": 0
+    }
+  }
+}

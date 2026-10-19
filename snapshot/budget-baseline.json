@@ -1,0 +1,297 @@
+{
+  "version": 1,
+  "modules": {
+    "assemble.ts": {
+      "lines": 207,
+      "outDegree": 9
+    },
+    "data/accounts.ts": {
+      "lines": 29,
+      "outDegree": 5
+    },
+    "data/database.ts": {
+      "lines": 31,
+      "outDegree": 0
+    },
+    "data/injection-log.ts": {
+      "lines": 121,
+      "outDegree": 1
+    },
+    "data/item-events.ts": {
+      "lines": 189,
+      "outDegree": 1
+    },
+    "data/ledger.ts": {
+      "lines": 272,
+      "outDegree": 1
+    },
+    "data/migrate.ts": {
+      "lines": 394,
+      "outDegree": 3
+    },
+    "data/patrol.ts": {
+      "lines": 120,
+      "outDegree": 4
+    },
+    "data/records.ts": {
+      "lines": 210,
+      "outDegree": 0
+    },
+    "data/repository.ts": {
+      "lines": 365,
+      "outDegree": 2
+    },
+    "data/resource-kinds.ts": {
+      "lines": 138,
+      "outDegree": 1
+    },
+    "data/review-accounts.ts": {
+      "lines": 373,
+      "outDegree": 3
+    },
+    "data/schema.ts": {
+      "lines": 329,
+      "outDegree": 3
+    },
+    "data/secret.ts": {
+      "lines": 59,
+      "outDegree": 0
+    },
+    "data/tiering.ts": {
+      "lines": 343,
+      "outDegree": 2
+    },
+    "data/usage-accounts.ts": {
+      "lines": 84,
+      "outDegree": 3
+    },
+    "index.ts": {
+      "lines": 285,
+      "outDegree": 11
+    },
+    "pages/memory-card/card-http.ts": {
+      "lines": 91,
+      "outDegree": 0
+    },
+    "pages/memory-card/card-routes.ts": {
+      "lines": 288,
+      "outDegree": 6
+    },
+    "pages/memory-card/mount.ts": {
+      "lines": 140,
+      "outDegree": 6
+    },
+    "pages/memory-card/prompt-routes.ts": {
+      "lines": 114,
+      "outDegree": 3
+    },
+    "pages/memory-card/settings.ts": {
+      "lines": 232,
+      "outDegree": 1
+    },
+    "pages/memory-card/workspace-hint.ts": {
+      "lines": 69,
+      "outDegree": 0
+    },
+    "services/agent.ts": {
+      "lines": 40,
+      "outDegree": 0
+    },
+    "services/build-identity.ts": {
+      "lines": 133,
+      "outDegree": 0
+    },
+    "services/chain.ts": {
+      "lines": 39,
+      "outDegree": 0
+    },
+    "services/extraction-failure.ts": {
+      "lines": 252,
+      "outDegree": 3
+    },
+    "services/extraction-item.ts": {
+      "lines": 72,
+      "outDegree": 5
+    },
+    "services/extraction-prompt.ts": {
+      "lines": 386,
+      "outDegree": 0
+    },
+    "services/extraction-propose.ts": {
+      "lines": 241,
+      "outDegree": 9
+    },
+    "services/extraction-ring.ts": {
+      "lines": 243,
+      "outDegree": 11
+    },
+    "services/extraction-screen.ts": {
+      "lines": 48,
+      "outDegree": 3
+    },
+    "services/extraction-surface.ts": {
+      "lines": 286,
+      "outDegree": 0
+    },
+    "services/extraction.ts": {
+      "lines": 349,
+      "outDegree": 9
+    },
+    "services/import-md.ts": {
+      "lines": 166,
+      "outDegree": 2
+    },
+    "services/injection-stats.ts": {
+      "lines": 115,
+      "outDegree": 1
+    },
+    "services/llm-call.ts": {
+      "lines": 355,
+      "outDegree": 1
+    },
+    "services/memory-apply.ts": {
+      "lines": 362,
+      "outDegree": 7
+    },
+    "services/memory-linkage.ts": {
+      "lines": 98,
+      "outDegree": 3
+    },
+    "services/memory-rules.ts": {
+      "lines": 249,
+      "outDegree": 1
+    },
+    "services/model-route.ts": {
+      "lines": 209,
+      "outDegree": 0
+    },
+    "services/plugin-log.ts": {
+      "lines": 55,
+      "outDegree": 2
+    },
+    "services/pre-screen.ts": {
+      "lines": 151,
+      "outDegree": 1
+    },
+    "services/prompt-apply.ts": {
+      "lines": 239,
+      "outDegree": 7
+    },
+    "services/prompt-date.ts": {
+      "lines": 38,
+      "outDegree": 0
+    },
+    "services/prompt-rules.ts": {
+      "lines": 61,
+      "outDegree": 2
+    },
+    "services/retention.ts": {
+      "lines": 67,
+      "outDegree": 2
+    },
+    "services/review-candidates.ts": {
+      "lines": 386,
+      "outDegree": 2
+    },
+    "services/review-prompt.ts": {
+      "lines": 159,
+      "outDegree": 0
+    },
+    "services/review-ring.ts": {
+      "lines": 303,
+      "outDegree": 11
+    },
+    "services/review-row.ts": {
+      "lines": 66,
+      "outDegree": 3
+    },
+    "services/review-scheduler.ts": {
+      "lines": 252,
+      "outDegree": 8
+    },
+    "services/review-tiering.ts": {
+      "lines": 228,
+      "outDegree": 3
+    },
+    "services/review.ts": {
+      "lines": 241,
+      "outDegree": 7
+    },
+    "services/skill-apply.ts": {
+      "lines": 384,
+      "outDegree": 7
+    },
+    "services/skill-files.ts": {
+      "lines": 185,
+      "outDegree": 4
+    },
+    "services/skill-rules.ts": {
+      "lines": 201,
+      "outDegree": 2
+    },
+    "services/subagent-defs.ts": {
+      "lines": 134,
+      "outDegree": 4
+    },
+    "services/subagent.ts": {
+      "lines": 114,
+      "outDegree": 2
+    },
+    "services/token-budget.ts": {
+      "lines": 218,
+      "outDegree": 0
+    },
+    "services/token-usage.ts": {
+      "lines": 72,
+      "outDegree": 0
+    },
+    "store-types.ts": {
+      "lines": 400,
+      "outDegree": 8
+    },
+    "store.ts": {
+      "lines": 381,
+      "outDegree": 12
+    },
+    "surfaces/evolve-fields.ts": {
+      "lines": 27,
+      "outDegree": 0
+    },
+    "surfaces/evolve-memory.ts": {
+      "lines": 139,
+      "outDegree": 2
+    },
+    "surfaces/evolve-prompts.ts": {
+      "lines": 93,
+      "outDegree": 2
+    },
+    "surfaces/evolve-skills.ts": {
+      "lines": 166,
+      "outDegree": 3
+    },
+    "surfaces/evolve-tools.ts": {
+      "lines": 283,
+      "outDegree": 6
+    },
+    "surfaces/memory-guide.ts": {
+      "lines": 41,
+      "outDegree": 0
+    },
+    "surfaces/memory-section.ts": {
+      "lines": 320,
+      "outDegree": 4
+    },
+    "surfaces/memory-snapshot.ts": {
+      "lines": 392,
+      "outDegree": 4
+    },
+    "surfaces/prompt-snapshot.ts": {
+      "lines": 143,
+      "outDegree": 1
+    },
+    "surfaces/skill-provider.ts": {
+      "lines": 172,
+      "outDegree": 0
+    }
+  }
+}

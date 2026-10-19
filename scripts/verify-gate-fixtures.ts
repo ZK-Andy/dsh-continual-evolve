@@ -136,6 +136,27 @@ export const GATE_CASES: readonly GateCase[] = [
 			"clean/package.json",
 		],
 	},
+	{
+		id: "adr-coverage",
+		script: "scripts/verify-adr-coverage.ts",
+		violation: (fx) => ({ args: ["--changed-file", join(fx, "changed.txt")], cwd: root }),
+		clean: (fx) => ({ args: ["--changed-file", join(fx, "changed.txt")], cwd: root }),
+		fixtures: ["violation/changed.txt", "clean/changed.txt"],
+	},
+	{
+		id: "dep-cycles",
+		script: "scripts/verify-dep-cycles.ts",
+		violation: (fx) => at(fx),
+		clean: (fx) => at(fx),
+		fixtures: ["violation/a.ts", "violation/b.ts", "clean/small.ts"],
+	},
+	{
+		id: "budget-ratchet",
+		script: "scripts/verify-budget-ratchet.ts",
+		violation: (fx) => ({ args: [join(fx, "src"), "--baseline", join(fx, "baseline.json")], cwd: root }),
+		clean: (fx) => ({ args: [join(fx, "src"), "--baseline", join(fx, "baseline.json")], cwd: root }),
+		fixtures: ["violation/src/evil.ts", "violation/baseline.json", "clean/src/small.ts", "clean/baseline.json"],
+	},
 ];
 
 /** A gate run's outcome. */

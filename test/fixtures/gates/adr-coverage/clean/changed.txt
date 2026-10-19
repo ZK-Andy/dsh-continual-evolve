@@ -1,0 +1,2 @@
+src/services/foo.ts
+.agents/notes/proposed/architecture/2026-10-20-foo.md
