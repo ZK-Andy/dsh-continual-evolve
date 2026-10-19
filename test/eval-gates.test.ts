@@ -37,6 +37,14 @@ describe("checkFreshness", () => {
 		expect(parseCompareHeader("c.md", "commit: abcdef1\ndate: 2026-10-19\n"))?.toEqual({ file: "c.md", commit: "abcdef1" });
 		expect(parseCompareHeader("c.md", "no header here\n")).toBeUndefined();
 	});
+
+	it("parses the markdown-list commit the runner actually writes (首跑回填形状)", () => {
+		const rendered = "# 四臂对照 eval-2026-10-19\n\n- date: 2026-10-19\n- commit: 88c346f9d4a9765ea90ebcace488323d5df047ad\n- tasks: 22\n";
+		expect(parseCompareHeader("compare.md", rendered))?.toEqual({
+			file: "compare.md",
+			commit: "88c346f9d4a9765ea90ebcace488323d5df047ad",
+		});
+	});
 });
 
 /** Anchor staleness (P5a): 60d warn, 67d fail, never-anchored warns. */

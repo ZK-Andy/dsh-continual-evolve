@@ -37,10 +37,10 @@ export interface CompareHeader {
 	readonly commit: string;
 }
 
-/** Parse a compare.md header (`commit:` line in the first 10 lines). */
+/** Parse a compare.md header (`commit:` line in the first 10 lines, bare or markdown-list form). */
 export function parseCompareHeader(file: string, text: string): CompareHeader | undefined {
 	for (const line of text.split("\n").slice(0, 10)) {
-		const match = /^commit:\s*([0-9a-f]{7,40})\s*$/.exec(line.trim());
+		const match = /^(?:-\s+)?commit:\s*([0-9a-f]{7,40})\s*$/.exec(line.trim());
 		if (match?.[1]) {
 			return { file, commit: match[1] };
 		}
