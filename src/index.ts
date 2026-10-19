@@ -10,19 +10,17 @@
  * - the session-start section (`memory-section.ts`): a store query rendered
  *   as the injected index, frozen per session for the prompt cache;
  * - the model tools (`surfaces/evolve-tools.ts`): `evolve_write` for every
- *   explicit "记住/忘掉/沉淀" instruction (`kind` selects memory vs skill
- *   vs prompt) and `evolve_read` for bodies and search;
+ *   explicit "记住/忘掉/沉淀" instruction (`kind` selects memory vs skill)
+ *   and `evolve_read` for bodies and search;
  * - the extraction scheduler (`services/extraction.ts`): turn-level,
  *   per-session slots, single-flight per session; proposals land only
  *   through the store's gates;
  * - the memory + settings cards (`pages/memory-card/`): the memory
  *   projection plus the global review-settings surface in the official
  *   plugin manager;
- * - the manual eval trigger (`surfaces/eval-tools.ts`): `evolve_eval_run`
- *   runs the four-arm batch on the host plane, returning `compare.md`.
  *
- * Mounting itself is delegated: the five generic mounts (tools, extraction,
- * review, creator skills, eval) live in `./assemble.js`, the card mounts in
+ * Mounting itself is delegated: the four generic mounts (tools, extraction,
+ * review, creator skills) live in `./assemble.js`, the card mounts in
  * `./pages/memory-card/mount.js` — this entry keeps config, host shapes,
  * and the apply orchestration.
  *
@@ -40,7 +38,6 @@ import { mountCardWhenAvailable, mountSettingsPresentation } from "./pages/memor
 import type { ReviewSettingsSnapshot } from "./pages/memory-card/settings.js";
 import {
 	mountCreatorSkillsWhenAvailable,
-	mountEvalWhenAvailable,
 	mountExtractionWhenAvailable,
 	mountReviewWhenAvailable,
 	mountToolsWhenAvailable,
@@ -254,19 +251,6 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 				log.warn("prune-failed", `ledger retention skipped: ${error instanceof Error ? error.message : String(error)}`);
 			}
 			mountToolsWhenAvailable(host, store, state, log);
-			mountEvalWhenAvailable(
-				host,
-				store,
-				{
-					readBudget: () =>
-						resolveStoredBudget(
-							store,
-							{ maxTokens: config.memoryIndex?.maxTokens, maxChars: config.memoryIndex?.maxChars },
-							GLOBAL_WORKSPACE,
-						).tokens,
-				},
-				log,
-			);
 			mountCreatorSkillsWhenAvailable(host, log);
 			mountExtractionWhenAvailable(host, store, config, log);
 			// One live reader built by the root, shared by the loop and the card:

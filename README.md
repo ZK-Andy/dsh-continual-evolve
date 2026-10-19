@@ -22,14 +22,14 @@
 
 <p align="center">中文 | <a href="README.en.md">English</a></p>
 
-全部记忆、技能与提示词补充住在一个中央 SQLite 库里（`~/.dsh/evolve/memory.db`，按工作区路径行分区）。会话开局注入它的索引，而插件的代码是字面意义的**唯一写者**——每条模型提案都要在一个事务内过机械门禁才会落盘。这里没有任何安全属性依赖模型自觉。
+全部记忆与技能住在一个中央 SQLite 库里（`~/.dsh/evolve/memory.db`，按工作区路径行分区）。会话开局注入它的索引，而插件的代码是字面意义的**唯一写者**——每条模型提案都要在一个事务内过机械门禁才会落盘。这里没有任何安全属性依赖模型自觉。
 
 ## 亮点
 
 - **一个库，一个写者**——全部状态住一个 SQLite 文件；只有插件代码能写它。
 - **开局注入索引**——本工作区的钩子作为单个 prompt section 注入，会话内冻结，按 User Profile / Project Meta / Project Memory / Feedback Memory 四组排列。
 - **预算超了降级，不丢条**——CJK 感知的 token 预算（默认 6000）：完整钩子行 → 只留 id 行 → 「其余 N 条」计数行。
-- **三个工具**——`evolve_write` 落记忆、技能与提示词补充；`evolve_read` 按 id 取正文、按关键词检索（trigram FTS，CJK 感知）；`evolve_eval_run` 手动跑四臂评测（发版前/双月，返回 `compare.md`）。
+- **两个工具**——`evolve_write` 落记忆与技能；`evolve_read` 按 id 取正文、按关键词检索（trigram FTS，CJK 感知）。
 - **提案制提取**——按会话隔离的轮级自动化：无空闲计时器、便宜预检门、duplicate/no-change 预筛，每次跳过都记账。
 - **内容质量自进化环**——自有提示词、预算与账本；判词为改写／隔离／归档／仅建议；删除永不自动；默认试运行。
 - **记忆分层**——L0 跟人走，L1 跟项目走，L2 不进库；L0 只能经两次独立判定 + 30 天实习进入。
@@ -79,7 +79,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ### 唯一写路径
 
-- `evolve_write(kind, …)` 承接 `create` / `update` / `delete`（`kind = memory | skill | prompt`），技能另有 `move-to-global`。
+- `evolve_write(kind, …)` 承接 `create` / `update` / `delete`（`kind = memory | skill`），技能另有 `move-to-global`。
 - 门禁在一个事务内完成：id 规范、type 枚举、feedback 的 **Why:**/**How to apply:** 契约、secret 筛查、64KB 正文上限、可选 `corrects` 纠错链、可选 `notWhen` 不适用条件。
 - `evolve_read(kind, …)` 按 id 取正文、按关键词检索：先按词组取 AND（trigram FTS，兜底 LIKE），再退 OR，中文片段按 3 字窗口展开。
 - 按 id 取到的每份正文计一次查阅——这是存在心跳，不是有用证明。长期零查阅是删除候选，但剪枝始终人工。
@@ -167,7 +167,7 @@ pnpm eval:recall             # 离线检索基线（fixture 上的 hit@1 / MRR�
 
 | 路径 | 内容 |
 |---|---|
-| `src/` | 85 个模块：注册、存储、`data/` 后端、`services/` 应用服务（含四臂评测 runner）、`surfaces/` 表现层、`pages/memory-card/` |
+| `src/` | 85 个模块：注册、存储、`data/` 后端、`services/` 应用服务、`surfaces/` 表现层、`pages/memory-card/` |
 | `client/` | 手写客户端 bundle（记忆卡 + 评审设置卡） |
 | `locale/` | 双语显示名与描述（zh/en） |
 | `scripts/` | 门禁（ADR/文档/分层/预算/产物）+ `eval:recall` |

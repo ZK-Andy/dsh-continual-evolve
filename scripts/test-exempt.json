@@ -18,7 +18,6 @@
     "src/data/tiering.ts",
     "src/data/usage-accounts.ts",
     "src/index.ts",
-    "src/pages/memory-card/prompt-routes.ts",
     "src/pages/memory-card/settings.ts",
     "src/services/extraction-propose.ts",
     "src/services/extraction-ring.ts",
@@ -38,8 +37,6 @@
     "src/store-types.ts",
     "src/surfaces/evolve-fields.ts",
     "src/surfaces/evolve-memory.ts",
-    "src/surfaces/evolve-prompts.ts",
-    "src/surfaces/evolve-skills.ts",
-    "src/surfaces/prompt-snapshot.ts"
+    "src/surfaces/evolve-skills.ts"
   ]
 }

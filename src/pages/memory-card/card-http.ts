@@ -1,7 +1,7 @@
 /**
  * Shared HTTP plumbing for the card routes: the host surface shapes plus
  * JSON replies, the GET-only guard, and the `root`/`id` query decoders. One
- * copy — `card-routes.js` and `prompt-routes.js` both import from here (and
+ * copy — `card-routes.js` imports from here (and
  * `card-routes.js` re-exports the shapes, so existing importers keep
  * working). Handlers never throw past the response: malformed input maps
  * to 400, never to a crash.

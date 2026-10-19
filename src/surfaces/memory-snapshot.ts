@@ -9,7 +9,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { GLOBAL_WORKSPACE, MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord } from "../store.js";
-import { EVAL_LAST_EXTERNAL_KEY, EVAL_LAST_FOUR_ARM_KEY, EVAL_STALE_DAYS } from "../data/eval-cases.js";
 import { buildIdentity, type BuildIdentity } from "../services/build-identity.js";
 import { injectionStats, type InjectionStats } from "../services/injection-stats.js";
 
@@ -48,16 +47,6 @@ export interface ArchivedFileInfo {
 	updatedAt: number;
 }
 
-/** One manual eval run the card's freshness line renders (P5a). */
-export interface EvalFreshness {
-	/** Whole days since the run (from the stored ISO date). */
-	daysAgo: number;
-	/** The commit the run measured. */
-	commit: string;
-	/** True past the outer-loop window (the card renders red). */
-	stale: boolean;
-}
-
 /** The full read-only snapshot the card renders for one workspace root. */
 export interface MemorySnapshot {
 	root: string;
@@ -78,8 +67,6 @@ export interface MemorySnapshot {
 	build: BuildIdentity | null;
 	/** Recent injection volume and how much of it was read (null when unreadable). */
 	injection: InjectionStats | null;
-	/** Last manual four-arm and external-anchor runs (null arms never ran). */
-	evals: { fourArm: EvalFreshness | null; external: EvalFreshness | null };
 }
 
 /**
@@ -109,37 +96,6 @@ function mergedMemoryRows(store: MemoryStore, root: string): { record: MemoryRec
 }
 
 /**
- * One eval freshness entry from a state key holding `{"date": ISO, "commit":
- * sha}` (the runner writes, the card reads — key names are the P5a contract).
- * Unparseable or missing rows read as "never ran", never as zero days.
- */
-function evalFreshnessOf(store: MemoryStore, key: string, nowMs: number): EvalFreshness | null {
-	let raw: unknown;
-	try {
-		raw = store.state("", key);
-	} catch {
-		return null;
-	}
-	if (typeof raw !== "string") {
-		return null;
-	}
-	try {
-		const parsed = JSON.parse(raw) as { date?: unknown; commit?: unknown };
-		if (typeof parsed.date !== "string" || typeof parsed.commit !== "string") {
-			return null;
-		}
-		const at = Date.parse(parsed.date);
-		if (Number.isNaN(at)) {
-			return null;
-		}
-		const daysAgo = Math.max(0, Math.floor((nowMs - at) / 86400000));
-		return { daysAgo, commit: parsed.commit, stale: daysAgo > EVAL_STALE_DAYS };
-	} catch {
-		return null;
-	}
-}
-
-/**
  * The read-only snapshot for one workspace partition. A workspace without
  * rows reports `exists: false` (the card shows the empty state); a failing
  * query reports `readError` instead of throwing — the card must observe,
@@ -147,11 +103,6 @@ function evalFreshnessOf(store: MemoryStore, key: string, nowMs: number): EvalFr
  */
 export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot {
 	const workspaceRoot = root;
-	const nowMs = Date.now();
-	const evalsOf = (): MemorySnapshot["evals"] => ({
-		fourArm: evalFreshnessOf(store, EVAL_LAST_FOUR_ARM_KEY, nowMs),
-		external: evalFreshnessOf(store, EVAL_LAST_EXTERNAL_KEY, nowMs),
-	});
 	const absent: MemorySnapshot = {
 		root: workspaceRoot,
 		exists: false,
@@ -163,7 +114,7 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 		lastPatrol: null,
 		build: safeBuild(),
 		injection: null,
-		evals: evalsOf(),
+
 	};
 	let all;
 	try {
@@ -203,7 +154,7 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 		lastPatrol,
 		build: safeBuild(),
 		injection: safeInjection(store, workspaceRoot),
-		evals: evalsOf(),
+
 	};
 }
 

@@ -242,15 +242,13 @@ describe("apply card wiring", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 8) {
+			if (routes.size !== 6) {
 				throw new Error("routes not mounted yet");
 			}
 		});
 		expect([...routes.keys()].sort()).toEqual([
 			"/dsh-continual-evolve/api/v1/memory",
 			"/dsh-continual-evolve/api/v1/memory/file",
-			"/dsh-continual-evolve/api/v1/prompts",
-			"/dsh-continual-evolve/api/v1/prompts/file",
 			"/dsh-continual-evolve/api/v1/review-settings",
 			"/dsh-continual-evolve/api/v1/skills",
 			"/dsh-continual-evolve/api/v1/skills/file",
@@ -284,7 +282,7 @@ describe("apply card wiring", () => {
 			},
 		} as EvolveConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 8) {
+			if (routes.size !== 6) {
 				throw new Error("routes not mounted yet");
 			}
 		});
@@ -327,7 +325,7 @@ describe("apply card wiring", () => {
 		});
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 8) {
+			if (routes.size !== 6) {
 				throw new Error("routes not mounted yet");
 			}
 		});
@@ -348,7 +346,7 @@ describe("apply card wiring", () => {
 		const { routes, host } = makeCtxWithWebServer();
 		apply(host, fullConfig);
 		await vi.waitFor(() => {
-			if (routes.size !== 8) {
+			if (routes.size !== 6) {
 				throw new Error("routes not mounted yet");
 			}
 		});

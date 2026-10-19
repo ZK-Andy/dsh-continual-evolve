@@ -3,7 +3,7 @@
  *
  * Mounted through the host's `webServer` service (same registration shape
  * dshmarket uses: `kind: "exact"` routes on the profile's web server). The
- * memory/skill/prompt endpoints are GET-only projections of the central
+ * memory/skill endpoints are GET-only projections of the central
  * SQLite store (see the fence below); the review-settings endpoint is the
  * card's global settings surface (GET reads the live volatile snapshot,
  * POST merges through the host `configEditor`, never the database).
@@ -12,7 +12,6 @@
  */
 import { memoryEntryContent, listCardWorkspaces, memorySnapshot } from "../../surfaces/memory-snapshot.js";
 import { skillEntryContent, skillSnapshot } from "../../surfaces/skill-snapshot.js";
-import { mountPromptRoutes } from "./prompt-routes.js";
 import {
 	CARD_API_REVIEW_SETTINGS_PATH,
 	reviewSettingsRoute,
@@ -231,7 +230,6 @@ export function mountCardRoutes(
 			},
 		}),
 	);
-	disposers.push(mountPromptRoutes(webServer, store, isKnownRoot));
 	if (options.reviewSettings !== undefined) {
 		disposers.push(webServer.register(reviewSettingsRoute(options.reviewSettings)));
 	}

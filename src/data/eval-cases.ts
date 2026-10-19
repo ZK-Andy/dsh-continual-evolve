@@ -1,9 +1,8 @@
 /**
- * Eval case rows (P5): the query / injection-preview / reply triple per task
- * arm. An eval ledger, not memory sediment — rows never enter the injection
- * index or the card lists; the card only renders their staleness. Writes go
- * through {@link writeEvalCases} (truncate + redact at the door); reads are
- * the runner's replay input (P5b). Pruned with the ledgers at 30 days.
+ * Eval case rows (P5, retired 2026-10-20): the historical query /
+ * injection-preview / reply triples of the single 2026-10-19 four-arm run.
+ * Writes stopped with the runner; reads have no consumer. Retained (with the
+ * 30-day prune) as replayable evidence, not as a live ledger.
  */
 import type { DatabaseSync } from "node:sqlite";
 import { EVAL_ARMS, type EvalCaseWrite } from "./records.js";
@@ -12,10 +11,9 @@ import { redactText } from "./secret.js";
 export type { EvalCaseWrite } from "./records.js";
 
 /**
- * Last manual eval runs, written by the runner (P5b) and read by the card
- * (P5a): store `state` keys holding `{"date": ISO, "commit": sha}`. Key names
- * and value shape are the P5a contract — never invent new ones at
- * implementation time. Follows the `patrol:last` flat-key convention.
+ * Last manual eval runs (P5a contract, retired 2026-10-20): `state` keys
+ * holding `{"date": ISO, "commit": sha}`. No writer and no reader remain;
+ * keys linger without expiry (retention only prunes ledgers). Harmless.
  */
 export const EVAL_LAST_FOUR_ARM_KEY = "eval:last-four-arm";
 export const EVAL_LAST_EXTERNAL_KEY = "eval:last-external";

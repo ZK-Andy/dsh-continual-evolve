@@ -22,14 +22,14 @@
 
 <p align="center"><a href="README.md">中文</a> | English</p>
 
-Every memory, skill and prompt note lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace). Session start injects its index as a single prompt section, and the plugin's code is the literal **sole writer** — every model proposal passes mechanical gates inside one transaction before it lands. No safety property depends on the model behaving.
+Every memory and skill lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace). Session start injects its index as a single prompt section, and the plugin's code is the literal **sole writer** — every model proposal passes mechanical gates inside one transaction before it lands. No safety property depends on the model behaving.
 
 ## Highlights
 
 - **One store, one writer** — all state in one SQLite file; the plugin is the only code that writes it.
 - **Session-start index** — hooks for the current workspace injected as one prompt section, frozen per session, grouped into User Profile / Project Meta / Project Memory / Feedback Memory.
 - **A budget that degrades, not drops** — CJK-aware token budget (default 6000) steps from full hooks to id-only lines to an "N more" counter.
-- **Three tools** — `evolve_write` lands memories, skills and prompt notes; `evolve_read` serves bodies and searches by keyword (trigram FTS, CJK-aware); `evolve_eval_run` runs the four-arm eval on demand (pre-release/bi-monthly, returns `compare.md`).
+- **Two tools** — `evolve_write` lands memories and skills; `evolve_read` serves bodies and searches by keyword (trigram FTS, CJK-aware).
 - **Proposal-based extraction** — per-session turn-level automation: no idle timer, a cheap pre-gate, a duplicate/no-change pre-screen, every skip ledgered.
 - **Autonomous quality review** — own prompts, budget and ledger; verdicts rewrite / quarantine / archive / advice-only; deletion is never automatic; dry-run by default.
 - **Layered memory** — L0 about the person, L1 about a project, L2 never stored; L0 is reachable only through two independent judgements plus a 30-day probation.
@@ -79,7 +79,7 @@ Writes made mid-session become visible in the next session — the injected sect
 
 ### One write path
 
-- `evolve_write(kind, …)` handles `create` / `update` / `delete` for `kind = memory | skill | prompt`, plus `move-to-global` for skills.
+- `evolve_write(kind, …)` handles `create` / `update` / `delete` for `kind = memory | skill`, plus `move-to-global` for skills.
 - Gates, one transaction: id shape, type enum, the feedback **Why:**/**How to apply:** contract, secret screening, 64KB body cap, optional `corrects` link, optional `notWhen` caveat.
 - `evolve_read(kind, …)` serves bodies by id and searches by keyword: AND over the query's token groups (trigram FTS, LIKE underneath), then an OR pass, with CJK fragments expanded into 3-character windows.
 - A body served by id bumps its view counter — a presence heartbeat, not proof of use. Long-unviewed rows become removal candidates; pruning stays human.
@@ -167,7 +167,7 @@ pnpm eval:recall             # offline recall baseline (hit@1 / MRR over a fixtu
 
 | Path | Contents |
 |---|---|
-| `src/` | 85 modules: registration, store, `data/` back end, `services/` application services (incl. four-arm eval runner), `surfaces/` presentation, `pages/memory-card/` |
+| `src/` | 85 modules: registration, store, `data/` back end, `services/` application services, `surfaces/` presentation, `pages/memory-card/` |
 | `client/` | hand-written client bundle for the cards |
 | `locale/` | localized display name and description (zh/en) |
 | `scripts/` | gates (ADR, docs, layering, budgets, pack) and `eval:recall` |

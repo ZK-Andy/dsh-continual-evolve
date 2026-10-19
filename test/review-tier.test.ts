@@ -88,19 +88,6 @@ describe("classifyTier", () => {
 		}
 	});
 
-	it("leaves machine-output eval runs LIGHT (首跑回填不触发 FULL)", () => {
-		const { full, reasons } = classifyTier(["evals/runs/2026-10-19/compare.md"], root);
-		expect(full).toBe(false);
-		expect(reasons).toEqual([]);
-	});
-
-	it("bounds the runs exemption on the trailing slash", () => {
-		expect(classifyTier(["evals/runs/report.json"], root).full).toBe(false);
-		for (const p of ["evals/runs-evil/compare.md", "evals/runsbackfill.md"]) {
-			expect(classifyTier([p], root).full).toBe(true);
-		}
-	});
-
 	it("leaves ordinary src changes LIGHT", () => {
 		expect(classifyTier(["src/services/foo.ts"], root).full).toBe(false);
 		expect(classifyTier(["test/foo.test.ts"], root).full).toBe(false);

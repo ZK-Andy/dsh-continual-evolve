@@ -145,12 +145,6 @@
       "empty-catch": 0,
       "console-log": 0
     },
-    "src/pages/memory-card/prompt-routes.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
     "src/pages/memory-card/settings.ts": {
       "params": 0,
       "return-any": 0,
@@ -176,30 +170,6 @@
       "console-log": 0
     },
     "src/services/chain.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
-    "src/services/eval-judge.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
-    "src/services/eval-report.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
-    "src/services/eval-runner.ts": {
-      "params": 2,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
-    "src/services/eval-solver.ts": {
       "params": 0,
       "return-any": 0,
       "empty-catch": 0,
@@ -439,12 +409,6 @@
       "empty-catch": 0,
       "console-log": 0
     },
-    "src/surfaces/eval-tools.ts": {
-      "params": 1,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
     "src/surfaces/evolve-fields.ts": {
       "params": 0,
       "return-any": 0,
@@ -452,12 +416,6 @@
       "console-log": 0
     },
     "src/surfaces/evolve-memory.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
-    "src/surfaces/evolve-prompts.ts": {
       "params": 0,
       "return-any": 0,
       "empty-catch": 0,
@@ -491,12 +449,6 @@
       "params": 0,
       "return-any": 0,
       "empty-catch": 1,
-      "console-log": 0
-    },
-    "src/surfaces/prompt-snapshot.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 2,
       "console-log": 0
     },
     "src/surfaces/skill-provider.ts": {

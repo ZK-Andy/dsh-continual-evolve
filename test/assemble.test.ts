@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	mountCreatorSkillsWhenAvailable,
-	mountEvalWhenAvailable,
 	mountExtractionWhenAvailable,
 	mountReviewWhenAvailable,
 	mountToolsWhenAvailable,
@@ -190,63 +189,5 @@ describe("shared mount assembly", () => {
 		mountReviewWhenAvailable(host, store, reviewSchedule(true), log);
 		expect(heard).toContain("agent/turn-stopping");
 		expect(events).toContain("info:review-armed");
-	});
-
-	it("eval mount degrades with a warning per missing service", () => {
-		const { events, log } = makeLog();
-		const noInject = { systemPrompt: { section: () => {} } } as HostContext;
-		mountEvalWhenAvailable(noInject, store, { readBudget: () => 4000 }, log);
-		const noTools = {
-			systemPrompt: { section: () => {} },
-			inject: (_services: string[], callback: (scoped: unknown) => void) => callback({}),
-		} as HostContext;
-		mountEvalWhenAvailable(noTools, store, { readBudget: () => 4000 }, log);
-		const noLlm = {
-			systemPrompt: { section: () => {} },
-			inject: (_services: string[], callback: (scoped: unknown) => void) =>
-				callback({ tools: { register: () => () => {} } }),
-		} as HostContext;
-		mountEvalWhenAvailable(noLlm, store, { readBudget: () => 4000 }, log);
-		const noRoute = {
-			systemPrompt: { section: () => {} },
-			inject: (_services: string[], callback: (scoped: unknown) => void) =>
-				callback({ tools: { register: () => () => {} }, llm: {} }),
-		} as HostContext;
-		mountEvalWhenAvailable(noRoute, store, { readBudget: () => 4000 }, log);
-		expect(events).toEqual(["warn:eval-not-mounted", "warn:eval-tools-empty", "warn:eval-no-llm", "warn:eval-no-route"]);
-	});
-
-	it("eval mount registers the trigger over tools+llm and runs both arm shapes", async () => {
-		const { events, log } = makeLog();
-		const seenServices: string[][] = [];
-		let captured: { execute: (args: Record<string, unknown>, exec: unknown) => Promise<{ text: string }> } | undefined;
-		const fakeLlm = {
-			stream: async function* () {
-				yield { type: "text-delta", text: "CI 全绿" };
-				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5 } };
-				yield { type: "finish", reason: { kind: "stop" } };
-			},
-		};
-		const host = {
-			systemPrompt: { section: () => {} },
-			inject: (services: string[], callback: (scoped: unknown) => void) => {
-				seenServices.push(services);
-				callback({
-					tools: {
-						register: (def: unknown) => {
-							captured = def as typeof captured;
-							return () => undefined;
-						},
-					},
-					llm: fakeLlm,
-					get: (name: string) => (name === "agentDefaultModel" ? { currentSelection: () => ({ provider: "p", model: "m" }) } : undefined),
-				});
-			},
-		} as HostContext;
-		mountEvalWhenAvailable(host, store, { readBudget: () => 4000 }, log);
-		expect(seenServices).toEqual([["tools", "llm"]]);
-		expect(events).toContain("info:eval-trigger-registered");
-		const out = await captured?.execute({ subset: 1, repeat: 1 }, { agent: { id: "s1", session: { header: { cwd: dbDir } } } });
-		expect(out?.text).toMatch(/# 四臂对照/);
 	});
 });

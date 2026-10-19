@@ -14,7 +14,6 @@ import {
 	type CardWebServer,
 } from "../src/pages/memory-card/card-routes.js";
 import { CARD_API_REVIEW_SETTINGS_PATH } from "../src/pages/memory-card/settings.js";
-import { CARD_API_PROMPT_FILE_PATH, CARD_API_PROMPTS_PATH } from "../src/pages/memory-card/prompt-routes.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let store: MemoryStore;
@@ -81,7 +80,7 @@ function seed(id = "fedora-env", body = "Fedora 44"): boolean {
 }
 
 describe("mountCardRoutes", () => {
-	it("registers all seven routes and the disposer unregisters them", () => {
+	it("registers all five routes and the disposer unregisters them", () => {
 		const { routes, webServer } = makeWebServer();
 		const disposer = mountCardRoutes(webServer, store);
 		expect([...routes.keys()].sort()).toEqual(
@@ -91,8 +90,6 @@ describe("mountCardRoutes", () => {
 				CARD_API_MEMORY_FILE_PATH,
 				CARD_API_SKILLS_PATH,
 				CARD_API_SKILL_FILE_PATH,
-				CARD_API_PROMPTS_PATH,
-				CARD_API_PROMPT_FILE_PATH,
 			].sort(),
 		);
 		disposer();
@@ -108,7 +105,7 @@ describe("mountCardRoutes", () => {
 			},
 		});
 		expect(routes.has(CARD_API_REVIEW_SETTINGS_PATH)).toBe(true);
-		expect(routes.size).toBe(8);
+		expect(routes.size).toBe(6);
 		const recorded = call(routes.get(CARD_API_REVIEW_SETTINGS_PATH), { method: "GET", url: CARD_API_REVIEW_SETTINGS_PATH });
 		expect(recorded.status).toBe(200);
 		expect(jsonBody(recorded)).toEqual({ enabled: true, dryRun: true, dailyBudget: 100, batchSize: 10, staleDays: 30 });

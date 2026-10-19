@@ -1,7 +1,7 @@
 /**
  * Shared field helpers for the unified tool executors: string narrowing
- * and the read-limit clamp. One copy — the three kind executors
- * (`evolve-memory.js`, `evolve-skills.js`, `evolve-prompts.js`) and the
+ * and the read-limit clamp. One copy — the two kind executors
+ * (`evolve-memory.js`, `evolve-skills.js`) and the
  * dispatcher (`evolve-tools.js`) all import from here.
  */
 

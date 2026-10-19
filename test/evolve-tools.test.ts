@@ -313,8 +313,6 @@ describe("kind dispatch", () => {
 		expect(await run("evolve_write", { kind: "skill", action: "create" }, noWs)).toContain("无法写入技能");
 		expect(await run("evolve_read", { kind: "memory" }, noWs)).toContain("无法读取记忆");
 		expect(await run("evolve_read", { kind: "skill" }, noWs)).toContain("无法读取技能");
-		expect(await run("evolve_write", { kind: "prompt", action: "create" }, noWs)).toContain("无法写入提示词补充");
-		expect(await run("evolve_read", { kind: "prompt" }, noWs)).toContain("无法读取提示词补充");
 		expect(await run("evolve_write", { kind: "thread", action: "create" }, noWs)).toContain("kind 必须是");
 	});
 });
