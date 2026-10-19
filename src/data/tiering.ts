@@ -97,6 +97,40 @@ interface PromoteRequest {
 }
 
 /**
+ * Portability screen for global promotion: a global row is read in every
+ * workspace, so the source partition's absolute path must not leak into the
+ * promoted copy (2026-10-20 提级可移植性门禁：`bash-workspace-only-staging`
+ * 当晚带着本工作区路径进了全局分区，工具层改不动实习期条目，只能直改库）。
+ * Pure: the caller supplies the source fields. Only the origin partition's
+ * own path is matched (narrow by design — a global memory may legitimately
+ * discuss paths in general, just never its own home). Returns the blocking
+ * reason naming the first offending field, undefined when portable.
+ * @param workspaceId - The source partition (the path that must not appear).
+ * @param fields - The title/description/body/notWhen the global row would carry.
+ * @returns The rejection reason, undefined when the copy is portable.
+ */
+export function globalPortabilityReason(
+	workspaceId: string,
+	fields: { title: string; description: string; body: string; notWhen: string },
+): string | undefined {
+	if (workspaceId.length === 0) {
+		return undefined;
+	}
+	const scanned: ReadonlyArray<readonly [string, string]> = [
+		["title", fields.title],
+		["description", fields.description],
+		["body", fields.body],
+		["notWhen", fields.notWhen],
+	];
+	for (const [name, text] of scanned) {
+		if (text.includes(workspaceId)) {
+			return `${name} 含来源工作区路径，先改写为全局适用再提级`;
+		}
+	}
+	return undefined;
+}
+
+/**
  * Promote one memory into the global partition: build the global row, archive
  * the source row, and land both ledger entries in one transaction. The global
  * row starts on probation and remembers where it came from, so demotion needs
@@ -127,6 +161,15 @@ export function promoteMemory(
 	const existing = memories.getRow("", id);
 	if (existing !== undefined && existing.status === "active") {
 		return { ok: false, reason: `the global partition already holds an active "${id}"` };
+	}
+	const portable = globalPortabilityReason(workspaceId, {
+		title: source.title,
+		description: source.description,
+		body: source.body,
+		notWhen: source.not_when,
+	});
+	if (portable !== undefined) {
+		return { ok: false, reason: portable };
 	}
 	const ts = request.now.toISOString();
 	const until = new Date(request.now.getTime() + PROBATION_DAYS * DAY_MS).toISOString();

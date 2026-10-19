@@ -101,7 +101,7 @@ const EVOLVE_WRITE_PARAMETERS = {
 			type: "string",
 			enum: ["create", "update", "delete", "move-to-global"],
 			description:
-				"create 新建；update 更新已有条目（只给要改的字段）；delete 删除；move-to-global 把本项目条目手动搬到全局（技能与记忆可用；记忆进全局后 30 天实习，有跨项目引用才转正）。",
+				"create 新建；update 更新已有条目（只给要改的字段）；delete 删除；move-to-global 把本项目条目手动搬到全局（技能与记忆可用；记忆进全局后 30 天实习，有跨项目引用才转正；记忆标题/钩子/正文/不适用条件任一含源工作区路径会被提级门禁拒绝）。",
 		},
 		scope: {
 			type: "string",

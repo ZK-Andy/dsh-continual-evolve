@@ -8,6 +8,7 @@ import {
 	archiveGateReason,
 	createTieringMethods,
 	demoteMemory,
+	globalPortabilityReason,
 	probationDue,
 	promoteMemory,
 	promotionCandidates,
@@ -112,6 +113,40 @@ describe("refusals name their reason", () => {
 
 	it("refuses to demote when the global row is gone", () => {
 		expect(store.demoteMemory("", "ghost").ok).toBe(false);
+	});
+
+	it("refuses to promote a row carrying its home partition path", () => {
+		const [created] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", id: "m-home", type: "user", title: "t", description: "d", body: `记于 ${WS} 的事实`, scope: "project" },
+		]);
+		expect(created?.ok).toBe(true);
+		const outcome = store.promoteMemory(WS, "m-home");
+		expect(outcome.ok).toBe(false);
+		expect(outcome.reason).toContain("改写为全局适用");
+		expect(statusOf(WS, "m-home")).toBe("active");
+	});
+
+	it("names the offending field and ignores other partitions paths", () => {
+		const [created] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", id: "m-home", type: "user", title: `位于 ${WS}`, description: "d", body: "记于 /elsewhere 的事实", scope: "project" },
+		]);
+		expect(created?.ok).toBe(true);
+		const outcome = store.promoteMemory(WS, "m-home");
+		expect(outcome.ok).toBe(false);
+		expect(outcome.reason ?? "").toMatch(/^title /);
+	});
+
+	it("passes a row carrying only another partition path", () => {
+		const [created] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "create", id: "m-ok", type: "user", title: "t", description: "d", body: "记于 /elsewhere 的事实", scope: "person" },
+		]);
+		expect(created?.ok).toBe(true);
+		expect(store.promoteMemory(WS, "m-ok").ok).toBe(true);
+		expect(statusOf("", "m-ok")).toBe("active");
+	});
+
+	it("treats an empty workspace as portable (global rows never re-screen)", () => {
+		expect(globalPortabilityReason("", { title: "t", description: "d", body: "b", notWhen: "" })).toBeUndefined();
 	});
 
 	it("replaces a conflicting project row on demotion", () => {
