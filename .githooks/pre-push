@@ -86,4 +86,13 @@ echo "-> 文档门禁"
 ./node_modules/.bin/tsx scripts/verify-md-links.ts
 ./node_modules/.bin/tsx scripts/verify-handoff-structure.ts
 
+# 评审档判定（本次 push 范围定档——FULL 无证据即拦；范围算不出时按工作树口径）
+if [[ "$SCOPE_SET" == 1 ]]; then
+  echo "-> verify-review-tier.ts --since <push-base> --head <push-head>"
+  ./node_modules/.bin/tsx scripts/verify-review-tier.ts --since "${SCOPE_ARGS[0]}" --head "${SCOPE_ARGS[1]}"
+else
+  echo "-> verify-review-tier.ts (工作树口径)"
+  ./node_modules/.bin/tsx scripts/verify-review-tier.ts
+fi
+
 echo "pre-push OK"

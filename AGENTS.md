@@ -28,6 +28,18 @@ DeepSeek Harness 的工作区记忆插件：全部记忆住中央 SQLite 库（`
 - 完整规范：[docs/coding-standard.md](docs/coding-standard.md)（编码）与 [docs/architecture-standard.md](docs/architecture-standard.md)（分层/预算/host 边界）。
 - 红线：**fail loud**；行为级变更必须配套回归测试（vitest）；构建产物只进 `lib/`、源码只在 `src/`。
 
+## 评审检查项（AI 兜底）
+
+以下「留评审/语义」规则机器无法强制（机械化门禁未覆盖），由三重审核代理在仓库约定下额外执行（见 [feature-flow](.agents/workflows/feature-flow.md) 步骤 5）：
+
+- **存储单写者**：模型意图一律经结构化提案过机械门禁后由代码事务落盘，任何"模型直写存储"路径都违宪（[architecture-standard 不变量 §4](docs/architecture-standard.md)）。
+- **组装根只装配**：`index.ts`/`assemble.ts` 不夹带业务/领域逻辑（[architecture-standard 组装根 §1](docs/architecture-standard.md)）。
+- **边界完备**：SQL/表名裸字符串只在 `data/`，volatile 配置读只在 `index.ts`（[architecture-standard 分层语义 §5](docs/architecture-standard.md)）；宿主侧渲染只在 `client/`（单 bundle、同源 fetch）。
+- **错误语义**：`catch` 命名所吞、`try` 只包一个语句、禁空 `catch`（[coding-standard 错误处理 §3](docs/coding-standard.md)）。
+- **跨层 ID 强类型**：跨模块 ID 用 Branded，禁裸 `string` 跨层（[coding-standard 类型 §2](docs/coding-standard.md)）。
+
+评审代理按上述清单核对；发现即作 blocker 或 suggestion。
+
 ## GitHub 调研纪律（强制）
 
 调研 GitHub 项目一律 gh CLI；禁以 web 检索开局、禁全量克隆作首选。六步配方见 [.agents/workflows/github-research.md](.agents/workflows/github-research.md)。
@@ -45,9 +57,11 @@ web 检索优先 anysearch 纵向面（zone/tag/params 富参数）；GitHub 归
 
 ```sh
 pnpm typecheck && pnpm lint && pnpm test   # TS 工程链（vitest + oxlint）
-pnpm check:docs                            # 文档门禁（tsx run-gates：adr/预算/链接/治理）
+pnpm check:docs                            # 文档门禁（tsx run-gates：adr/预算/链接/治理/分层/档位…）
 pnpm check:pack                            # 发布产物一致性（prepack 与 CI 强制）
 pnpm run change-scope [<base> <head> | --base <ref> --head <ref>]  # 变更范围（评审/push 前置）
+./node_modules/.bin/tsx scripts/verify-review-tier.ts --staged  # 评审档判定（FULL/LIGHT，pre-commit 同口径）
+./node_modules/.bin/tsx scripts/verify-review-brief.ts          # 评审启动门禁（FULL 需 R1/R2/R3 简报，本地运行，不进 CI）
 git config core.hooksPath .githooks         # 新克隆一次（启用 .githooks，无脚本）
 ```
 

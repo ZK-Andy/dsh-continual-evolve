@@ -42,6 +42,7 @@ function main(): void {
 	run("verify-history-words", ["scripts/verify-history-words.ts"]);
 	run("verify-adr-alternatives", ["scripts/verify-adr-alternatives.ts"]);
 	run("verify-fn-shape", ["scripts/verify-fn-shape.ts"]);
+	run("verify-review-tier", ["scripts/verify-review-tier.ts"]);
 	run("verify-gate-fixtures", ["scripts/verify-gate-fixtures.ts"]);
 	// 工作区根 HANDOFF 家庭（入口/待办/冷归档）：干净检出下文件缺席即跳过（clean-CI 语义）
 	run("verify-handoff-structure", ["scripts/verify-handoff-structure.ts"]);

@@ -34,4 +34,8 @@ echo "-> verify-governance.ts"
 echo "-> verify-layering.ts"
 ./node_modules/.bin/tsx scripts/verify-layering.ts
 
+# 7) 评审档判定（快；暂存区定档——FULL 无证据即拦，见 feature-flow 步骤 5）
+echo "-> verify-review-tier.ts --staged"
+./node_modules/.bin/tsx scripts/verify-review-tier.ts --staged
+
 echo "pre-commit OK"

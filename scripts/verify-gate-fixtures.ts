@@ -220,6 +220,20 @@ export const GATE_CASES: readonly GateCase[] = [
 		}),
 		fixtures: ["violation/runs/2026-01-01/compare.md", "clean/runs/2026-01-01/compare.md"],
 	},
+	{
+		id: "review-tier",
+		script: "scripts/verify-review-tier.ts",
+		violation: (fx) => ({ args: ["--changed-file", join(fx, "changed.txt"), "--repo", fx], cwd: root }),
+		clean: (fx) => ({ args: ["--changed-file", join(fx, "changed.txt"), "--repo", fx], cwd: root }),
+		fixtures: ["violation/changed.txt", "clean/changed.txt"],
+	},
+	{
+		id: "review-brief",
+		script: "scripts/verify-review-brief.ts",
+		violation: (fx) => ({ args: ["--repo", fx, "--lane", "R2"], cwd: root }),
+		clean: (fx) => ({ args: ["--repo", fx, "--lane", "R2"], cwd: root }),
+		fixtures: ["violation/README.md", "clean/.review-briefs/R2-topic.md"],
+	},
 ];
 
 /** A gate run's outcome. */

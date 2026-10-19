@@ -36,3 +36,6 @@ pnpm-debug.log*
 evals/runs/*/*
 !evals/runs/*/compare.md
 !evals/runs/*/external-*.md
+
+# Review briefs (triple-review launch docs): top-level local only, never committed
+/.review-briefs/
