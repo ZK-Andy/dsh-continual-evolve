@@ -1,28 +1,33 @@
 /**
  * The extraction pass, assembled as a responsibility chain: cheap pre-gate →
- * proposal call (and, on a proposal, the store's gated application).
+ * classification prior (P2 two-stage) → proposal call (and, on a proposal,
+ * the store's gated application).
  *
  * The gate fails open by design — an unclear or dead gate hands the increment
  * to the expensive call, so the worst case is the old single-call behavior,
- * never a stall. Both links ledger everything they observe onto the run's own
+ * never a stall. Classification follows the same discipline: a dead classify
+ * hands the increment to the generation call without a prior. Only a
+ * *verdict-level* empty classification short-circuits (zero generation
+ * tokens). Every link ledgers everything it observes onto the run's own
  * row: one run stays one row, and a failed call keeps the usage and route it
  * reported before it died.
  */
 import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
-import { failureCodeOf, isRouteRejected, observedUsageOf } from "./llm-call.js";
+import { observedUsageOf } from "./llm-call.js";
 import type { ModelSelection } from "./model-route.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
-import { screenExtractionBatch } from "./extraction-screen.js";
-import { CHEAP_INCREMENT_MAX, cheapPrompt, extractionPrompt, manifestLineOf, type ParsedAnswer } from "./extraction-prompt.js";
+import {
+	CHEAP_INCREMENT_MAX,
+	cheapPrompt,
+	classifyPrompt,
+	type ClassifyResult,
+} from "./extraction-prompt.js";
 import { todayUtc } from "./prompt-date.js";
-import { pruneIfDue } from "./retention.js";
-import { extractionGate, extractionMain } from "./subagent-defs.js";
-import { cutFailureOf, subagentLoaderFor, type SubagentAnswer, type SubagentCall, type SubagentLoader } from "./subagent.js";
-import { ROUTE_REJECTED_REASON, type LedgerEntry, type MemoryStore } from "../store.js";
+import { extractionClassify, extractionGate } from "./subagent-defs.js";
+import { cutFailureOf, subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
+import type { LedgerEntry } from "../store.js";
 import type { ExtractionDeps, ExtractionResult, ExtractionTarget, RunOptions } from "./extraction.js";
-
-/** Head length of a failed run's raw answer kept in the ledger `files` column. */
-const FAILURE_RAW_MAX = 2048;
+import { proposeLink } from "./extraction-propose.js";
 
 /** Head length of an unexpected error's message/stack trace kept in the ledger `files` column. */
 const UNEXPECTED_ERROR_RAW_MAX = 2048;
@@ -33,8 +38,8 @@ export const ERROR_REASON_MAX = 300;
 /** Head length of a failed pre-gate call's error kept in the ledger `cheap_error` column. */
 const GATE_ERROR_MAX = 200;
 
-/** One run's walk through the chain: the context both links read and fill in. */
-interface ExtractionItem {
+/** One run's walk through the chain: the context every link reads and fills in. */
+export interface ExtractionItem {
 	readonly deps: ExtractionDeps;
 	readonly target: ExtractionTarget;
 	readonly opts: RunOptions;
@@ -50,6 +55,14 @@ interface ExtractionItem {
 	cheapUsage: unknown;
 	/** Why the pre-gate left no payload (fail open); `undefined` when it never ran or answered. */
 	cheapError: string | undefined;
+	/** The classification prior (P2 two-stage); `undefined` when it never answered. */
+	classify: ClassifyResult | undefined;
+	/** The classification call's observed usage, carried onto the run's own row. */
+	classifyUsage: unknown;
+	/** Why the classify call left no prior (fail open); `undefined` when it answered. */
+	classifyError: string | undefined;
+	/** The exact classify prompt text (P2 audit input); `undefined` when classify never ran. */
+	classifyPromptText: string | undefined;
 	/** The terminal outcome, set by the link that handles the item. */
 	result?: ExtractionResult;
 }
@@ -133,6 +146,10 @@ export async function runExtractionInner(deps: ExtractionDeps, target: Extractio
 		},
 		cheapUsage: undefined,
 		cheapError: undefined,
+		classify: undefined,
+		classifyUsage: undefined,
+		classifyError: undefined,
+		classifyPromptText: undefined,
 	};
 	await runChain(extractionChain(), item);
 	if (item.result === undefined) {
@@ -143,9 +160,9 @@ export async function runExtractionInner(deps: ExtractionDeps, target: Extractio
 	return item.result;
 }
 
-/** Assemble the extraction chain: the pre-gate (fail open) then the proposal call. */
+/** Assemble the extraction chain: pre-gate (fail open) → classify (fail open) → proposal call. */
 function extractionChain(): readonly ChainLink<ExtractionItem>[] {
-	return [gateLink(), proposeLink()];
+	return [gateLink(), classifyLink(), proposeLink()];
 }
 
 /**
@@ -180,6 +197,7 @@ function gateLink(): ChainLink<ExtractionItem> {
 					item.advanceCursor();
 					item.deps.store.logSkipped({
 						...item.ledgerBase,
+						runId: runIdOf(item),
 						skipReason: `model-skip (cheap-gate): ${verdict.reason}`,
 						status: "skipped",
 						model: item.route.model,
@@ -202,186 +220,63 @@ function gateLink(): ChainLink<ExtractionItem> {
 	};
 }
 
-/** Assemble the proposal prompt: manifest plus similar-record candidates. */
-function buildExtractionPrompt(item: ExtractionItem): string {
-	const { store } = item.deps;
-	const workspaceId = item.ledgerBase.workspaceId;
-	const manifest = store.list(workspaceId).slice(0, 50).map(manifestLineOf);
-	const candidates = candidateRecords(store, workspaceId, item.userText);
-	return extractionPrompt({
-		increment: item.increment,
-		manifest,
-		candidates: candidates.map(formatCandidate),
-		userSeqs: item.userSeqs,
-	});
-}
-
-/** The proposal call: the run's one expensive call, then the store's gates. */
-function proposeLink(): ChainLink<ExtractionItem> {
+/**
+ * Classification prior (P2 two-stage): classify only, never write. A
+ * verdict-level empty `worthy` short-circuits the run (no generation call,
+ * cursor advances, zero generation tokens); a transport-level failure
+ * (throw/cut/unparseable) fails OPEN to the generation call without a prior
+ * — the verdict gate must never turn a transient fault into a lost memory.
+ */
+function classifyLink(): ChainLink<ExtractionItem> {
 	return {
-		name: "extraction-propose",
+		name: "extraction-classify",
 		async handle(item: ExtractionItem): Promise<ChainOutcome> {
-			const prompt = buildExtractionPrompt(item);
-			const started = Date.now();
-			const answer = await runProposalCall(item, prompt, started);
-			if (answer === undefined) {
-				return "handled";
+			const classifyStarted = Date.now();
+			const classifyPromptText = classifyPrompt({
+				incrementHead: item.increment.slice(0, CHEAP_INCREMENT_MAX),
+				userSeqs: item.userSeqs,
+			});
+			item.classifyPromptText = classifyPromptText;
+			try {
+				const answer = await item.loader.run(extractionClassify, classifyPromptText);
+				item.classifyUsage = answer.usage;
+				const result = answer.answer;
+				if (result === null && answer.finish !== undefined && answer.finish !== "stop") {
+					throw cutFailureOf(answer, item.route);
+				}
+				if (result === null) {
+					item.classifyError = "classify-unparseable";
+					return "next";
+				}
+				if (result.worthy.length === 0) {
+					item.advanceCursor();
+					item.deps.store.logSkipped({
+						...item.ledgerBase,
+						runId: runIdOf(item),
+						skipReason: `model-skip (classify-none): ${result.reason}`,
+						status: "skipped",
+						model: item.route.model,
+						cheapUsage: item.cheapUsage,
+						cheapError: item.cheapError,
+						classifyUsage: item.classifyUsage,
+						durationMs: Date.now() - classifyStarted,
+					});
+					item.result = { status: "skipped", skipReason: result.reason, cursor: item.boundarySeq };
+					return "handled";
+				}
+				item.classify = result;
+			} catch (error) {
+				item.classifyError = errorHead(error);
+				item.classifyUsage = observedUsageOf(error) ?? item.classifyUsage;
 			}
-			return settleProposalAnswer(item, answer, started);
+			return "next";
 		},
 	};
 }
 
-/** Run the one expensive call; an llm failure is ledgered here and reads as handled. */
-async function runProposalCall(
-	item: ExtractionItem,
-	prompt: string,
-	started: number,
-): Promise<SubagentAnswer<ParsedAnswer> | undefined> {
-	const { store } = item.deps;
-	try {
-		const answer = await item.loader.run(extractionMain, prompt);
-		// The full call carries the proposal payload: a cut stream is a failure.
-		if (answer.finish !== undefined && answer.finish !== "stop") {
-			throw cutFailureOf(answer, item.route);
-		}
-		return answer;
-	} catch (error) {
-		const { message, detail } = errorText(error);
-		// A refused route is labelled as such in the account: the failure
-		// discipline's halt is only visible if the row says why it happened.
-		const reason = isRouteRejected(error) ? ROUTE_REJECTED_REASON : "llm-failed";
-		try {
-			store.logSkipped({
-				...item.ledgerBase,
-				skipReason: reason,
-				status: "failed",
-				model: item.route.model,
-				usage: observedUsageOf(error),
-				durationMs: Date.now() - started,
-				cheapUsage: item.cheapUsage,
-				cheapError: item.cheapError,
-				files: detail,
-			});
-		} catch (ledgerError) {
-			throw new Error(`llm call failed (${message}); failure ledger write also failed (${errorText(ledgerError).message})`);
-		}
-		item.result = {
-			status: "failed",
-			skipReason: reason === ROUTE_REJECTED_REASON ? ROUTE_REJECTED_REASON : `llm call failed: ${message}`,
-			faultCode: failureCodeOf(error),
-		};
-		return undefined;
-	}
-}
-/** Settle a completed call: error answers fail, skips advance the cursor, proposals apply. */
-function settleProposalAnswer(item: ExtractionItem, answer: SubagentAnswer<ParsedAnswer>, started: number): ChainOutcome {
-	const { store } = item.deps;
-	const text = answer.text;
-	const usage = answer.usage;
-	const parsed = answer.answer;
-	if (parsed.decision === "error") {
-		// A malformed answer is a failed run: the increment stays unconsumed
-		// and the next trigger retries it. The answer's head rides in the
-		// ledger row — the stream is gone after this, so without it the
-		// failure is undiagnosable after the fact.
-		store.logSkipped({
-			...item.ledgerBase,
-			skipReason: parsed.reason,
-			status: "failed",
-			model: item.route.model,
-			usage,
-			cheapUsage: item.cheapUsage,
-			cheapError: item.cheapError,
-			durationMs: Date.now() - started,
-			files: text.slice(0, FAILURE_RAW_MAX),
-		});
-		item.result = { status: "failed", skipReason: parsed.reason };
-		return "handled";
-	}
-	if (parsed.decision === "skip") {
-		// A real model decision (even "nothing worth keeping") consumed the
-		// increment — advancing the cursor here is what keeps retries honest.
-		item.advanceCursor();
-		store.logSkipped({
-			...item.ledgerBase,
-			skipReason: `model-skip: ${parsed.reason}`,
-			status: "skipped",
-			model: item.route.model,
-			usage,
-			cheapUsage: item.cheapUsage,
-			cheapError: item.cheapError,
-			durationMs: Date.now() - started,
-		});
-		item.result = { status: "skipped", skipReason: parsed.reason, cursor: item.boundarySeq };
-		return "handled";
-	}
-	return applyProposalAnswer(item, parsed, usage);
-}
-
-/** Apply an apply-decision answer through the store gates, with hygiene riding along. */
-function applyProposalAnswer(item: ExtractionItem, parsed: ParsedAnswer, usage: unknown): ChainOutcome {
-	// The store's own proposal shape — no second import for a type the gate owns.
-	type MemoryProposal = Parameters<MemoryStore["applyProposals"]>[1][number];
-	const { store } = item.deps;
-	// Deterministic pre-screen: duplicate bodies and no-op updates never reach the
-	// write gate, so they cannot bump `updated_at` or move the review queue.
-	const screened = screenExtractionBatch(store, item.ledgerBase.workspaceId, parsed.proposals as MemoryProposal[]);
-	if (screened.kept.length === 0) {
-		item.advanceCursor();
-		const reason = screened.skipReason ?? "pre-screen: no proposals";
-		store.logSkipped({
-			...item.ledgerBase,
-			skipReason: reason,
-			status: "skipped",
-			model: item.route.model,
-			usage,
-			cheapUsage: item.cheapUsage,
-			cheapError: item.cheapError,
-		});
-		item.result = { status: "skipped", skipReason: reason, cursor: item.boundarySeq };
-		return "handled";
-	}
-	const outcomes = store.applyProposals(
-		{
-			workspaceId: item.ledgerBase.workspaceId,
-			trigger: item.opts.trigger,
-			sessionId: item.target.sessionId,
-			runId: `extract:${item.target.sessionId}:${item.boundarySeq ?? "tail"}`,
-			model: item.route.model,
-			usage,
-			cheapUsage: item.cheapUsage,
-			cheapError: item.cheapError,
-			decision: parsed.reason,
-		},
-		screened.kept,
-	);
-	if (!outcomes.every((outcome) => outcome.ok)) {
-		item.result = { status: "rejected", skipReason: outcomes.find((outcome) => !outcome.ok)?.reason };
-		return "handled";
-	}
-	item.advanceCursor();
-	// Hygiene rides on every applied run: orphan FTS rows dropped, secret
-	// leakage quarantined — never a separate scheduler.
-	const patrol = store.patrol();
-	void patrol;
-	// Retention rides the same run: the ledgers only grow, and an
-	// applied extraction is what writes most of their rows. Day-throttled
-	// inside, so this is one state read on all but the day's first run.
-	pruneIfDue(store);
-	item.result = { status: "applied", applied: outcomes.filter((outcome) => outcome.ok).length, cursor: item.boundarySeq };
-	return "handled";
-}
-
-/** Similar existing memories (full bodies) for the model to update against. */
-function candidateRecords(store: MemoryStore, workspaceId: string, userText: string): ReturnType<MemoryStore["search"]> {
-	const query = userText.split("\n")[0]?.slice(0, 100).trim() ?? "";
-	const hits = query.length >= 3 ? store.search(workspaceId, query, 8) : [];
-	return hits.length > 0 ? hits : store.list(workspaceId).slice(0, 8);
-}
-
-function formatCandidate(record: { id: string; type: string; title: string; description: string; body: string }): string {
-	return [`# 候选 id=${record.id}（type=${record.type}）`, `title=${record.title}`, `钩子=${record.description}`, "全文：", record.body].join("\n");
+/** The run id every ledger row of one extraction run carries. */
+export function runIdOf(item: Pick<ExtractionItem, "target" | "boundarySeq">): string {
+	return `extract:${item.target.sessionId}:${item.boundarySeq ?? "tail"}`;
 }
 
 /** Split an unexpected throw into a ledger-sized reason head and file body. */

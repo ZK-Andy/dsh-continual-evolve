@@ -6,6 +6,7 @@
  * gate — there is no other writer.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { shouldStorePromptJson } from "./extraction-prompt.js";
 import {
 	fieldGateReasons,
 	isValidMemoryId,
@@ -44,6 +45,14 @@ export interface ProposalContext {
 	cheapUsage?: unknown;
 	/** Error head when the pre-gate call threw (fail open); carried into the ledger row. */
 	cheapError?: string | undefined;
+	/** Classification call payload (P2 two-stage); carried into the ledger row. */
+	classifyUsage?: unknown;
+	/** Error head when the classify call threw (fail open); carried into the ledger row. */
+	classifyError?: string | undefined;
+	/** Truncated prompts JSON (P2 audit, failures + 5% sample); carried into the ledger row. */
+	promptJson?: string | undefined;
+	/** Per-item drop warnings (P2拒因分布); carried into the ledger row. */
+	droppedWarnings?: { id: string; reason: string }[] | undefined;
 	/** One-line model decision summary for the ledger. */
 	decision?: string | undefined;
 }
@@ -91,18 +100,23 @@ export function applyProposals(
 		}
 	}
 	const applied = outcomes.every((outcome) => outcome.ok);
+	const status = applied ? "applied" : "rejected";
 	const ledger: LedgerEntry = {
 		runId,
 		sessionId: ctx.sessionId,
 		workspaceId: ctx.workspaceId,
 		trigger: ctx.trigger,
 		decision: ctx.decision,
-		status: applied ? "applied" : "rejected",
+		status,
 		durationMs: Date.now() - started,
 		model: ctx.model,
 		usage: ctx.usage,
 		cheapUsage: ctx.cheapUsage,
 		cheapError: ctx.cheapError,
+		classifyUsage: ctx.classifyUsage,
+		classifyError: ctx.classifyError,
+		promptJson: ctx.promptJson !== undefined && shouldStorePromptJson(runId, status) ? ctx.promptJson : undefined,
+		droppedWarnings: ctx.droppedWarnings,
 		files: applied ? files : [],
 	};
 	if (!applied) {

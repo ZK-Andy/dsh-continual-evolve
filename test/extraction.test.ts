@@ -135,10 +135,10 @@ describe("runExtraction — mechanical skips (each ledgered, cursor untouched)",
 });
 
 describe("runExtraction — model round-trip", () => {
-	it("anchors both extraction calls to the day the run names", async () => {
+	it("anchors all three extraction calls to the day the run names", async () => {
 		const d = deps();
 		await runExtraction(d, target, { trigger: "turn-debounce", today: "2026-10-14" });
-		expect(d.llm.calls).toHaveLength(2);
+		expect(d.llm.calls).toHaveLength(3);
 		for (const call of d.llm.calls) {
 			// The extraction rubric asks for relative dates to be written out
 			// absolutely; without a baseline the model has nothing to convert from.
@@ -197,11 +197,11 @@ describe("runExtraction — model round-trip", () => {
 		const result = await runExtraction(d, target, { trigger: "turn-debounce" });
 		expect(result.status).toBe("applied");
 		expect(store.get(WS, "env")?.body).toBe("Fedora 44 + Zed");
-		const prompt = String(d.llm.calls[1]?.messages && (d.llm.calls[1].messages as { content: { text: string }[] }[])[0].content[0].text);
+		const prompt = String(d.llm.calls[2]?.messages && (d.llm.calls[2].messages as { content: { text: string }[] }[])[0].content[0].text);
 		expect(prompt).toContain("id=env｜type=user");
 		expect(prompt).toContain("旧正文");
-		// Two calls by design: the cheap pre-gate first, the full call second.
-		expect(d.llm.calls).toHaveLength(2);
+		// Three calls by design: cheap pre-gate, classification prior, full call.
+		expect(d.llm.calls).toHaveLength(3);
 		const gateCall = d.llm.calls[0] as { messages?: { content?: { text?: unknown }[] }[] } | undefined;
 		expect(String(gateCall?.messages?.[0]?.content?.[0]?.text ?? "")).not.toContain("旧正文");
 	});
@@ -276,14 +276,19 @@ describe("runExtraction — model round-trip", () => {
 });
 
 describe("runExtraction — cheap pre-gate", () => {
-	function routedLlm(gateText: string, fullText: string): LlmStream & { calls: Record<string, unknown>[] } {
+	/** Classification passthrough: a worthy prior so the full call still runs. */
+	const CLASSIFY_YES = JSON.stringify({
+		worthy: [{ kind: "user", evidence: "我在 Fedora 上工作", test: "Identity" }],
+		reason: "用户环境事实",
+	});
+	function routedLlm(gateText: string, fullText: string, classifyText: string = CLASSIFY_YES): LlmStream & { calls: Record<string, unknown>[] } {
 		const calls: Record<string, unknown>[] = [];
 		return {
 			calls,
 			async *stream(options: Record<string, unknown>) {
 				calls.push(options);
 				const system = String((options as { system?: unknown }).system ?? "");
-				yield { type: "text-delta", text: system.includes("预检门") ? gateText : fullText };
+				yield { type: "text-delta", text: system.includes("预检门") ? gateText : system.includes("分类员") ? classifyText : fullText };
 				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
 				yield { type: "finish", reason: { kind: "stop" } };
 			},
@@ -474,7 +479,7 @@ describe("runExtraction — cheap pre-gate", () => {
 		const llm = routedLlm(GATE_YES, FULL_APPLY);
 		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
 		expect(result.status).toBe("applied");
-		expect(llm.calls).toHaveLength(2);
+		expect(llm.calls).toHaveLength(3);
 		const raw = rawDb();
 		try {
 			const row = raw.prepare("SELECT status, cheap_usage, usage FROM extraction_log").get() as {
@@ -492,14 +497,14 @@ describe("runExtraction — cheap pre-gate", () => {
 		const llm = routedLlm("胡言乱语", FULL_APPLY);
 		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
 		expect(result.status).toBe("applied");
-		expect(llm.calls).toHaveLength(2);
+		expect(llm.calls).toHaveLength(3);
 	});
 
 	it("a dying gate fails open and keeps its error head on the run's own row", async () => {
 		const llm = dyingGateLlm(FULL_APPLY);
 		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
 		expect(result.status).toBe("applied");
-		expect(llm.calls).toHaveLength(2);
+		expect(llm.calls).toHaveLength(3);
 		const raw = rawDb();
 		try {
 			const rows = raw.prepare("SELECT status, cheap_usage, cheap_error, usage FROM extraction_log").all() as {
@@ -543,7 +548,7 @@ describe("runExtraction — cheap pre-gate", () => {
 		}
 	});
 
-	it("migrates pre-gate databases with both gate columns", async () => {
+	it("migrates pre-gate databases with all gate columns", async () => {
 		const legacyPath = join(mkdtempSync(join(tmpdir(), "evolve-extract-legacy-")), "memory.db");
 		const legacy = new DatabaseSync(legacyPath);
 		try {
@@ -563,6 +568,10 @@ describe("runExtraction — cheap pre-gate", () => {
 				const columns = probe.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
 				expect(columns.some((c) => c.name === "cheap_usage")).toBe(true);
 				expect(columns.some((c) => c.name === "cheap_error")).toBe(true);
+				expect(columns.some((c) => c.name === "classify_usage")).toBe(true);
+				expect(columns.some((c) => c.name === "classify_error")).toBe(true);
+				expect(columns.some((c) => c.name === "prompt_json")).toBe(true);
+				expect(columns.some((c) => c.name === "dropped_warnings")).toBe(true);
 			} finally {
 				probe.close();
 			}
@@ -903,14 +912,14 @@ describe("createExtractionScheduler", () => {
 				throw new Error("not halted yet");
 			}
 		});
-		// One refused run costs its gate call and its main call. Every later
-		// boundary on the same route costs nothing at all.
-		expect(d.llm.calls).toHaveLength(2);
+		// One refused run costs its gate call, its classify call, and its main
+		// call. Every later boundary on the same route costs nothing at all.
+		expect(d.llm.calls).toHaveLength(3);
 		expect(ledgerRows()[0]?.skip_reason).toBe("route-rejected");
 
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await settle();
-		expect(d.llm.calls).toHaveLength(2);
+		expect(d.llm.calls).toHaveLength(3);
 		expect(ledgerRows().map((row) => row.skip_reason)).toContain("route-halted");
 
 		// A model switch is the unfreeze: the next boundary calls again.
@@ -940,7 +949,7 @@ describe("createExtractionScheduler", () => {
 				throw new Error("no record yet");
 			}
 		});
-		// The first failure retries at once: one gate + main per attempt.
+		// The first failure retries at once: gate + classify + main per attempt.
 		expect(JSON.parse(store.state(WS, key) ?? "{}")).toMatchObject({ count: 1, route: "deepseek/deepseek-chat" });
 
 		listeners.get("agent/turn-stopping")![0]({ agent });
@@ -949,13 +958,13 @@ describe("createExtractionScheduler", () => {
 				throw new Error("second failure not counted yet");
 			}
 		});
-		expect(d.llm.calls).toHaveLength(4);
+		expect(d.llm.calls).toHaveLength(6);
 
 		// Third boundary: the backoff is in force, so nothing is sent and the
 		// suppressed wake-up lands one coalesced row.
 		listeners.get("agent/turn-stopping")![0]({ agent });
 		await settle();
-		expect(d.llm.calls).toHaveLength(4);
+		expect(d.llm.calls).toHaveLength(6);
 		expect(ledgerRows().map((row) => row.skip_reason)).toContain("route-backoff");
 
 		// The backoff window elapses (the clock is the test's), and a clean run
@@ -1084,8 +1093,8 @@ describe("createExtractionScheduler", () => {
 		listeners.get("agent/disposed")![0]({ agent: { id: "unknown" } });
 		listeners.get("agent/disposed")![0]({ agent: {} });
 		await new Promise((resolve) => setTimeout(resolve, 20));
-		// One run drained exactly once: cheap pre-gate + full call, no extras.
-		expect(d.llm.calls).toHaveLength(2);
+		// One run drained exactly once: pre-gate + classify + full call, no extras.
+		expect(d.llm.calls).toHaveLength(3);
 	});
 
 	it("drops a closing session's slot without doubling its run", async () => {
@@ -1114,5 +1123,163 @@ describe("createExtractionScheduler", () => {
 		expect(listeners.get("agent/turn-stopping")).toHaveLength(0);
 		expect(listeners.get("session/event")).toHaveLength(0);
 		expect(listeners.get("agent/disposed")).toHaveLength(0);
+	});
+});
+
+describe("runExtraction — P2 two-stage classification", () => {
+	const GATE_YES_P2 = JSON.stringify({ worthExtracting: true, reason: "用户环境事实" });
+	const CLASSIFY_YES_P2 = JSON.stringify({
+		worthy: [{ kind: "user", evidence: "我在 Fedora 上工作", test: "Identity" }],
+		reason: "用户环境事实",
+	});
+	const CLASSIFY_NONE = JSON.stringify({ worthy: [], reason: "闲聊无沉淀价值" });
+	const MAIN_APPLY_P2 = JSON.stringify({
+		decision: "apply",
+		reason: "用户环境事实",
+		proposals: [{ action: "create", type: "user", title: "Fedora 环境", description: "用户的操作系统", body: "Fedora 44", sourceSeqs: "10-10" }],
+	});
+
+	/** Route each of the three calls by its system prompt (gate / classify / main). */
+	function triLlm(gateText: string, classifyText: string, mainText: string): LlmStream & { calls: Record<string, unknown>[] } {
+		const calls: Record<string, unknown>[] = [];
+		return {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				yield { type: "text-delta", text: system.includes("预检门") ? gateText : system.includes("分类员") ? classifyText : mainText };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+	}
+
+	it("short-circuits on a verdict-level empty classification (no generation call)", async () => {
+		const llm = triLlm(GATE_YES_P2, CLASSIFY_NONE, MAIN_APPLY_P2);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("skipped");
+		expect(result.skipReason).toContain("闲聊");
+		expect(llm.calls).toHaveLength(2);
+		// The verdict consumed the increment, like any model skip.
+		expect(store.cursor(WS, "sess-1")).toBe(11);
+		expect(store.list(WS)).toEqual([]);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT skip_reason, classify_usage FROM extraction_log").get() as {
+				skip_reason: string; classify_usage: string | null;
+			};
+			expect(row.skip_reason).toContain("classify-none");
+			expect(JSON.parse(row.classify_usage ?? "null")).toMatchObject({ totalTokens: 15 });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("fails open on a transport-level classification failure (generation still runs)", async () => {
+		const llm = triLlm(GATE_YES_P2, "胡言乱语", MAIN_APPLY_P2);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		expect(llm.calls).toHaveLength(3);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT classify_error FROM extraction_log WHERE status = 'applied'").get() as {
+				classify_error: string | null;
+			};
+			expect(row.classify_error).toBe("classify-unparseable");
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("carries the classification prior into the generation prompt", async () => {
+		const llm = triLlm(GATE_YES_P2, CLASSIFY_YES_P2, MAIN_APPLY_P2);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		const mainCall = llm.calls[2] as { messages?: { content?: { text?: unknown }[] }[] };
+		expect(String(mainCall?.messages?.[0]?.content?.[0]?.text ?? "")).toContain("<classification>");
+	});
+});
+
+describe("runExtraction — P2 mechanical screen and prompt audit", () => {
+	const GATE_YES_P2 = JSON.stringify({ worthExtracting: true, reason: "用户环境事实" });
+	const CLASSIFY_YES_P2 = JSON.stringify({
+		worthy: [{ kind: "user", evidence: "x", test: "Identity" }],
+		reason: "环境事实",
+	});
+
+	function triLlm(gateText: string, classifyText: string, mainText: string): LlmStream & { calls: Record<string, unknown>[] } {
+		const calls: Record<string, unknown>[] = [];
+		return {
+			calls,
+			async *stream(options: Record<string, unknown>) {
+				calls.push(options);
+				const system = String((options as { system?: unknown }).system ?? "");
+				yield { type: "text-delta", text: system.includes("预检门") ? gateText : system.includes("分类员") ? classifyText : mainText };
+				yield { type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+				yield { type: "finish", reason: { kind: "stop" } };
+			},
+		};
+	}
+
+	it("drops a forged id per-item without killing the good proposal", async () => {
+		const main = JSON.stringify({
+			decision: "apply",
+			reason: "一批两条",
+			proposals: [
+				{ action: "update", id: "forged-id", body: "伪造的更新" },
+				{ action: "create", type: "user", title: "真记忆", description: "钩子", body: "Fedora 44 真内容" },
+			],
+		});
+		const llm = triLlm(GATE_YES_P2, CLASSIFY_YES_P2, main);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("applied");
+		expect(result.applied).toBe(1);
+		expect(store.list(WS)).toHaveLength(1);
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT dropped_warnings FROM extraction_log WHERE status = 'applied'").get() as {
+				dropped_warnings: string | null;
+			};
+			expect(JSON.parse(row.dropped_warnings ?? "null")).toEqual([{ id: "forged-id", reason: "unknown-id" }]);
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("stores prompt_json on a rejected run (always, not sampled)", async () => {
+		const main = JSON.stringify({
+			decision: "apply",
+			reason: "坏的 feedback",
+			proposals: [{ action: "create", type: "feedback", title: "规则", description: "钩子", body: "没有 Why 行的正文" }],
+		});
+		const llm = triLlm(GATE_YES_P2, CLASSIFY_YES_P2, main);
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("rejected");
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT prompt_json, status FROM extraction_log WHERE status = 'rejected'").get() as {
+				prompt_json: string | null; status: string;
+			};
+			expect(row.status).toBe("rejected");
+			expect(row.prompt_json).not.toBeNull();
+			expect(JSON.parse(row.prompt_json ?? "null")).toMatchObject({ prompt: expect.any(String) });
+		} finally {
+			raw.close();
+		}
+	});
+
+	it("stores prompt_json on a failed run (unparseable answer)", async () => {
+		const llm = triLlm(GATE_YES_P2, CLASSIFY_YES_P2, "完全不是 JSON");
+		const result = await runExtraction({ store, surface: surfaceOf(USER_EVENT, ASSISTANT_EVENT), llm }, target, { trigger: "turn-debounce" });
+		expect(result.status).toBe("failed");
+		const raw = rawDb();
+		try {
+			const row = raw.prepare("SELECT prompt_json FROM extraction_log WHERE status = 'failed'").get() as {
+				prompt_json: string | null;
+			};
+			expect(row.prompt_json).not.toBeNull();
+		} finally {
+			raw.close();
+		}
 	});
 });

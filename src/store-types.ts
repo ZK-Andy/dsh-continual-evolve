@@ -160,6 +160,11 @@ export interface LedgerEntry {
 	 * gate is tellable from a gate that never existed.
 	 */
 	cheapError?: string | undefined;
+	/** P2 two-stage: classify payload / error head (fail open), prompt audit JSON, per-item drop warnings. */
+	classifyUsage?: unknown;
+	classifyError?: string | undefined;
+	promptJson?: string | undefined;
+	droppedWarnings?: { id: string; reason: string }[] | undefined;
 	/** Applied/attempted mutations: `{id, action, before?, after?, sourceSeqs}`; a parse-failed run instead carries the raw answer's head. */
 	files?: unknown;
 }

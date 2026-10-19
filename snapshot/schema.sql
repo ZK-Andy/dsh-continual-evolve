@@ -3,7 +3,7 @@
 -- update: tsx scripts/verify-schema-snapshot.ts --update
 
 -- table: extraction_log
--- columns: run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files, occurrences
+-- columns: run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, classify_usage, classify_error, prompt_json, dropped_warnings, files, occurrences
 -- check trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')
 CREATE TABLE IF NOT EXISTS extraction_log (
   run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS extraction_log (
   decision TEXT, skip_reason TEXT,
   status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
   cheap_usage TEXT, cheap_error TEXT,
+  classify_usage TEXT, classify_error TEXT, prompt_json TEXT, dropped_warnings TEXT,
   files TEXT, occurrences INTEGER NOT NULL DEFAULT 1
 );
 

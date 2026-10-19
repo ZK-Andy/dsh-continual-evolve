@@ -16,6 +16,8 @@ export interface ScreenedBatch {
 	kept: MemoryProposal[];
 	/** Ledger reason when nothing survived; undefined when something did. */
 	skipReason: string | undefined;
+	/** Per-item drop warnings (P2 ledger input, empty when nothing dropped). */
+	warnings: { id: string; reason: string }[];
 }
 
 /**
@@ -41,5 +43,6 @@ export function screenExtractionBatch(
 	return {
 		kept: screened.kept as MemoryProposal[],
 		skipReason: screened.kept.length === 0 ? (screenSkipReason(screened.dropped) ?? "pre-screen: no proposals") : undefined,
+		warnings: screened.warnings,
 	};
 }

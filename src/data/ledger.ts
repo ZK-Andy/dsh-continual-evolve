@@ -27,6 +27,10 @@ export function writeMemoryLedger(ledger: StatementSync, entry: LedgerEntry): vo
 		entry.usage === undefined ? null : JSON.stringify(entry.usage),
 		entry.cheapUsage === undefined ? null : JSON.stringify(entry.cheapUsage),
 		entry.cheapError ?? null,
+		entry.classifyUsage === undefined ? null : JSON.stringify(entry.classifyUsage),
+		entry.classifyError ?? null,
+		entry.promptJson ?? null,
+		entry.droppedWarnings === undefined ? null : JSON.stringify(entry.droppedWarnings),
 		entry.files === undefined ? null : JSON.stringify(entry.files),
 	);
 }
@@ -173,8 +177,8 @@ export function prepareStateStmts(database: DatabaseSync): StateStmts {
 export function prepareLedgerStmts(database: DatabaseSync): LedgerStmts {
 	return {
 		ledger: database.prepare(
-			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, files) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO extraction_log (run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, classify_usage, classify_error, prompt_json, dropped_warnings, files) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		),
 		latestSkip: database.prepare(
 			"SELECT rowid AS rid, skip_reason AS reason, status FROM extraction_log " +

@@ -106,6 +106,121 @@ export function parseCheapAnswer(text: string): CheapVerdict | null {
 	return { worth: answer.worthExtracting, reason: reason.slice(0, 300) };
 }
 
+/** The classification pass system prompt (P2 two-stage): classify only, never write. */
+export const EXTRACTION_CLASSIFY_SYSTEM_PROMPT = `你是记忆提取的分类员。只分类、不写记忆：从轨迹增量里找出可能值得沉淀的候选，并过三测试——Identity（user 须是描述人本身，而非仓库机制）、Override（他项目可覆盖的规则归 feedback）、Output（约束回复格式与交付物的归 feedback）。每条候选必须带 evidence 原文引用，无引用即视为无值得项。只输出 JSON，不要代码围栏、不要解释：
+
+{"worthy":[{"kind":"user|feedback|reference","evidence":"<增量原文引用>","test":"Identity|Override|Output"}],"reason":"<一句话依据>"}`;
+
+/** One classification candidate (advisory prior for the generation call). */
+export interface ClassifyCandidate {
+	kind: string;
+	evidence: string;
+	test: string;
+}
+
+/** The classification verdict; `worthy` empty means the run short-circuits. */
+export interface ClassifyResult {
+	worthy: ClassifyCandidate[];
+	reason: string;
+}
+
+/** The classification prompt: increment head only — no manifest, no candidates. */
+export function classifyPrompt(input: { incrementHead: string; userSeqs: readonly number[] }): string {
+	return [
+		"（用户直接发言所在 seq：",
+		`${input.userSeqs.length > 0 ? input.userSeqs.join(",") : "无"}）`,
+		input.incrementHead,
+		"按系统指令输出 JSON 分类。",
+	].join("\n");
+}
+
+/**
+ * Parse the classification answer. `null` means transport-level failure
+ * (unparseable/shape-violating) — the caller fails OPEN to the generation
+ * call without a prior. A parsed empty `worthy` is the verdict-level
+ * "nothing worth keeping" the caller short-circuits on.
+ */
+export function parseClassifyAnswer(text: string): ClassifyResult | null {
+	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+	const start = stripped.indexOf("{");
+	const end = stripped.lastIndexOf("}");
+	if (start < 0 || end <= start) {
+		return null;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripped.slice(start, end + 1));
+	} catch {
+		return null;
+	}
+	/* v8 ignore next 3 */
+	if (typeof parsed !== "object" || parsed === null) {
+		return null;
+	}
+	const answer = parsed as { worthy?: unknown; reason?: unknown };
+	if (!Array.isArray(answer.worthy)) {
+		return null;
+	}
+	const worthy: ClassifyCandidate[] = [];
+	for (const raw of answer.worthy) {
+		if (typeof raw !== "object" || raw === null) {
+			continue;
+		}
+		const item = raw as Record<string, unknown>;
+		if (typeof item.kind !== "string" || typeof item.evidence !== "string" || typeof item.test !== "string") {
+			continue;
+		}
+		if (item.evidence.trim().length === 0) {
+			continue;
+		}
+		worthy.push({ kind: item.kind, evidence: item.evidence.slice(0, 500), test: item.test });
+		if (worthy.length >= MAX_PROPOSALS_PER_RUN) {
+			break;
+		}
+	}
+	const reason = typeof answer.reason === "string" && answer.reason.length > 0 ? answer.reason : "无理由";
+	return { worthy, reason: reason.slice(0, 300) };
+}
+
+/** Render one classification result as the generation call's advisory prior. */
+export function formatClassification(result: ClassifyResult): string {
+	if (result.worthy.length === 0) {
+		return `无值得项（${result.reason}）`;
+	}
+	const lines = result.worthy.map((item) => `- kind=${item.test}｜${item.kind}｜证据=${item.evidence}`);
+	return [`先验（${result.reason}）：`, ...lines].join("\n");
+}
+
+/** Truncated size of one run's prompts JSON in the ledger `prompt_json` column (P2 audit, D8). */
+export const PROMPT_JSON_MAX = 4000;
+
+/** Success sampling denominator for `prompt_json` (P2 audit, D8): 1 in 20 (5%), deterministic on `runId`. */
+export const PROMPT_JSON_SAMPLE_EVERY = 20;
+
+/**
+ * Whether the run's prompts JSON is stored (P2 audit, D8): every failure and
+ * rejection, plus a deterministic 5% sample of successes (hash of `runId`,
+ * no randomness). Skips never carry a prompt to replay.
+ */
+export function shouldStorePromptJson(runId: string | undefined, status: string): boolean {
+	if (status === "failed" || status === "rejected") {
+		return true;
+	}
+	if (status !== "applied" || runId === undefined) {
+		return false;
+	}
+	let hash = 0;
+	for (let i = 0; i < runId.length; i++) {
+		hash = (hash * 31 + (runId.charCodeAt(i) ?? 0)) >>> 0;
+	}
+	return hash % PROMPT_JSON_SAMPLE_EVERY === 0;
+}
+
+/** Truncate and encode one run's prompts for the ledger (P2 audit). */
+export function buildPromptJson(input: { classifyPrompt?: string; prompt: string }): string {
+	return JSON.stringify(input).slice(0, PROMPT_JSON_MAX);
+}
+
 /** The existing-memory manifest line shown to the model. */
 export function manifestLineOf(record: {
 	id: string;
@@ -122,12 +237,19 @@ export function extractionPrompt(input: {
 	manifest: string[];
 	candidates: string[];
 	userSeqs: readonly number[];
+	classification?: string | undefined;
 }): string {
 	const parts: string[] = [];
 	parts.push(`<manifest>
 本工作区现有记忆（提案 update/delete 时引用这里的 id；与增量相似度最高的候选全文附后）：
 ${input.manifest.length > 0 ? input.manifest.join("\n") : "（本工作区还没有记忆）"}
 </manifest>`);
+	if (input.classification !== undefined && input.classification.length > 0) {
+		parts.push(`<classification>
+分类先验（只分类不写记忆，仅供参考，最终仍过归属三测）：
+${input.classification}
+</classification>`);
+	}
 	if (input.candidates.length > 0) {
 		parts.push(`<candidates>
 ${input.candidates.join("\n\n")}

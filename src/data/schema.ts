@@ -36,6 +36,10 @@ export const EXTRACTION_LOG_COLUMNS = [
 	"usage",
 	"cheap_usage",
 	"cheap_error",
+	"classify_usage",
+	"classify_error",
+	"prompt_json",
+	"dropped_warnings",
 	"files",
 	LEDGER_OCCURRENCES,
 ] as const;
@@ -54,6 +58,7 @@ export function extractionLogDdl(name: string): string {
   decision TEXT, skip_reason TEXT,
   status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
   cheap_usage TEXT, cheap_error TEXT,
+  classify_usage TEXT, classify_error TEXT, prompt_json TEXT, dropped_warnings TEXT,
   files TEXT, ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1
 )`;
 }

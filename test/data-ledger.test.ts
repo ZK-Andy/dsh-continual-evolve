@@ -69,6 +69,36 @@ describe("writeMemoryLedger", () => {
 	});
 });
 
+describe("writeMemoryLedger P2 columns", () => {
+	it("round-trips classify usage/error, prompt_json, and dropped warnings", () => {
+		const { database, stmts } = freshDb();
+		try {
+			writeMemoryLedger(stmts.ledger, {
+				trigger: "turn-debounce",
+				status: "applied",
+				classifyUsage: { totalTokens: 9 },
+				classifyError: "classify-unparseable",
+				promptJson: '{"prompt":"p"}',
+				droppedWarnings: [{ id: "forged-id", reason: "unknown-id" }],
+			});
+			const row = database.prepare(
+				"SELECT classify_usage, classify_error, prompt_json, dropped_warnings FROM extraction_log",
+			).get() as {
+				classify_usage: string | null;
+				classify_error: string | null;
+				prompt_json: string | null;
+				dropped_warnings: string | null;
+			};
+			expect(JSON.parse(row.classify_usage ?? "null")).toEqual({ totalTokens: 9 });
+			expect(row.classify_error).toBe("classify-unparseable");
+			expect(row.prompt_json).toBe('{"prompt":"p"}');
+			expect(JSON.parse(row.dropped_warnings ?? "null")).toEqual([{ id: "forged-id", reason: "unknown-id" }]);
+		} finally {
+			database.close();
+		}
+	});
+});
+
 describe("writeSkillLedger", () => {
 	it("nulls absent payloads and encodes present ones", () => {
 		const { database, stmts } = freshDb();

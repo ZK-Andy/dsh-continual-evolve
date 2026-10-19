@@ -17,6 +17,7 @@
  * (the proposal only exists after the model answered). Token savings stay with
  * the cheap gate.
  */
+import { identityRejectReason } from "./memory-rules.js";
 /** The proposal fields the screen reads; everything else passes through. */
 export interface ScreenedProposal {
 	action: "create" | "update" | "delete";
@@ -37,8 +38,8 @@ export interface ScreenedExisting {
 	notWhen?: string | undefined;
 }
 
-/** Why a proposal was rejected. */
-export type ScreenReason = "duplicate" | "no-change";
+/** Why a proposal was rejected (P2 adds the four identity reasons). */
+export type ScreenReason = "duplicate" | "no-change" | "unknown-action" | "unknown-id" | "id-collision" | "bad-type";
 
 /** The decision for one proposal. */
 export type ScreenVerdict = { keep: true } | { keep: false; reason: ScreenReason };
@@ -94,13 +95,17 @@ export interface ScreenBatchResult {
 	kept: ScreenedProposal[];
 	/** One reason per dropped proposal, in batch order. */
 	dropped: ScreenReason[];
+	/** One per-item warning per dropped proposal, in batch order (P2 ledger input). */
+	warnings: { id: string; reason: ScreenReason }[];
 }
 
 /**
- * Screen a whole batch.
+ * Screen a whole batch: the identity gate first (allowlist), then the
+ * content gate (duplicate/no-change). Pure, no store access — the caller
+ * builds `existing` once from its own read.
  * @param proposals - The model's proposals.
  * @param existing - Active memories of the same workspace.
- * @returns The kept proposals and the drop reasons.
+ * @returns The kept proposals, the drop reasons, and the per-item warnings.
  */
 export function screenProposals(
 	proposals: readonly ScreenedProposal[],
@@ -108,15 +113,24 @@ export function screenProposals(
 ): ScreenBatchResult {
 	const kept: ScreenedProposal[] = [];
 	const dropped: ScreenReason[] = [];
+	const warnings: { id: string; reason: ScreenReason }[] = [];
+	const allowed = new Set(existing.map((row) => row.id));
 	for (const proposal of proposals) {
+		const identity = identityRejectReason(proposal as { action: string; id?: string; type?: string; title?: string }, allowed);
+		if (identity !== undefined) {
+			dropped.push(identity);
+			warnings.push({ id: typeof proposal.id === "string" ? proposal.id : "", reason: identity });
+			continue;
+		}
 		const verdict = screenProposal(proposal, existing);
 		if (verdict.keep) {
 			kept.push(proposal);
 		} else {
 			dropped.push(verdict.reason);
+			warnings.push({ id: typeof proposal.id === "string" ? proposal.id : "", reason: verdict.reason });
 		}
 	}
-	return { kept, dropped };
+	return { kept, dropped, warnings };
 }
 
 /**

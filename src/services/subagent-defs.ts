@@ -12,10 +12,13 @@
  */
 import {
 	EXTRACTION_CHEAP_SYSTEM_PROMPT,
+	EXTRACTION_CLASSIFY_SYSTEM_PROMPT,
 	EXTRACTION_SYSTEM_PROMPT,
 	parseCheapAnswer,
+	parseClassifyAnswer,
 	parseExtractionAnswer,
 	type CheapVerdict,
+	type ClassifyResult,
 	type ParsedAnswer,
 } from "./extraction-prompt.js";
 import {
@@ -99,6 +102,14 @@ export const extractionMain: SubagentDefinition<ParsedAnswer> = {
 	parse: (text) => parseExtractionAnswer(text),
 };
 
+/** The extraction classification pass (P2 two-stage): classify only, never write. */
+export const extractionClassify: SubagentDefinition<ClassifyResult | null> = {
+	id: "extraction-classify",
+	system: withDateBaseline(EXTRACTION_CLASSIFY_SYSTEM_PROMPT),
+	maxTokens: GATE_MAX_TOKENS,
+	parse: (text) => parseClassifyAnswer(text),
+};
+
 /** Every definition, for the "which jobs exist" read and the id-uniqueness check. */
 export const SUBAGENT_DEFINITIONS: readonly SubagentDefinition<unknown>[] = [
 	reviewGateMemory,
@@ -106,6 +117,7 @@ export const SUBAGENT_DEFINITIONS: readonly SubagentDefinition<unknown>[] = [
 	reviewEvolveMemory,
 	reviewEvolveSkill,
 	extractionGate,
+	extractionClassify,
 	extractionMain,
 ];
 

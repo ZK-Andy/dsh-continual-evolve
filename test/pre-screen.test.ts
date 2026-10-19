@@ -40,8 +40,34 @@ describe("screenProposal", () => {
 		});
 	});
 
-	it("keeps an update targeting an unknown id (the store gate reports it)", () => {
+	it("drops an update targeting an unknown id (P2 identity gate, no longer the store gate's job)", () => {
 		expect(screenProposal({ action: "update", id: "absent", body: "x" }, existing)).toEqual({ keep: true });
+		expect(screenProposals([{ action: "update", id: "absent", body: "x" }], existing)).toMatchObject({
+			kept: [],
+			dropped: ["unknown-id"],
+		});
+	});
+
+	it("drops a create colliding with an active id", () => {
+		expect(
+			screenProposals([{ action: "create", id: "rule-a", type: "user", title: "t", description: "d", body: "b" }], existing).dropped,
+		).toEqual(["id-collision"]);
+	});
+
+	it("drops a forged action and a bad type with a counted reason", () => {
+		const result = screenProposals(
+			[
+				{ action: "upsert", id: "x" } as unknown as { action: "create"; id: string },
+				{ action: "create", id: "new-x", type: "project", title: "t", description: "d", body: "b" },
+			],
+			existing,
+		);
+		expect(result.kept).toHaveLength(0);
+		expect(result.dropped).toEqual(["unknown-action", "bad-type"]);
+		expect(result.warnings).toEqual([
+			{ id: "x", reason: "unknown-action" },
+			{ id: "new-x", reason: "bad-type" },
+		]);
 	});
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	feedbackWhyHowMissing,
 	fieldGateReasons,
+	identityRejectReason,
 	isValidMemoryId,
 	MEMORY_BODY_LIMIT,
 	MEMORY_DESCRIPTION_LIMIT,
@@ -108,5 +109,36 @@ describe("fieldGateReasons", () => {
 
 	it("blocks secrets in any field", () => {
 		expect(fieldGateReasons({ ...ok, body: "ghp_0123456789abcdefghijklmnopqrstuv" }).some((r) => r.includes("GitHub token"))).toBe(true);
+	});
+});
+
+describe("identityRejectReason (P2 mechanical gate, single home)", () => {
+	const allowed = new Set(["rule-a", "rule-b"]);
+
+	it("passes well-formed in-allowlist identities", () => {
+		expect(identityRejectReason({ action: "update", id: "rule-a" }, allowed)).toBeUndefined();
+		expect(identityRejectReason({ action: "delete", id: "rule-b" }, allowed)).toBeUndefined();
+		expect(identityRejectReason({ action: "create", type: "user", title: "全新规则" }, allowed)).toBeUndefined();
+		expect(identityRejectReason({ action: "create", id: "brand-new", type: "feedback" }, allowed)).toBeUndefined();
+	});
+
+	it("rejects unknown actions", () => {
+		expect(identityRejectReason({ action: "upsert", id: "rule-a" }, allowed)).toBe("unknown-action");
+	});
+
+	it("rejects forged update/delete ids (absent, malformed, or unknown)", () => {
+		expect(identityRejectReason({ action: "update", id: "forged-id", body: "x" }, allowed)).toBe("unknown-id");
+		expect(identityRejectReason({ action: "delete", id: "Bad_Id" }, allowed)).toBe("unknown-id");
+		expect(identityRejectReason({ action: "update" }, allowed)).toBe("unknown-id");
+	});
+
+	it("rejects creates colliding with an active id (explicit or title-derived)", () => {
+		expect(identityRejectReason({ action: "create", id: "rule-a", type: "user" }, allowed)).toBe("id-collision");
+		expect(identityRejectReason({ action: "create", type: "user", title: "Rule A" }, new Set(["rule-a"]))).toBe("id-collision");
+	});
+
+	it("rejects bad types on any action", () => {
+		expect(identityRejectReason({ action: "create", id: "n", type: "project" }, allowed)).toBe("bad-type");
+		expect(identityRejectReason({ action: "update", id: "rule-a", type: "dream" }, allowed)).toBe("bad-type");
 	});
 });

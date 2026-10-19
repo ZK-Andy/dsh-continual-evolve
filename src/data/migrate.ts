@@ -192,6 +192,10 @@ export function migrateDatabase(database: DatabaseSync): void {
 	ensureMemoriesCorrects(database);
 	ensureExtractionCheapUsage(database);
 	ensureExtractionCheapError(database);
+	ensureExtractionClassifyUsage(database);
+	ensureExtractionClassifyError(database);
+	ensureExtractionPromptJson(database);
+	ensureExtractionDroppedWarnings(database);
 	ensureReviewProposed(database);
 	ensureReviewModel(database);
 	ensureReviewDailySources(database);
@@ -255,6 +259,42 @@ function ensureExtractionCheapError(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE extraction_log ADD COLUMN cheap_error TEXT");
+}
+
+/** P2: `classify_usage` for stores predating the classification pass. */
+function ensureExtractionClassifyUsage(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "classify_usage")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN classify_usage TEXT");
+}
+
+/** P2: `classify_error` for stores predating the classification pass. */
+function ensureExtractionClassifyError(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "classify_error")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN classify_error TEXT");
+}
+
+/** P2 audit (D8): `prompt_json` for stores predating replayable prompts. */
+function ensureExtractionPromptJson(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "prompt_json")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN prompt_json TEXT");
+}
+
+/** P2: `dropped_warnings` for stores predating per-item drop warnings. */
+function ensureExtractionDroppedWarnings(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('extraction_log')").all() as { name: string }[];
+	if (columns.some((column) => column.name === "dropped_warnings")) {
+		return;
+	}
+	database.exec("ALTER TABLE extraction_log ADD COLUMN dropped_warnings TEXT");
 }
 
 /**

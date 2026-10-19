@@ -72,10 +72,65 @@ export function isValidMemoryId(id: string): boolean {
 	return id.length <= MEMORY_ID_LIMIT && ID_PATTERN.test(id);
 }
 
+/**
+ * Why the proposal-identity gate dropped one proposal (P2 mechanical check,
+ * the single home every caller delegates to).
+ *
+ * - `unknown-action`: outside the closed `create/update/delete` set.
+ * - `unknown-id`: an `update`/`delete` whose id is absent, malformed, or not
+ *   among the workspace's active ids (a forged out-of-allowlist id lands here).
+ * - `id-collision`: a `create` whose explicit (or title-derived) id already
+ *   exists — the pre-moved twin of `createMemory`'s "already exists" failure,
+ *   moved out of the atomic gate so one bad id no longer kills a good batch.
+ * - `bad-type`: a carried `type` outside `MEMORY_TYPES` (the pre-moved twin
+ *   of the field gate's first check, same reason).
+ */
+export type IdentityRejectReason = "unknown-action" | "unknown-id" | "id-collision" | "bad-type";
+
+/** The identity fields the gate reads; everything else passes through. */
+export interface IdentityProposal {
+	action: string;
+	id?: string | undefined;
+	type?: string | undefined;
+	title?: string | undefined;
+}
+
+/**
+ * Check one proposal's identity against the workspace's active id allowlist.
+ * Pure (no store access): the caller builds `allowedIds` once from its own
+ * read. Returns the drop reason, `undefined` when the identity passes.
+ * @param proposal - The proposal's identity fields.
+ * @param allowedIds - The workspace's active memory ids.
+ */
+export function identityRejectReason(
+	proposal: IdentityProposal,
+	allowedIds: ReadonlySet<string>,
+): IdentityRejectReason | undefined {
+	const action = proposal.action;
+	if (action !== "create" && action !== "update" && action !== "delete") {
+		return "unknown-action";
+	}
+	if (typeof proposal.type === "string" && !MEMORY_TYPES.includes(proposal.type as MemoryType)) {
+		return "bad-type";
+	}
+	if (action === "create") {
+		const raw = typeof proposal.id === "string" ? proposal.id.trim() : "";
+		const id = raw.length > 0 ? raw : typeof proposal.title === "string" ? slugifyId(proposal.title) : "";
+		if (id.length > 0 && allowedIds.has(id)) {
+			return "id-collision";
+		}
+		return undefined;
+	}
+	const id = typeof proposal.id === "string" ? proposal.id.trim() : "";
+	if (id.length === 0 || !isValidMemoryId(id) || !allowedIds.has(id)) {
+		return "unknown-id";
+	}
+	return undefined;
+}
+
 /** The feedback body contract: rule first, then **Why:** and **How to apply:**. */
 const FEEDBACK_WHY = /(?:\*\*)?Why:(?:\*\*)?/i;
 const FEEDBACK_HOW = /(?:\*\*)?How to apply:(?:\*\*)?/i;
-
 /** Labels of the feedback body lines that are missing, empty string when complete. */
 export function feedbackWhyHowMissing(body: string): string {
 	const missing: string[] = [];

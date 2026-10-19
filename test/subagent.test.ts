@@ -142,6 +142,7 @@ describe("subagent definitions", () => {
 			"review-evolve-memory",
 			"review-evolve-skill",
 			"extraction-gate",
+			"extraction-classify",
 			"extraction-main",
 		]);
 		for (const definition of SUBAGENT_DEFINITIONS) {

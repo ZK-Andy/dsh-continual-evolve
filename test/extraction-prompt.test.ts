@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildPromptJson,
 	CHEAP_INCREMENT_MAX,
 	cheapPrompt,
+	classifyPrompt,
 	EXTRACTION_CHEAP_SYSTEM_PROMPT,
+	EXTRACTION_CLASSIFY_SYSTEM_PROMPT,
 	extractionPrompt,
 	EXTRACTION_SYSTEM_PROMPT,
+	formatClassification,
 	manifestLineOf,
 	MAX_PROPOSALS_PER_RUN,
 	parseCheapAnswer,
+	parseClassifyAnswer,
 	parseExtractionAnswer,
+	PROMPT_JSON_MAX,
+	shouldStorePromptJson,
 } from "../src/services/extraction-prompt.js";
 
 describe("EXTRACTION_SYSTEM_PROMPT", () => {
@@ -175,5 +182,82 @@ describe("cheap pre-gate", () => {
 		expect(parseCheapAnswer("胡言乱语")).toBeNull();
 		expect(parseCheapAnswer(JSON.stringify({ decision: "apply", proposals: [] }))).toBeNull();
 		expect(parseCheapAnswer(JSON.stringify({ worthExtracting: "yes", reason: "x" }))).toBeNull();
+	});
+});
+
+describe("classification pass (P2 two-stage)", () => {
+	it("asks for Identity/Override/Output tests with evidence references", () => {
+		expect(EXTRACTION_CLASSIFY_SYSTEM_PROMPT).toContain("分类员");
+		expect(EXTRACTION_CLASSIFY_SYSTEM_PROMPT).toContain("Identity");
+		expect(EXTRACTION_CLASSIFY_SYSTEM_PROMPT).toContain("Override");
+		expect(EXTRACTION_CLASSIFY_SYSTEM_PROMPT).toContain("Output");
+		expect(EXTRACTION_CLASSIFY_SYSTEM_PROMPT).toContain("evidence");
+		const prompt = classifyPrompt({ incrementHead: "user: 在 Fedora 上工作", userSeqs: [10] });
+		expect(prompt).toContain("Fedora");
+		expect(prompt).not.toContain("manifest");
+	});
+
+	it("parses worthy lists and drops evidence-less candidates", () => {
+		const parsed = parseClassifyAnswer(JSON.stringify({
+			worthy: [
+				{ kind: "user", evidence: "我在 Fedora 上工作", test: "Identity" },
+				{ kind: "feedback", evidence: "", test: "Override" },
+				{ kind: "reference", evidence: "见工单 123", test: "Output" },
+			],
+			reason: "环境事实",
+		}));
+		expect(parsed?.worthy).toHaveLength(2);
+		expect(parsed?.worthy[0]).toMatchObject({ kind: "user", test: "Identity" });
+		expect(parseClassifyAnswer(JSON.stringify({ worthy: [], reason: "闲聊" }))?.worthy).toEqual([]);
+	});
+
+	it("fails open (null) on unparseable or shape-violating answers", () => {
+		expect(parseClassifyAnswer("胡言乱语")).toBeNull();
+		expect(parseClassifyAnswer(JSON.stringify({ decision: "apply", proposals: [] }))).toBeNull();
+		expect(parseClassifyAnswer(JSON.stringify({ worthy: "yes" }))).toBeNull();
+	});
+
+	it("renders the generation prior, including the empty verdict", () => {
+		expect(formatClassification({ worthy: [], reason: "闲聊" })).toContain("无值得项");
+		expect(
+			formatClassification({ worthy: [{ kind: "user", evidence: "Fedora", test: "Identity" }], reason: "环境" }),
+		).toContain("Fedora");
+	});
+
+	it("threads the prior into the generation prompt, absent when undefined", () => {
+		const base = { increment: "x", manifest: [], candidates: [], userSeqs: [] as readonly number[] };
+		expect(extractionPrompt(base)).not.toContain("classification");
+		const withPrior = extractionPrompt({ ...base, classification: "先验" });
+		expect(withPrior).toContain("<classification>");
+		expect(withPrior).toContain("先验");
+	});
+});
+
+describe("prompt_json audit policy (P2, D8)", () => {
+	it("stores every failure and rejection, samples successes at 5%, never skips", () => {
+		expect(shouldStorePromptJson("extract:s:1", "failed")).toBe(true);
+		expect(shouldStorePromptJson("extract:s:1", "rejected")).toBe(true);
+		expect(shouldStorePromptJson("extract:s:1", "skipped")).toBe(false);
+		expect(shouldStorePromptJson(undefined, "applied")).toBe(false);
+		// Deterministic: same runId always decides the same way.
+		const sampled = ["extract:sess-1:11", "extract:sess-1:12", "extract:sess-1:13"].map((id) =>
+			shouldStorePromptJson(id, "applied"),
+		);
+		expect(["extract:sess-1:11", "extract:sess-1:12", "extract:sess-1:13"].map((id) =>
+			shouldStorePromptJson(id, "applied"),
+		)).toEqual(sampled);
+		// Roughly 5% over a sweep (deterministic hash, no randomness).
+		let hits = 0;
+		for (let i = 0; i < 200; i++) {
+			if (shouldStorePromptJson(`extract:sess:${i}`, "applied")) hits++;
+		}
+		expect(hits).toBeGreaterThan(0);
+		expect(hits).toBeLessThan(40);
+	});
+
+	it("truncates the prompts JSON to the audit cap", () => {
+		expect(PROMPT_JSON_MAX).toBe(4000);
+		expect(buildPromptJson({ prompt: "x".repeat(9000) })).toHaveLength(PROMPT_JSON_MAX);
+		expect(JSON.parse(buildPromptJson({ classifyPrompt: "c", prompt: "p" }))).toMatchObject({ classifyPrompt: "c", prompt: "p" });
 	});
 });
