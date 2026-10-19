@@ -64,6 +64,7 @@
 
 - **断言**：ts-morph dump 每个 public 模块的 export 名与签名 → `snapshot/api.json`；diff 非空即失败，提示 `--update` 并需同 PR 的 ADR。
 - **验收**：删一个 export → 红；改签名 → 红；只改实现 → 绿。
+- **实现注记（2026-10-19 G-batch2）**：引擎用已声明的 `typescript` 跑声明 emit（tsc 自举，无新依赖），不用 ts-morph 包；语义见 `scripts/verify-api-snapshot.ts` 头注。三条验收与确定性（双跑字节一致）均已实证。
 
 ### G6 Schema / 枚举快照
 
