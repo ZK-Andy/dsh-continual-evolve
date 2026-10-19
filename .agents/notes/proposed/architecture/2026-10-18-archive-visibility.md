@@ -28,6 +28,8 @@ Status: proposed
 | `merged-duplicate` | 合并去重归档（若日后实现） |
 | `""` | 尚未分类（迁移占位） |
 
+> 2026-10-19 修订（架构补充总纲 P4，二审意见）：**三值起步**——`merged-duplicate` 递延，随合并去重落地同批再加；预占无 writer 的枚举会在 G6 快照基线里成为死枚举。G6 建基线（总纲 P0）按 promoted-source / review-archive / demoted-source 三值。
+
 写入点与状态变更同事务；`applyProposals` 的 delete 仍是物理删除、不走归档（删除永远人工的语义不变）。
 
 ### 2. 一次性回填

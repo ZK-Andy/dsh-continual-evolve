@@ -63,6 +63,8 @@ RSI 与研究界那条线的分界就在此：**有可执行验证器才算改�
 ## 5. 阶段
 
 > 2026-10-19 D1 修订（见[架构补充总纲](2026-10-19-architecture-supplement-plan.md) §2）：本计划为 P5 轨道的执行细节；fixture/负例/runner 与召回度量 A/B **统一住 `evals/`**——P0 回归集同时承载"每类记忆 + 负例 + 逐条覆盖"（`eval:recall` 进 CI），QA 题集即召回 B。总纲统一调度，本节内部顺序不变。
+>
+> 2026-10-19 D10 修订（同上 §2）：**双 gate + 双 runner**——① 检索层 recall 退化进 CI 红；任务层 fitness 缺失只 warning（本计划 P3 的非阻塞语义仅适用于任务层，不再适用于 `eval:recall`）。② 确定性任务集执行"同批两次 `acc` 一致"的 flaky 判定；**judge 型 QA（召回 B）单独 report、不进 flaky 判定**（judge 波动不可控）。③ caseTrace 配对落库（query/注入预览/回复三件套）作为任务层与 QA 指标的前置数据形状，随 P5 落地。
 
 ### P0 冻结回归集（0.5–1 天）
 
