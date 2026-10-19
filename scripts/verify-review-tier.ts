@@ -14,7 +14,11 @@
  *     scripts/fn-shape-baseline.json, cordis.patch.yml, .githooks/**
  *   - adr-promises-full: proposed ADR whose body contains "三重审核"
  *   - behavior-surface: .github/workflows/**, templates/**, docs/**,
- *     client/**, evals/**, assets/**
+ *     client/**, evals/**, assets/** — except `evals/runs/**`: committed
+ *     four-arm run data is machine output (`evolve_eval_run` → compare.md),
+ *     not human design; its anti-fake property is owned mechanically by
+ *     `verify-eval-freshness` (commit must cover HEAD), not by human review.
+ *     Human-curated evals (`tasks/`, `baseline/`, README) stay FULL.
  *
  * Evidence = an implemented ADR in THIS change set whose header zone carries
  * a newly produced `Review: FULL/<date>[#N]/R1=ok R2=ok R3=ok` line (single
@@ -117,6 +121,13 @@ function adrCommitsFull(rel: string, repo: string, stagedOnly: boolean): boolean
 const SURFACE_DIRS = ["templates", "docs", "client", "evals", "assets"] as const;
 
 /**
+ * Machine-output run data: committed four-arm reports under `evals/runs/`.
+ * Exempt from behavior-surface FULL (see header comment): no human design
+ * to review, anti-fake owned by `verify-eval-freshness`.
+ */
+const EVAL_RUNS_PREFIX = "evals/runs/";
+
+/**
  * Pure tier classification (importable by tests). The adr-promises-full leg
  * reads proposed ADR bodies from repo (staged index in --staged mode, else
  * the worktree); everything else is path-only.
@@ -144,7 +155,10 @@ export function classifyTier(
 			rel.includes("/.githooks/")
 		) {
 			hit = `gate-criteria: ${rel}`;
-		} else if (rel.startsWith(".github/workflows/") || SURFACE_DIRS.some((d) => (segs as readonly string[]).includes(d))) {
+		} else if (
+			!rel.startsWith(EVAL_RUNS_PREFIX) &&
+			(rel.startsWith(".github/workflows/") || SURFACE_DIRS.some((d) => (segs as readonly string[]).includes(d)))
+		) {
 			hit = `behavior-surface: ${rel}`;
 		} else if (adrCommitsFull(rel, repo, stagedOnly)) {
 			hit = `adr-promises-full: ${rel}`;

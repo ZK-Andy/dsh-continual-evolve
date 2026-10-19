@@ -83,7 +83,20 @@ describe("classifyTier", () => {
 	});
 
 	it("marks behavior-surface FULL", () => {
-		for (const p of [".github/workflows/ci.yml", "docs/design.md", "templates/adr-proposed.md", "client/client.js", "evals/tasks/a.json", "assets/skill.md"]) {
+		for (const p of [".github/workflows/ci.yml", "docs/design.md", "templates/adr-proposed.md", "client/client.js", "evals/tasks/a.json", "evals/baseline/recall.json", "evals/README.md", "assets/skill.md"]) {
+			expect(classifyTier([p], root).full).toBe(true);
+		}
+	});
+
+	it("leaves machine-output eval runs LIGHT (首跑回填不触发 FULL)", () => {
+		const { full, reasons } = classifyTier(["evals/runs/2026-10-19/compare.md"], root);
+		expect(full).toBe(false);
+		expect(reasons).toEqual([]);
+	});
+
+	it("bounds the runs exemption on the trailing slash", () => {
+		expect(classifyTier(["evals/runs/report.json"], root).full).toBe(false);
+		for (const p of ["evals/runs-evil/compare.md", "evals/runsbackfill.md"]) {
 			expect(classifyTier([p], root).full).toBe(true);
 		}
 	});
