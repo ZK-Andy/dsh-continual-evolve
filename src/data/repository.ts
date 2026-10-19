@@ -8,7 +8,8 @@
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { MEMORIES, PROMPTS, SKILLS } from "./resource-kinds.js";
-import type { MemoryRow, PromptRow, SkillRow } from "./records.js";
+import type { ArchiveReason, MemoryRow, PromptRow, SkillRow } from "./records.js";
+import { ftsPhrase, likePattern, queryTokens, searchAlternatives } from "./search-query.js";
 
 /** Bindable column value (the subset of node:sqlite's SQLInputValue we use). */
 export type SqlValue = string | number | bigint | null;
@@ -47,60 +48,16 @@ export interface ResourceKind {
 	readonly insertSql: string;
 	readonly updateSql: string;
 	readonly deleteSql: string;
+	/**
+	 * Reason-stamping archive (`UPDATE … SET status = 'archived', archive_reason
+	 * = ?, merged_into = ? …`), `null` when the kind has no archive-reason
+	 * columns (only memories archives with a reason today).
+	 */
+	readonly archiveReasonedSql: string | null;
 	readonly ftsDropSql: string;
 	readonly ftsInsertSql: string;
 	readonly usageGetSql: string;
 	readonly usageUpsertSql: string;
-}
-
-/** Quote one token as an FTS5 phrase (trigram needs ≥3 chars to match). */
-export function ftsPhrase(token: string): string {
-	return `"${token.replaceAll('"', '""')}"`;
-}
-
-/**
- * Split a query into keyword tokens on ASCII or full-width whitespace. Each
- * token is matched on its own and AND-combined: trigram FTS can only match
- * ≥3-char runs, so a keyword pair like `中文 交接` is unrepresentable as one
- * FTS phrase and silently returns nothing under a phrase match.
- */
-export function queryTokens(query: string): string[] {
-	return query.split(/[\s\u3000]+/).filter((token) => token.length > 0);
-}
-
-/** Whether a string contains any CJK code point. */
-function hasCjk(text: string): boolean {
-	for (const char of text) {
-		const cp = char.codePointAt(0) ?? 0;
-		if ((cp >= 0x2e80 && cp <= 0x9fff) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xff00 && cp <= 0xffef)) {
-			return true;
-		}
-	}
-	return false;
-}
-
-/**
- * Expand one query token into match alternatives. A CJK run longer than three
- * characters is a sentence fragment, not a keyword: requiring the whole run
- * ("什么时候可以") finds nothing in a title that says "发版前必须 CI 全绿",
- * while each trigram window is a usable key. Windows are OR-ed within the
- * token and tokens stay AND-combined, so precision is bounded by the tokens the
- * caller typed (ADR `2026-10-18-absorb-memory-plugin-strengths`, finding F8).
- */
-export function searchAlternatives(token: string): string[] {
-	if (token.length <= 3 || !hasCjk(token)) {
-		return [token];
-	}
-	const windows: string[] = [];
-	for (let index = 0; index + 3 <= token.length; index += 1) {
-		windows.push(token.slice(index, index + 3));
-	}
-	return [...new Set(windows)];
-}
-
-/** `%token%` with LIKE metacharacters escaped — keywords match literally. */
-export function likePattern(token: string): string {
-	return `%${token.replaceAll(/[\\%_]/g, "\\$&")}%`;
 }
 
 /**
@@ -149,6 +106,7 @@ export class Repository<Row> {
 	private readonly usageGet: StatementSync;
 	private readonly usageUpsert: StatementSync;
 	private archiveStmt: StatementSync | undefined;
+	private archiveReasonedStmt: StatementSync | undefined;
 	/** LIKE fallback: one statement per token count — the query set repeats, the counts don't grow. */
 	private readonly likeStmts = new Map<string, StatementSync>();
 
@@ -349,6 +307,42 @@ export class Repository<Row> {
 			this.archiveStmt = stmt;
 		}
 		stmt.run(ts, workspaceId, id);
+	}
+
+	/**
+	 * Archive one row stamping why (and, for merges, what it folded into).
+	 * Only kinds carrying archive-reason columns declare the SQL — calling it
+	 * anywhere else is a programming error, so it throws instead of writing
+	 * a reason nowhere.
+	 * @param workspaceId - The partition.
+	 * @param id - The row id.
+	 * @param ts - The archiving instant.
+	 * @param reason - The closed `archive_reason` value.
+	 * @param mergedInto - The surviving row id for merges, `null` otherwise.
+	 */
+	archiveWithReason(workspaceId: string, id: string, ts: string, reason: ArchiveReason, mergedInto: string | null): void {
+		const sql = this.kind.archiveReasonedSql;
+		if (sql === null) {
+			throw new Error(`archiveWithReason unsupported for ${this.kind.table}`);
+		}
+		let stmt = this.archiveReasonedStmt;
+		if (stmt === undefined) {
+			stmt = this.database.prepare(sql);
+			this.archiveReasonedStmt = stmt;
+		}
+		stmt.run(reason, mergedInto, ts, workspaceId, id);
+	}
+
+	/**
+	 * Archived rows of one partition, newest first, capped for viewers.
+	 * @param workspaceId - The partition.
+	 * @param limit - Row cap.
+	 * @returns The archived rows.
+	 */
+	listArchivedRows(workspaceId: string, limit: number): Row[] {
+		return this.database.prepare(
+			`SELECT * FROM ${this.kind.table} WHERE workspace_id = ? AND status = 'archived' ORDER BY updated_at DESC LIMIT ?`,
+		).all(workspaceId, limit) as unknown as Row[];
 	}
 
 	/** Aggregate usage for one item, undefined when never consumed. */

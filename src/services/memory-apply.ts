@@ -18,6 +18,7 @@ import {
 } from "./memory-rules.js";
 import type { ItemEventEntry, LedgerEntry, LedgerFile, MemoryRecord } from "../store-types.js";
 import { createLinkages, updateLinkages } from "./memory-linkage.js";
+import { allocateVersionId, landMerge, planMerge } from "./memory-merge.js";
 import { commitWithLedger, writeMemoryLedger } from "../data/ledger.js";
 import { recordOf, type MemoryRow } from "../data/records.js";
 import { type Repository } from "../data/repository.js";
@@ -178,6 +179,36 @@ function applyOne(
 	const reasons = fieldGateReasons(fields.fields);
 	if (reasons.length > 0) {
 		return fail(proposal, reasons[0] ?? "invalid record");
+	}
+	// Same-session repeat: fold the old row into a versioned new one instead of
+	// overwriting it. Anything outside that scope falls through to the legacy
+	// create/update paths below (P4a).
+	const merge = planMerge({
+		memories: db.memories,
+		workspaceId: ctx.workspaceId,
+		trigger: ctx.trigger,
+		sessionId: ctx.sessionId,
+		proposal,
+		id,
+		existing,
+		fields: fields.fields,
+	});
+	if (merge !== undefined) {
+		const newId = allocateVersionId(db.memories, ctx.workspaceId, merge.oldId);
+		if (newId === undefined) {
+			return fail(proposal, `version suffixes exhausted for "${merge.oldId}"`);
+		}
+		return landMerge({
+			db,
+			ctx: { workspaceId: ctx.workspaceId, trigger: ctx.trigger, sessionId: ctx.sessionId, runId: ctx.runId },
+			proposal,
+			action,
+			plan: merge,
+			newId,
+			fields: fields.fields,
+			link: link.value,
+			files,
+		});
 	}
 	const job: MemoryApplyJob = { db, ctx, proposal, id, existing, fields: fields.fields, link: link.value, files };
 	if (action === "create") {

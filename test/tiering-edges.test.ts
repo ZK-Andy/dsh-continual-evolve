@@ -279,7 +279,7 @@ describe("shared verdict-row helpers", () => {
 
 describe("raw helpers", () => {
 	it("requires an active global row for demotion", () => {
-		const stmts = { clearProbation: { run: () => undefined }, archiveOne: { run: () => undefined }, logVerdict: { run: () => undefined } } as unknown as TieringStmts;
+		const stmts = { clearProbation: { run: () => undefined }, logVerdict: { run: () => undefined } } as unknown as TieringStmts;
 		const memories = { getRow: () => undefined } as never;
 		const db = new DatabaseSync(dbPath);
 		expect(demoteMemory(db, memories, stmts, { workspaceId: "", id: "ghost", now: new Date() }).ok).toBe(false);
@@ -299,7 +299,6 @@ describe("transaction faults roll back and rethrow", () => {
 		create("m-a");
 		const stmts = {
 			setProbation: { run: () => { throw new Error("disk full"); } },
-			archiveOne: { run: () => undefined },
 			logVerdict: { run: () => undefined },
 		} as unknown as TieringStmts;
 		const db = new DatabaseSync(dbPath);
@@ -315,8 +314,7 @@ describe("transaction faults roll back and rethrow", () => {
 		create("m-a", "person");
 		store.promoteMemory(WS, "m-a");
 		const stmts = {
-			clearProbation: { run: () => undefined },
-			archiveOne: { run: () => { throw new Error("write refused"); } },
+			clearProbation: { run: () => { throw new Error("write refused"); } },
 			logVerdict: { run: () => undefined },
 		} as unknown as TieringStmts;
 		const db = new DatabaseSync(dbPath);
@@ -328,8 +326,8 @@ describe("transaction faults roll back and rethrow", () => {
 
 describe("store-side failures degrade, never authorize", () => {
 	it("reports archive failure instead of claiming success", () => {
-		const failing = { archiveRow: () => { throw new Error("locked"); } } as never;
-		const methods = createTiering({ archiveRow: failing });
+		const failing = { archiveWithReason: () => { throw new Error("locked"); } } as never;
+		const methods = createTiering({ archiveWithReason: failing });
 		expect(methods.archiveMemory(WS, "m-a")).toBe(false);
 	});
 

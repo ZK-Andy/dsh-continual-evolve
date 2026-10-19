@@ -10,7 +10,8 @@
  * Handlers are synchronous except the settings POST body/save, and never
  * throw past the response.
  */
-import { memoryEntryContent, listCardWorkspaces, memorySnapshot, skillEntryContent, skillSnapshot } from "../../surfaces/memory-snapshot.js";
+import { memoryEntryContent, listCardWorkspaces, memorySnapshot } from "../../surfaces/memory-snapshot.js";
+import { skillEntryContent, skillSnapshot } from "../../surfaces/skill-snapshot.js";
 import { mountPromptRoutes } from "./prompt-routes.js";
 import {
 	CARD_API_REVIEW_SETTINGS_PATH,

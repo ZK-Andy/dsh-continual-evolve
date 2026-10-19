@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listCardWorkspaces, skillEntryContent, skillSnapshot } from "../src/surfaces/memory-snapshot.js";
+import { listCardWorkspaces } from "../src/surfaces/memory-snapshot.js";
+import { skillEntryContent, skillSnapshot } from "../src/surfaces/skill-snapshot.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
 let dbPath = "";

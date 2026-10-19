@@ -22,9 +22,23 @@ export interface MemoryRow {
 	source_seqs: string | null;
 	source_run: string | null;
 	corrects: string | null;
+	/** Why the row was archived (`''` = unclassified migration placeholder). */
+	archive_reason: string;
+	/** The active row id a `merged-duplicate` row was folded into, `null` otherwise. */
+	merged_into: string | null;
 	created_at: string;
 	updated_at: string;
 }
+
+/**
+ * The closed `archive_reason` value set (P4): the only writers are promotion,
+ * review-archive, demotion, and same-session duplicate merges. `''` is the
+ * migration placeholder for rows archived before the column existed.
+ */
+export const ARCHIVE_REASONS = ["", "promoted-source", "review-archive", "demoted-source", "merged-duplicate"] as const;
+
+/** One `archive_reason` value (derived from {@link ARCHIVE_REASONS}, never hand-written). */
+export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
 
 /** One stored memory record (snake_case columns camelCased). */
 export interface MemoryRecord {
@@ -45,6 +59,10 @@ export interface MemoryRecord {
 	corrects: string | null;
 	/** Layer marker: `project` (default) or `person` (a promotion candidate). */
 	scope: "project" | "person";
+	/** Why the row was archived (`''` = unclassified); meaningless unless `status` is `archived`. */
+	archiveReason: ArchiveReason;
+	/** The active row id a `merged-duplicate` row was folded into, `null` otherwise. */
+	mergedInto: string | null;
 	/** End of the global probation window, `null` when the row is not on probation. */
 	probationUntil: string | null;
 	/** For a promoted (global) row: the partition it came from, `null` otherwise. */
@@ -74,6 +92,10 @@ export function recordOf(row: MemoryRow): MemoryRecord {
 		sourceRun: row.source_run,
 		corrects: row.corrects ?? null,
 		scope: row.scope === "person" ? "person" : "project",
+		archiveReason: (ARCHIVE_REASONS as readonly string[]).includes(row.archive_reason)
+			? (row.archive_reason as ArchiveReason)
+			: "",
+		mergedInto: row.merged_into ?? null,
 		probationUntil: row.probation_until ?? null,
 		originWorkspace: row.origin_workspace ?? null,
 		notWhen: row.not_when ?? "",

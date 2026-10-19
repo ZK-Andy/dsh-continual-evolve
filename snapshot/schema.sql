@@ -2,6 +2,33 @@
 -- source: src/data/schema.ts GUARDED_TABLES (+ review-accounts / store-types / item-events single homes)
 -- update: tsx scripts/verify-schema-snapshot.ts --update
 
+-- table: memories
+-- columns: workspace_id, id, type, title, description, body, status, source_session, source_seqs, source_run, corrects, scope, probation_until, origin_workspace, not_when, archive_reason, merged_into, created_at, updated_at
+-- check archive_reason IN ('','promoted-source','review-archive','demoted-source','merged-duplicate')
+CREATE TABLE IF NOT EXISTS memories (
+  workspace_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 65536),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','quarantined','archived')),
+  source_session TEXT,
+  source_seqs TEXT,
+  source_run TEXT,
+  corrects TEXT,
+  scope TEXT NOT NULL DEFAULT 'project',
+  probation_until TEXT,
+  origin_workspace TEXT,
+  not_when TEXT NOT NULL DEFAULT '',
+  archive_reason TEXT NOT NULL DEFAULT '' CHECK (archive_reason IN ('','promoted-source','review-archive','demoted-source','merged-duplicate')),
+  merged_into TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+) STRICT;
+
 -- table: extraction_log
 -- columns: run_id, ts, session_id, workspace_id, trigger, decision, skip_reason, status, duration_ms, model, usage, cheap_usage, cheap_error, classify_usage, classify_error, prompt_json, dropped_warnings, files, occurrences
 -- check trigger IN ('turn-debounce','compaction','close-drain','explicit','import','item-review')

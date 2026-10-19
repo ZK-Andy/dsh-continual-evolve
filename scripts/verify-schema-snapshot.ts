@@ -4,7 +4,8 @@
  * generates must match the committed snapshot.
  *
  * Snapshot source (single homes, see docs/plans/2026-10-19-architecture-supplement-plan.md P0):
- *   src/data/schema.ts (GUARDED_TABLES: extraction_log / item_events / review_log)
+ *   src/data/schema.ts (GUARDED_TABLES: memories / extraction_log / item_events / review_log)
+ *   +- src/data/records.ts (ARCHIVE_REASONS, the memories whitelist)
  *   +- src/data/review-accounts.ts (REVIEW_VERDICTS, 8-value whitelist)
  *   +- src/store-types.ts (LEDGER_TRIGGERS) + src/data/item-events.ts (ITEM_EVENT_KINDS)
  *   +- src/data/migrate.ts (ensure* chain must know every guarded table)

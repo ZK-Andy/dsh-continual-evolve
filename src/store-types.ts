@@ -132,8 +132,6 @@ export interface LedgerFile<Action extends string = string, Snapshot = unknown> 
 	sourceSeqs?: string | undefined;
 }
 
-
-
 /**
  * One ledger row (audit + rollback via embedded before/after snapshots).
  * Consecutive mechanical skips of the same kind share one row, whose
@@ -221,6 +219,8 @@ export interface MemoryStore {
 	list(workspaceId: string): MemoryRecord[];
 	/** Every non-archived record regardless of status (the card's projection). */
 	listAll(workspaceId: string): MemoryRecord[];
+	/** Archived records, newest first, capped (the card's archive zone). */
+	listArchived(workspaceId: string, limit?: number): MemoryRecord[];
 	/**
 	 * Keyword search, workspace-scoped: whitespace-separated tokens are
 	 * AND-combined — trigram FTS when every token is ≥3 chars, literal LIKE

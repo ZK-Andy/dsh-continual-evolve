@@ -18,6 +18,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { ITEM_EVENT_KINDS } from "./item-events.js";
+import { ARCHIVE_REASONS } from "./records.js";
 import { REVIEW_VERDICTS } from "./review-accounts.js";
 import { LEDGER_OCCURRENCES, LEDGER_TRIGGERS } from "../store-types.js";
 
@@ -132,6 +133,63 @@ export function reviewLogDdl(name: string): string {
 )`;
 }
 
+/** The memories table's columns in DDL order: the rebuild's explicit copy list (P4). */
+export const MEMORIES_COLUMNS = [
+	"workspace_id",
+	"id",
+	"type",
+	"title",
+	"description",
+	"body",
+	"status",
+	"source_session",
+	"source_seqs",
+	"source_run",
+	"corrects",
+	"scope",
+	"probation_until",
+	"origin_workspace",
+	"not_when",
+	"archive_reason",
+	"merged_into",
+	"created_at",
+	"updated_at",
+] as const;
+
+/**
+ * The memories table's DDL, parameterized by table name so the fresh-file path
+ * (`migrate.ts` `SCHEMA_DDL`), the rebuild, and the G6 snapshot share one text.
+ * The `archive_reason` whitelist is generated from {@link ARCHIVE_REASONS}.
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function memoriesDdl(name: string): string {
+	const reasons = ARCHIVE_REASONS.map((reason) => `'${reason}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  workspace_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 65536),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','quarantined','archived')),
+  source_session TEXT,
+  source_seqs TEXT,
+  source_run TEXT,
+  corrects TEXT,
+  scope TEXT NOT NULL DEFAULT 'project',
+  probation_until TEXT,
+  origin_workspace TEXT,
+  not_when TEXT NOT NULL DEFAULT '',
+  archive_reason TEXT NOT NULL DEFAULT '' CHECK (archive_reason IN (${reasons})),
+  merged_into TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+) STRICT`;
+}
+
 /** One `CHECK` whitelist as the code declares it. */
 export interface CheckedColumn {
 	readonly column: string;
@@ -151,6 +209,12 @@ export interface GuardedTable {
 
 /** Every table under the shape guard, with the whitelists the probe compares. */
 export const GUARDED_TABLES: readonly GuardedTable[] = [
+	{
+		table: "memories",
+		ddl: memoriesDdl,
+		columns: MEMORIES_COLUMNS,
+		checks: [{ column: "archive_reason", values: ARCHIVE_REASONS }],
+	},
 	{
 		table: "extraction_log",
 		ddl: extractionLogDdl,

@@ -7,9 +7,9 @@ import { checkSnapshot, renderSnapshot } from "../scripts/verify-schema-snapshot
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
 describe("renderSnapshot", () => {
-	it("covers all three guarded tables with their whitelists", () => {
+	it("covers all four guarded tables with their whitelists", () => {
 		const text = renderSnapshot();
-		for (const table of ["extraction_log", "item_events", "review_log"]) {
+		for (const table of ["memories", "extraction_log", "item_events", "review_log"]) {
 			expect(text).toContain(`-- table: ${table}`);
 		}
 		// G6 acceptance: the eight verdicts are pinned in the snapshot —
@@ -19,6 +19,11 @@ describe("renderSnapshot", () => {
 		}
 		for (const trigger of ["turn-debounce", "compaction", "close-drain", "explicit", "import", "item-review"]) {
 			expect(text).toContain(`'${trigger}'`);
+		}
+		// P4 acceptance: the four archive reasons are pinned — retiring one
+		// value diverges the text (red).
+		for (const reason of ["promoted-source", "review-archive", "demoted-source", "merged-duplicate"]) {
+			expect(text).toContain(`'${reason}'`);
 		}
 	});
 

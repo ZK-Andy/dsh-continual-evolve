@@ -111,6 +111,8 @@ window.__ModuleLoader__.load({
 			searchPlaceholder: "搜索记忆…",
 			searchEmpty: "没有匹配的记忆文件。",
 			quarantined: "巡检隔离（疑似密钥泄漏等异常，已隐藏）：",
+			archivedHeading: "已归档（只读，最多 50 条）",
+			archivedMergedInto: "并入",
 			buildLine: "运行代 {code} · 盘面代 {disk}（v{version}）",
 			buildStale: "盘面代码已换，需重启宿主才会生效",
 			buildUnknown: "代际不可读（无法定位入口文件）",
@@ -169,6 +171,8 @@ window.__ModuleLoader__.load({
 			searchPlaceholder: "Search memory files…",
 			searchEmpty: "No matching memory files.",
 			quarantined: "Quarantined by patrol (suspected secrets, hidden): ",
+			archivedHeading: "Archived (read-only, up to 50)",
+			archivedMergedInto: "merged into",
 			buildLine: "Running {code} · on disk {disk} (v{version})",
 			buildStale: "Disk code changed — restart the host to load it",
 			buildUnknown: "Generation unreadable (entry file not locatable)",
@@ -924,6 +928,29 @@ window.__ModuleLoader__.load({
 			return labels.join(" · ");
 		}
 
+		/** The archive zone: collapsed by default, plain text rows, no actions. */
+		function archivedBlock(t, archived) {
+			if (!Array.isArray(archived) || archived.length === 0) {
+				return null;
+			}
+			return createElement(
+				"details",
+				{ key: "archived" },
+				createElement("summary", { key: "head", className: "dce-files-title" }, t("archivedHeading")),
+				createElement(
+					"ul",
+					{ key: "rows", className: "dce-list" },
+					archived.map(function (entry) {
+						var reason = typeof entry.reason === "string" && entry.reason.length > 0 ? entry.reason : "—";
+						var merged = typeof entry.mergedInto === "string" && entry.mergedInto.length > 0
+							? " · " + t("archivedMergedInto") + " " + entry.mergedInto
+							: "";
+						return createElement("li", { key: entry.id }, entry.title + " (" + entry.id + ") · " + reason + merged);
+					}),
+				),
+			);
+		}
+
 		/** The memory file list: stats, search, head, rows or the empty state. */
 		function memoryFilesBlock(t, UI, vm) {
 			var query = String(vm.query).trim().toLocaleLowerCase();
@@ -970,6 +997,7 @@ window.__ModuleLoader__.load({
 					),
 				);
 			}
+			parts.push(archivedBlock(t, vm.snapshot.archived));
 			return parts;
 		}
 

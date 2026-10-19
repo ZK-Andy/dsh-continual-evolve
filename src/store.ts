@@ -135,9 +135,9 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
  * same id shadows the global one (the L0/L1 rule of
  * `2026-10-13-memory-tiering-and-promotion`).
  * @param memories - The memories repository.
- * @returns The four read methods.
+ * @returns The five read methods.
  */
-function memoryReads(memories: Repository<MemoryRow>): Pick<MemoryStore, "get" | "list" | "listAll" | "search"> {
+function memoryReads(memories: Repository<MemoryRow>): Pick<MemoryStore, "get" | "list" | "listAll" | "listArchived" | "search"> {
 	return {
 		get(workspaceId, id) {
 			// A local row shadows the global one unless it is archived: promotion
@@ -166,6 +166,9 @@ function memoryReads(memories: Repository<MemoryRow>): Pick<MemoryStore, "get" |
 			// The card's projection stays partition-scoped: the global partition
 			// lists itself, and merging here would show every row twice.
 			return memories.listVisibleRows(workspaceId).map(recordOf);
+		},
+		listArchived(workspaceId, limit = 50) {
+			return memories.listArchivedRows(workspaceId, limit).map(recordOf);
 		},
 		search(workspaceId, query, limit = 20) {
 			const local = memories.searchRows(workspaceId, query, limit).map(recordOf);
@@ -202,6 +205,7 @@ function buildMemoryMethods(
 	| "get"
 	| "list"
 	| "listAll"
+	| "listArchived"
 	| "search"
 	| "applyProposals"
 	| "logSkipped"

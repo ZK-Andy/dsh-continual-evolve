@@ -40,17 +40,19 @@ const EDGES: Record<string, readonly string[]> = {
 	],
 	// The account layer's single import site for the store assembly.
 	"data/database.ts": [],
+	"data/archive-backfill.ts": [],
+	"data/search-query.ts": [],
 	"data/ledger.ts": ["store-types"],
 	"data/migrate.ts": ["data/injection-log", "data/schema", "store-types"],
 	"data/patrol.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	"data/records.ts": [],
-	"data/repository.ts": ["data/records", "data/resource-kinds"],
+	"data/repository.ts": ["data/records", "data/resource-kinds", "data/search-query"],
 	// Type-only back edge (erased at compile): the descriptor file names the
 	// repository's ResourceKind contract it is written against.
 	"data/resource-kinds.ts": ["data/repository"],
 	"data/review-accounts.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	// Guarded table shapes: the DDL single source, the drift probe, and the rebuild.
-	"data/schema.ts": ["data/item-events", "data/review-accounts", "store-types"],
+	"data/schema.ts": ["data/item-events", "data/records", "data/review-accounts", "store-types"],
 	// The review queue's event tier, its writer, and the derived settled streak.
 	"data/item-events.ts": ["data/review-accounts"],
 	// Injection ledger: one row per session, pruned with the other ledgers.
@@ -79,6 +81,7 @@ const EDGES: Record<string, readonly string[]> = {
 		"pages/memory-card/workspace-hint",
 		"store",
 		"surfaces/memory-snapshot",
+		"surfaces/skill-snapshot",
 	],
 	"pages/memory-card/mount.ts": [
 		"index",
@@ -152,11 +155,21 @@ const EDGES: Record<string, readonly string[]> = {
 		"data/repository",
 		"services/extraction-prompt",
 		"services/memory-linkage",
+		"services/memory-merge",
 		"services/memory-rules",
 		"store-types",
 	],
 	// The linkage a landed memory write causes (queue events, not gate work).
 	"services/memory-linkage.ts": ["data/records", "data/repository", "store-types"],
+	// Same-session duplicate merges: mechanical version rows, no model calls.
+	"services/memory-merge.ts": [
+		"data/records",
+		"data/repository",
+		"services/memory-linkage",
+		"services/memory-rules",
+		"services/pre-screen",
+		"store-types",
+	],
 	"services/memory-rules.ts": ["data/secret"],
 	// The route candidates a direct call resolves through (see `model-route.ts`).
 	"services/model-route.ts": [],
@@ -284,7 +297,8 @@ const EDGES: Record<string, readonly string[]> = {
 	],
 	"surfaces/memory-guide.ts": [],
 	"surfaces/memory-section.ts": ["services/agent", "services/token-budget", "store", "surfaces/memory-guide"],
-	"surfaces/memory-snapshot.ts": ["services/build-identity", "services/injection-stats", "services/skill-rules", "store"],
+	"surfaces/memory-snapshot.ts": ["services/build-identity", "services/injection-stats", "store"],
+	"surfaces/skill-snapshot.ts": ["services/skill-rules", "store", "surfaces/memory-snapshot"],
 	"surfaces/prompt-snapshot.ts": ["store"],
 	"services/build-identity.ts": [],
 	"services/injection-stats.ts": ["store-types"],

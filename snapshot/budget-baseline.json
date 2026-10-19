@@ -9,6 +9,10 @@
       "lines": 29,
       "outDegree": 5
     },
+    "data/archive-backfill.ts": {
+      "lines": 97,
+      "outDegree": 0
+    },
     "data/database.ts": {
       "lines": 31,
       "outDegree": 0
@@ -26,7 +30,7 @@
       "outDegree": 1
     },
     "data/migrate.ts": {
-      "lines": 394,
+      "lines": 393,
       "outDegree": 3
     },
     "data/patrol.ts": {
@@ -34,15 +38,15 @@
       "outDegree": 4
     },
     "data/records.ts": {
-      "lines": 210,
+      "lines": 232,
       "outDegree": 0
     },
     "data/repository.ts": {
-      "lines": 365,
-      "outDegree": 2
+      "lines": 359,
+      "outDegree": 3
     },
     "data/resource-kinds.ts": {
-      "lines": 138,
+      "lines": 142,
       "outDegree": 1
     },
     "data/review-accounts.ts": {
@@ -50,15 +54,19 @@
       "outDegree": 3
     },
     "data/schema.ts": {
-      "lines": 329,
-      "outDegree": 3
+      "lines": 393,
+      "outDegree": 4
+    },
+    "data/search-query.ts": {
+      "lines": 56,
+      "outDegree": 0
     },
     "data/secret.ts": {
       "lines": 59,
       "outDegree": 0
     },
     "data/tiering.ts": {
-      "lines": 343,
+      "lines": 341,
       "outDegree": 2
     },
     "data/usage-accounts.ts": {
@@ -74,8 +82,8 @@
       "outDegree": 0
     },
     "pages/memory-card/card-routes.ts": {
-      "lines": 288,
-      "outDegree": 6
+      "lines": 289,
+      "outDegree": 7
     },
     "pages/memory-card/mount.ts": {
       "lines": 140,
@@ -150,12 +158,16 @@
       "outDegree": 1
     },
     "services/memory-apply.ts": {
-      "lines": 362,
-      "outDegree": 7
+      "lines": 393,
+      "outDegree": 8
     },
     "services/memory-linkage.ts": {
       "lines": 98,
       "outDegree": 3
+    },
+    "services/memory-merge.ts": {
+      "lines": 233,
+      "outDegree": 6
     },
     "services/memory-rules.ts": {
       "lines": 249,
@@ -250,7 +262,7 @@
       "outDegree": 8
     },
     "store.ts": {
-      "lines": 381,
+      "lines": 385,
       "outDegree": 12
     },
     "surfaces/evolve-fields.ts": {
@@ -282,8 +294,8 @@
       "outDegree": 4
     },
     "surfaces/memory-snapshot.ts": {
-      "lines": 392,
-      "outDegree": 4
+      "lines": 285,
+      "outDegree": 3
     },
     "surfaces/prompt-snapshot.ts": {
       "lines": 143,
@@ -292,6 +304,10 @@
     "surfaces/skill-provider.ts": {
       "lines": 172,
       "outDegree": 0
+    },
+    "surfaces/skill-snapshot.ts": {
+      "lines": 146,
+      "outDegree": 3
     }
   }
 }

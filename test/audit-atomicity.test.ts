@@ -57,17 +57,22 @@ describe("the memory channel", () => {
 			const { memories } = openRepositories(database);
 			const ledger = prepareLedgerStmts(database).ledger;
 			const ctx: ProposalContext = { workspaceId: WORKSPACE, trigger: "explicit", sessionId: "s1" };
+			// A later session edits: same-session repeats merge (P4a), and this
+			// test pins rollback atomicity, not merge routing.
+			const later: ProposalContext = { ...ctx, sessionId: "s2" };
 			const apply = (statement: StatementSync, proposals: Parameters<typeof applyProposals>[2], now = "2026-10-16T00:00:00.000Z") =>
 				applyProposals({ database, now: () => now, memories, ledger: statement }, ctx, proposals);
+			const applyLater = (statement: StatementSync, proposals: Parameters<typeof applyProposals>[2], now = "2026-10-16T00:00:00.000Z") =>
+				applyProposals({ database, now: () => now, memories, ledger: statement }, later, proposals);
 
 			apply(ledger, [{ action: "create", id: "deploy", type: "reference", ...FIELDS }]);
 
-			expect(() => apply(refusingLedger(), [{ action: "update", id: "deploy", body: "rewritten" }])).toThrow(/audit write refused/);
+			expect(() => applyLater(refusingLedger(), [{ action: "update", id: "deploy", body: "rewritten" }])).toThrow(/audit write refused/);
 
 			// The body the model proposed is not in the store, and the connection
 			// is not left holding an open transaction.
 			expect(memories.getRow(WORKSPACE, "deploy")?.body).toBe(FIELDS.body);
-			apply(ledger, [{ action: "update", id: "deploy", body: "landed later" }]);
+			applyLater(ledger, [{ action: "update", id: "deploy", body: "landed later" }]);
 			expect(memories.getRow(WORKSPACE, "deploy")?.body).toBe("landed later");
 			expect(ledgerRows(database, "extraction_log")).toHaveLength(2);
 		} finally {

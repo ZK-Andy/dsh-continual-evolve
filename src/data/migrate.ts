@@ -7,32 +7,12 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { LEDGER_OCCURRENCES } from "../store-types.js";
-import { extractionLogDdl, itemEventsDdl, rebuildDriftedTables, reviewLogDdl } from "./schema.js";
+import { extractionLogDdl, itemEventsDdl, memoriesDdl, rebuildDriftedTables, reviewLogDdl } from "./schema.js";
 import { INJECTION_LOG_DDL } from "./injection-log.js";
 
 const SCHEMA_DDL = `
 PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS memories (
-  workspace_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  body TEXT NOT NULL CHECK (length(body) <= 65536),
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active','quarantined','archived')),
-  source_session TEXT,
-  source_seqs TEXT,
-  source_run TEXT,
-  corrects TEXT,
-  scope TEXT NOT NULL DEFAULT 'project',
-  probation_until TEXT,
-  origin_workspace TEXT,
-  not_when TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (workspace_id, id)
-) STRICT;
+PRAGMA busy_timeout=5000;${memoriesDdl("memories")};
 CREATE INDEX IF NOT EXISTS idx_mem_ws_status ON memories(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_mem_ws_updated ON memories(workspace_id, updated_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -203,6 +183,7 @@ export function migrateDatabase(database: DatabaseSync): void {
 	ensureMemoriesProbation(database);
 	ensureMemoriesOrigin(database);
 	ensureMemoriesNotWhen(database);
+	ensureMemoriesArchiveColumns(database);
 	// Columns first, then shape: the rebuild copies the guard's column list,
 	// and the ALTERs above are what make an old table carry all of it.
 	rebuildDriftedTables(database);
@@ -374,6 +355,24 @@ function ensureMemoriesNotWhen(database: DatabaseSync): void {
 		return;
 	}
 	database.exec("ALTER TABLE memories ADD COLUMN not_when TEXT NOT NULL DEFAULT ''");
+}
+
+/**
+ * Add the P4 archive columns to a store created before them: `archive_reason`
+ * (existing archived rows read `''` until the backfill script
+ * `scripts/backfill-archive-reason.ts` projects their reason) and
+ * `merged_into` (only `merged-duplicate` rows carry it). One function for one
+ * batch, the same discipline as the rollup's per-source counters below.
+ */
+function ensureMemoriesArchiveColumns(database: DatabaseSync): void {
+	const columns = database.prepare("SELECT name FROM pragma_table_info('memories')").all() as { name: string }[];
+	const present = new Set(columns.map((column) => column.name));
+	if (!present.has("archive_reason")) {
+		database.exec("ALTER TABLE memories ADD COLUMN archive_reason TEXT NOT NULL DEFAULT ''");
+	}
+	if (!present.has("merged_into")) {
+		database.exec("ALTER TABLE memories ADD COLUMN merged_into TEXT");
+	}
 }
 
 /**

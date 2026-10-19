@@ -44,9 +44,9 @@ export type ScreenReason = "duplicate" | "no-change" | "unknown-action" | "unkno
 /** The decision for one proposal. */
 export type ScreenVerdict = { keep: true } | { keep: false; reason: ScreenReason };
 
-/** Normalize text for comparison: collapse whitespace, trim. */
-function normalize(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
+/** Normalize text for comparison: NFC, unified newlines, collapsed whitespace, trimmed. */
+export function normalize(text: string): string {
+	return text.normalize("NFC").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim();
 }
 
 /** Whether an update proposal changes any of the fields it carries. */

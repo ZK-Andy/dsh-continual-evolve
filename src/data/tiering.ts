@@ -31,7 +31,6 @@ export interface TieringStmts {
 	usageElsewhere: StatementSync;
 	setProbation: StatementSync;
 	clearProbation: StatementSync;
-	archiveOne: StatementSync;
 	logVerdict: StatementSync;
 }
 
@@ -71,7 +70,6 @@ export function prepareTieringStmts(database: DatabaseSync): TieringStmts {
 		),
 		setProbation: database.prepare("UPDATE memories SET probation_until = ?, origin_workspace = ? WHERE workspace_id = ? AND id = ?"),
 		clearProbation: database.prepare("UPDATE memories SET probation_until = NULL WHERE workspace_id = ? AND id = ?"),
-		archiveOne: database.prepare("UPDATE memories SET status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?"),
 		// The "already judged" marker a move leaves in its target partition
 		// (rollout ADR §R2): a promoted row must not read as a drop-in, and a
 		// demoted row must not be re-queued as new in its old home.
@@ -144,7 +142,7 @@ export function promoteMemory(
 		]);
 		memories.syncFts("", id);
 		stmts.setProbation.run(until, workspaceId, "", id);
-		stmts.archiveOne.run(ts, workspaceId, id);
+		memories.archiveWithReason(workspaceId, id, ts, "promoted-source", null);
 		stmts.logVerdict.run(ts, "", id, "promote", "提级落地（实习期开始）");
 		database.exec("COMMIT");
 	} catch (error) {
@@ -193,7 +191,7 @@ export function demoteMemory(
 		// The restored row is not on probation; the global one is only archived,
 		// so its probation stamp stays as history.
 		stmts.clearProbation.run(origin, request.id);
-		stmts.archiveOne.run(ts, "", request.id);
+		memories.archiveWithReason("", request.id, ts, "demoted-source", null);
 		stmts.logVerdict.run(ts, origin, request.id, "demote", "降级落地（回到来源分区）");
 		database.exec("COMMIT");
 	} catch (error) {
@@ -299,7 +297,7 @@ export function createTieringMethods(
 		},
 		archiveMemory(workspaceId, id) {
 			try {
-				memories.archiveRow(workspaceId, id, now().toISOString());
+				memories.archiveWithReason(workspaceId, id, now().toISOString(), "review-archive", null);
 				return true;
 			} catch {
 				return false;
