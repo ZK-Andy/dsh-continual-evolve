@@ -49,6 +49,6 @@ describe("gate-fixtures matrix", () => {
 
 	it("runtime gates are the documented exception only", () => {
 		const runtime = GATE_CASES.filter((gate) => gate.runtime === true).map((gate) => gate.id);
-		expect(runtime).toEqual(["schema-snapshot"]);
+		expect(runtime).toEqual(["schema-snapshot", "api-snapshot"]);
 	});
 });

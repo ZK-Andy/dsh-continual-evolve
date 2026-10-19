@@ -3,6 +3,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		globalSetup: "./test/global-setup.ts",
+		// Gate fixture trees contain realistic *.test.ts samples for G3/G9;
+		// they are exercised by spawning the gates, never by the runner itself.
+		exclude: ["test/fixtures/**", "**/node_modules/**", "**/dist/**", "**/lib/**"],
 		coverage: {
 			provider: "v8",
 			include: ["src/**/*.ts"],

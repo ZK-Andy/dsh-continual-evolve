@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "note": "Allowlist of top-level src/ layers (G12). Initial set derived from docs/architecture-standard.md section 1. Adding a layer requires an ADR in the same PR (human approval point).",
+  "layers": ["data", "pages", "services", "surfaces"]
+}

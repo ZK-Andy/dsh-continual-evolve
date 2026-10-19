@@ -36,6 +36,9 @@ function main(): void {
 	run("verify-adr-coverage", ["scripts/verify-adr-coverage.ts"]);
 	run("verify-dep-cycles", ["scripts/verify-dep-cycles.ts"]);
 	run("verify-budget-ratchet", ["scripts/verify-budget-ratchet.ts"]);
+	run("verify-layer-allowlist", ["scripts/verify-layer-allowlist.ts"]);
+	run("verify-test-pairing", ["scripts/verify-test-pairing.ts"]);
+	run("verify-api-snapshot", ["scripts/verify-api-snapshot.ts"]);
 	run("verify-gate-fixtures", ["scripts/verify-gate-fixtures.ts"]);
 	// 工作区根 HANDOFF 家庭（入口/待办/冷归档）：干净检出下文件缺席即跳过（clean-CI 语义）
 	run("verify-handoff-structure", ["scripts/verify-handoff-structure.ts"]);

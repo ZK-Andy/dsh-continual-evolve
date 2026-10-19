@@ -157,6 +157,35 @@ export const GATE_CASES: readonly GateCase[] = [
 		clean: (fx) => ({ args: [join(fx, "src"), "--baseline", join(fx, "baseline.json")], cwd: root }),
 		fixtures: ["violation/src/evil.ts", "violation/baseline.json", "clean/src/small.ts", "clean/baseline.json"],
 	},
+	{
+		id: "layer-allowlist",
+		script: "scripts/verify-layer-allowlist.ts",
+		violation: (fx) => ({ args: [join(fx, "src"), "--layers", join(fx, "layers.json")], cwd: root }),
+		clean: (fx) => ({ args: [join(fx, "src"), "--layers", join(fx, "layers.json")], cwd: root }),
+		fixtures: ["violation/src/foo/evil.ts", "violation/layers.json", "clean/src/data/ok.ts", "clean/layers.json"],
+	},
+	{
+		id: "test-pairing",
+		script: "scripts/verify-test-pairing.ts",
+		violation: (fx) => ({ args: ["--src", join(fx, "src"), "--tests", join(fx, "test"), "--exempt", join(fx, "test-exempt.json")], cwd: root }),
+		clean: (fx) => ({ args: ["--src", join(fx, "src"), "--tests", join(fx, "test"), "--exempt", join(fx, "test-exempt.json")], cwd: root }),
+		fixtures: [
+			"violation/src/foo.ts",
+			"violation/test/other.test.ts",
+			"violation/test-exempt.json",
+			"clean/src/bar.ts",
+			"clean/test/bar.test.ts",
+			"clean/test-exempt.json",
+		],
+	},
+	{
+		id: "api-snapshot",
+		script: "scripts/verify-api-snapshot.ts",
+		violation: (fx) => at(fx),
+		clean: (fx) => at(fx),
+		fixtures: [],
+		runtime: true,
+	},
 ];
 
 /** A gate run's outcome. */
@@ -197,6 +226,11 @@ function main(): number {
 	// schema-snapshot: runtime-generated samples (never rots with the schema).
 	const snapErrors = checkSchemaSnapshotGate();
 	errors.push(...snapErrors);
+
+	// api-snapshot: same runtime shape — the clean sample is a fresh --update,
+	// the violation sample is a tampered copy, so exports can evolve freely.
+	const apiErrors = checkApiSnapshotGate();
+	errors.push(...apiErrors);
 
 	if (errors.length > 0) {
 		for (const e of errors) console.log(`FAIL: ${e}`);
@@ -240,6 +274,53 @@ function checkSchemaSnapshotGate(): string[] {
 		}
 		if (errors.length === 0) {
 			console.log("OK   schema-snapshot: violation red + clean green");
+		}
+		return errors;
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+/**
+ * api-snapshot's red/green without static fixtures: generate a clean
+ * snapshot into a temp dir (`--update`), prove it verifies green, tamper
+ * one module's surface text, prove it verifies red.
+ */
+function checkApiSnapshotGate(): string[] {
+	const errors: string[] = [];
+	const tmp = mkdtempSync(join(tmpdir(), "evolve-g5-"));
+	try {
+		const snap = join(tmp, "api.json");
+		const updated = runGate("scripts/verify-api-snapshot.ts", {
+			args: ["--snapshot", snap, "--update"],
+			cwd: root,
+		});
+		if (updated.status !== 0) {
+			return [`api-snapshot: --update failed:\n${updated.output}`];
+		}
+		const good = runGate("scripts/verify-api-snapshot.ts", {
+			args: ["--snapshot", snap],
+			cwd: root,
+		});
+		if (good.status !== 0) {
+			errors.push(`api-snapshot: CLEAN (fresh --update) exits ${good.status}:\n${good.output}`);
+		}
+		const data = JSON.parse(readFileSync(snap, "utf-8")) as { modules: Record<string, string> };
+		const first = Object.keys(data.modules).sort()[0];
+		if (first === undefined) {
+			return ["api-snapshot: emitted snapshot has no modules"];
+		}
+		data.modules[first] = `${data.modules[first] ?? ""}\n// tampered\n`;
+		writeFileSync(snap, `${JSON.stringify(data, null, 2)}\n`);
+		const bad = runGate("scripts/verify-api-snapshot.ts", {
+			args: ["--snapshot", snap],
+			cwd: root,
+		});
+		if (bad.status === 0) {
+			errors.push("api-snapshot: VIOLATION (tampered snapshot) exits 0 (fake gate?)");
+		}
+		if (errors.length === 0) {
+			console.log("OK   api-snapshot: violation red + clean green");
 		}
 		return errors;
 	} finally {
