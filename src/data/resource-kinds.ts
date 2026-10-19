@@ -9,7 +9,10 @@ import type { ResourceKind } from "./repository.js";
 
 // `id` is the tiebreak on purpose: the injected index must be byte-stable for a
 // given store, and SQLite leaves equal-key rows unordered (ADR
-// `2026-10-18-absorb-memory-plugin-strengths`).
+// `2026-10-18-absorb-memory-plugin-strengths`). This ORDER BY is the row-level
+// order only — the P6 render grouping (User Profile / Project Meta / Project
+// Memory / Feedback Memory) lives in `surfaces/memory-section.ts` (`layerOf`);
+// change one and check the other.
 const MEMORIES_ORDER =
 	"ORDER BY CASE type WHEN 'feedback' THEN 0 WHEN 'user' THEN 1 ELSE 2 END, updated_at DESC, id ASC";
 

@@ -91,7 +91,9 @@ export const INJECTION_CONFLICT_RULE = "与本轮指令冲突以本轮为准";
  * Map one listed record to its layer: person-level facts first, then global
  * reference, project reference, and feedback last. The partition
  * (`workspaceId === GLOBAL_WORKSPACE`) is the scope signal — the row `scope`
- * column carries legacy values and is not read here.
+ * column carries legacy values and is not read here. This grouping rides on
+ * top of the row-level `MEMORIES_ORDER` in `data/resource-kinds.ts` (which
+ * decides order, this decides headings); change one and check the other.
  */
 export function layerOf(record: { type: string; workspaceId: string }): InjectionLayer {
 	if (record.type === "user") {
