@@ -98,6 +98,23 @@ describe("applyProposals — create/update/delete", () => {
 		expect(store.search(WS, "openSUSE").map((r) => r.id)).toEqual(["env-facts"]);
 	});
 
+	it("update preserves the creation provenance by default (P1: no refresh)", () => {
+		const [created] = store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", type: "user", title: "provenance", description: "d", body: "b", sourceSeqs: "10-12" }],
+		);
+		expect(created?.ok).toBe(true);
+		const [updated] = store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-2" },
+			[{ action: "update", id: created?.id ?? "", body: "b2" }],
+		);
+		expect(updated?.ok).toBe(true);
+		const after = store.get(WS, created?.id ?? "")!;
+		expect(after.body).toBe("b2");
+		expect(after.sourceSession).toBe("sess-1");
+		expect(after.sourceSeqs).toBe("10-12");
+	});
+
 	it("delete removes the row and its FTS entry", () => {
 		expect(create({ title: "to go", body: "quarantine me not" })).toBe(true);
 		expect(store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [{ action: "delete", id: "to-go" }])[0]?.ok).toBe(true);

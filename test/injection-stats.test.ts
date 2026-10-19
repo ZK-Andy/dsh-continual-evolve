@@ -51,8 +51,29 @@ describe("injectionStats", () => {
 		expect(stats.injected).toBe(3);
 		// a was read after its injection; b never read; c's last read predates the injection.
 		expect(stats.read).toBe(1);
-		expect(stats.rate).toBeCloseTo(1 / 3);
+		expect(stats.readThrough).toBeCloseTo(1 / 3);
+		// Deprecated alias, pinned equal until the removal release (P1 ADR).
+		expect(stats.rate).toBe(stats.readThrough);
 		expect(stats.tokens).toBe(50);
+		// The recall numerator N: the latest window injection named 2 ids.
+		expect(stats.latestInjected).toBe(2);
+	});
+
+	it("reports the latest injection by ts, not row order", () => {
+		const store = fakeStore({
+			rows: [
+				{ ts: "2026-10-10T00:00:00.000Z", ids: ["a", "b", "c"], estTokens: 10 },
+				{ ts: "2026-10-17T00:00:00.000Z", ids: ["z"], estTokens: 5 },
+			],
+		});
+		expect(injectionStats(store, "/w", 7, NOW).latestInjected).toBe(1);
+	});
+
+	it("reports zero latest ids when nothing was injected", () => {
+		const stats = injectionStats(fakeStore({ rows: [] }), "/w", 7, NOW);
+		expect(stats.latestInjected).toBe(0);
+		expect(stats.readThrough).toBe(0);
+		expect(stats.rate).toBe(0);
 	});
 
 	it("drops rows outside the window", () => {

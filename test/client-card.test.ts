@@ -771,6 +771,79 @@ describe("memory row badges", () => {
 	});
 });
 
+describe("injection readings (P1)", () => {
+	function snapshotWithInjection(injection: Record<string, unknown>, fileCount = 20): Record<string, unknown> {
+		return {
+			exists: true,
+			fileCount,
+			files: [
+				{ id: "a", title: "a", description: "", type: "user", status: "active", scope: "project", updatedAt: Date.now(), suggestExport: false },
+			],
+			quarantined: [],
+			lastPatrol: null,
+			readError: null,
+			build: null,
+			injection,
+		};
+	}
+
+	function statsLines(tree: ElementLike): string[] {
+		return findAllByClassName(tree, "dce-stats").map((el) => String((el.children as unknown[])[0]));
+	}
+
+	function renderInjection(injection: Record<string, unknown>): string[] {
+		const harness = makeHookReact();
+		const tree = renderBlockTree(harness, [
+			{ root: "/ws/a", label: "A", snapshot: snapshotWithInjection(injection), error: null },
+		]);
+		return statsLines(tree);
+	}
+
+	it("renders index recall N/M plus text reads, with the rate at enough sessions", () => {
+		const lines = renderInjection({
+			days: 7, sessions: 12, injected: 14, read: 3, readThrough: 0.25, rate: 0.25, latestInjected: 5, tokens: 100,
+		});
+		expect(lines.some((line) => line.includes("索引召回 5/20"))).toBe(true);
+		expect(lines.some((line) => line.includes("正文取回 3"))).toBe(true);
+		expect(lines.some((line) => line.includes("25%"))).toBe(true);
+	});
+
+	it("hides the rate below ten sessions (P1 sample guard)", () => {
+		const lines = renderInjection({
+			days: 7, sessions: 3, injected: 4, read: 1, readThrough: 0.25, rate: 0.25, latestInjected: 2, tokens: 10,
+		});
+		expect(lines.some((line) => line.includes("索引召回 2/20"))).toBe(true);
+		expect(lines.some((line) => line.includes("样本不足"))).toBe(true);
+		expect(lines.every((line) => !line.includes("%"))).toBe(true);
+	});
+
+	it("hides the line when nothing was injected", () => {
+		const lines = renderInjection({
+			days: 7, sessions: 0, injected: 0, read: 0, readThrough: 0, rate: 0, latestInjected: 0, tokens: 0,
+		});
+		expect(lines.some((line) => line.includes("索引召回"))).toBe(false);
+	});
+
+	it("ships both templates in zh and en dictionaries", () => {
+		const registered: Array<{ ns: string; dicts: Record<string, Record<string, string>> }> = [];
+		const locale = {
+			register: (ns: string, dicts: Record<string, Record<string, string>>) => {
+				registered.push({ ns, dicts });
+				return () => undefined;
+			},
+			bind: (_ns: string) => (key: string) => `en:${key}`,
+		};
+		const { exports } = loadBundle(makeReact());
+		const { ctx } = makeCtx(locale);
+		(exports.apply as (ctx: unknown) => void)(ctx);
+		const { zh, en } = registered[0].dicts;
+		expect(zh.injectionLine).toContain("索引召回");
+		expect(zh.injectionLineSmall).toContain("样本不足");
+		expect(en.injectionLine).toContain("index recall");
+		expect(en.injectionLineSmall).toContain("too few sessions");
+	});
+});
+
 describe("loadCardModel", () => {
 	it("assembles one snapshot entry per known workspace", async () => {
 		const { exports } = loadBundle(makeReact());

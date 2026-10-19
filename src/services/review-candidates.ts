@@ -57,6 +57,19 @@ interface Tiers {
 	sampled: Sampled[];
 }
 
+/** One event-pending item filtered by the unchanged gate (P1, D7). */
+export interface UnchangedEvent {
+	readonly workspaceId: string;
+	readonly kind: "memory" | "skill";
+	readonly id: string;
+}
+
+/** The queue plus the event items the unchanged gate held back. */
+export interface CandidateCollection {
+	readonly candidates: ReviewCandidate[];
+	readonly unchangedEvents: UnchangedEvent[];
+}
+
 /** Per-collection context: the clock, the window, and the pending-event keys. */
 interface CollectContext {
 	now: number;
@@ -65,17 +78,38 @@ interface CollectContext {
 	linked: Set<string>;
 	/** The same keys for the clock tiers: probation due, promotion candidates. */
 	clock: Set<string>;
+	/** Event-pending items held back as unchanged (absent = uncounted). */
+	unchanged?: UnchangedEvent[] | undefined;
 }
 
 /**
  * Collect review candidates across every workspace carrying active items:
  * new items first (newest first), then event-linked requeues, then up to a
  * fifth of the batch in stale samples (oldest first). Bounded by `limit`.
+ * Event requeues pass the unchanged gate (P1, D7): an event-pending item
+ * whose body did not change since its last complete verdict is held back
+ * (counted in `collectCandidatesWithUnchanged`, invisible here).
  * @param store - The central store, sole source of the queue.
  * @param opts - Clock override, staleness window, batch size, and queue bound.
  * @returns Candidates ordered by tier.
  */
 export function collectCandidates(store: MemoryStore, opts: CandidateQueueOptions = {}): ReviewCandidate[] {
+	return collect(store, opts, undefined).candidates;
+}
+
+/**
+ * Collect review candidates plus the event-pending items the unchanged gate
+ * held back. Same queue as {@link collectCandidates}; the second half is the
+ * P1 accounting surface (the scheduler logs it, no LLM is spent on it).
+ * @param store - The central store, sole source of the queue.
+ * @param opts - Clock override, staleness window, batch size, and queue bound.
+ * @returns Candidates ordered by tier, and the held-back event items.
+ */
+export function collectCandidatesWithUnchanged(store: MemoryStore, opts: CandidateQueueOptions = {}): CandidateCollection {
+	return collect(store, opts, []);
+}
+
+function collect(store: MemoryStore, opts: CandidateQueueOptions, unchanged: UnchangedEvent[] | undefined): CandidateCollection {
 	const now = opts.now ?? Date.now();
 	const limit = opts.limit ?? 100;
 	const sampleCap = Math.max(1, Math.floor((opts.batchSize ?? 10) / SAMPLE_FRACTION));
@@ -84,6 +118,7 @@ export function collectCandidates(store: MemoryStore, opts: CandidateQueueOption
 		staleMs: (opts.staleDays ?? 30) * DAY_MS,
 		linked: linkedKeys(store),
 		clock: clockKeys(store),
+		unchanged,
 	};
 	const tiers: Tiers = { fresh: [], linked: [], sampled: [] };
 	for (const partition of partitionsOf(store)) {
@@ -95,7 +130,7 @@ export function collectCandidates(store: MemoryStore, opts: CandidateQueueOption
 	// Global skills ride along once (project rows shadow them per id).
 	skillTier(store, tiers, "", ctx, "global");
 	const sampled = [...tiers.sampled].sort((a, b) => b.age - a.age).slice(0, sampleCap).map((row) => row.candidate);
-	return [...tiers.fresh, ...tiers.linked, ...sampled].slice(0, limit);
+	return { candidates: [...tiers.fresh, ...tiers.linked, ...sampled].slice(0, limit), unchangedEvents: ctx.unchanged ?? [] };
 }
 
 /**
@@ -155,6 +190,25 @@ function clockKeys(store: MemoryStore): Set<string> {
 }
 
 /**
+ * The unchanged gate (P1, D7): an event-pending item is only requeued when
+ * its body changed since its last complete verdict. Compares the row's write
+ * instant against `reviewStateOf().lastTs`, which already skips incomplete
+ * rows — no new state key, no watermark to reconcile. An unparseable write
+ * instant reads as changed (fail open: review rather than silently skip).
+ * Clock and sample tiers are exempt by design and evaluated after this.
+ * @param updatedAt - The row's last write instant (ISO).
+ * @param lastTs - The last complete verdict instant, null when never reviewed.
+ * @returns True when the item changed since its last review.
+ */
+export function changedSinceReview(updatedAt: string, lastTs: string | null): boolean {
+	const updated = Date.parse(updatedAt) || 0;
+	if (updated === 0) {
+		return true;
+	}
+	return updated > (Date.parse(lastTs ?? "") || 0);
+}
+
+/**
  * Fill the tiers from one partition's memories. A row named by a `corrects`
  * link counts as linked even without an event row — links written before the
  * event table shipped would otherwise be invisible to this queue forever.
@@ -185,9 +239,24 @@ function memoryTier(store: MemoryStore, tiers: Tiers, workspaceId: string, ctx: 
 			continue;
 		}
 		const key = `${workspaceId}\u0000memory\u0000${record.id}`;
-		if (ctx.linked.has(key) || correctsTargets.has(record.id)) {
+		// A row named by a `corrects` link always requeues: an explicit
+		// correction is new evidence about the target even when the target
+		// row itself is untouched, and this branch is the pre-event-table
+		// backstop that must never go blind (P1 ADR). Only pure lexical
+		// events (`similar`/`correction` with no corrects link) pass the
+		// unchanged gate below.
+		if (correctsTargets.has(record.id)) {
 			tiers.linked.push({ ...base, priority: 1, source: "event" });
 			continue;
+		}
+		if (ctx.linked.has(key)) {
+			if (changedSinceReview(record.updatedAt, state.lastTs)) {
+				tiers.linked.push({ ...base, priority: 1, source: "event" });
+				continue;
+			}
+			// Unchanged since the last verdict: held back from the event tier
+			// (P1, D7), but still eligible for the exempt clock/sample tiers.
+			ctx.unchanged?.push({ workspaceId, kind: "memory", id: record.id });
 		}
 		// Clock tiers outrank the settle exemption (rollout ADR §R1): a due
 		// probation or a promotion candidate is owed a judgment on schedule.
@@ -232,8 +301,13 @@ function skillTier(
 		}
 		const key = `${partition}\u0000skill\u0000${record.id}`;
 		if (ctx.linked.has(key)) {
-			tiers.linked.push({ ...base, priority: 1, source: "event" });
-			continue;
+			if (changedSinceReview(record.updatedAt, state.lastTs)) {
+				tiers.linked.push({ ...base, priority: 1, source: "event" });
+				continue;
+			}
+			// Unchanged since the last verdict: held back from the event tier
+			// (P1, D7), but still eligible for the exempt clock/sample tiers.
+			ctx.unchanged?.push({ workspaceId: partition, kind: "skill", id: record.id });
 		}
 		if (ctx.clock.has(key)) {
 			tiers.linked.push({ ...base, priority: 1, source: "clock" });

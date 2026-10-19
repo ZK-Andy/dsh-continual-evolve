@@ -28,15 +28,27 @@ export interface InjectionStats {
 	injected: number;
 	/** Of those ids, how many were read at or after the injection that named them. */
 	read: number;
-	/** `read / injected`, 0 when nothing was injected. */
+	/**
+	 * `read / injected`, 0 when nothing was injected. The adoption read: how
+	 * much of the injected index was later pulled as full text — not recall.
+	 */
+	readThrough: number;
+	/**
+	 * Deprecated alias of {@link readThrough}, kept one release for cached
+	 * desktop bundles (P1 ADR `2026-10-19-p1-quick-wins`): an old `client.js`
+	 * still reads `rate`, the new one reads `readThrough`, the backend sends
+	 * both. Remove next minor (the test pins their equality until then).
+	 */
 	rate: number;
+	/** Ids named by the latest injection in the window (the recall numerator N). */
+	latestInjected: number;
 	/** Summed estimated tokens of the rendered indexes. */
 	tokens: number;
 }
 
 /** The empty reading (no sessions in the window). */
 export function emptyInjectionStats(days: number = INJECTION_STATS_DAYS): InjectionStats {
-	return { days, sessions: 0, injected: 0, read: 0, rate: 0, tokens: 0 };
+	return { days, sessions: 0, injected: 0, read: 0, readThrough: 0, rate: 0, latestInjected: 0, tokens: 0 };
 }
 
 /**
@@ -88,5 +100,16 @@ export function injectionStats(
 		}
 	}
 	const injected = firstSeen.size;
-	return { days, sessions: rows.length, injected, read, rate: injected === 0 ? 0 : read / injected, tokens };
+	const readThrough = injected === 0 ? 0 : read / injected;
+	// The recall numerator N: ids named by the latest injection in the window.
+	// Resolved by max ts (not row order) so the reading survives any store sort.
+	let latestInjected = 0;
+	let latestTs = "";
+	for (const row of rows) {
+		if (row.ts > latestTs) {
+			latestTs = row.ts;
+			latestInjected = row.ids.length;
+		}
+	}
+	return { days, sessions: rows.length, injected, read, readThrough, rate: readThrough, latestInjected, tokens };
 }

@@ -592,4 +592,40 @@ describe("createReviewScheduler", () => {
 		expect(daily?.newItems).toBe(1);
 		expect(daily?.skipTop ?? "").toContain("review-failed");
 	});
+
+	it("holds back unchanged event items: logged, zero LLM calls", async () => {
+		store.applyProposals(
+			{ workspaceId: WS, trigger: "explicit", sessionId: "sess-1" },
+			[{ action: "create", id: "still", type: "user", title: "t", description: "d", body: "b" }],
+		);
+		// The row predates its verdict: the event below is real, the change is not.
+		const db = new DatabaseSync(dbPath);
+		db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(
+			new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), "still",
+		);
+		db.prepare("INSERT INTO review_log (ts, workspace_id, item_kind, item_id, verdict, applied) VALUES (?, ?, 'memory', ?, 'keep', 0)")
+			.run(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), WS, "still");
+		db.close();
+		store.recordItemEvents([{ workspaceId: WS, kind: "memory", id: "still", event: "similar" }]);
+
+		const h = host();
+		let calls = 0;
+		const base = fakeLlm({ gate: `{"worthReview": true, "reason": "值得"}`, evolve: `{"verdict": "keep", "reason": "x"}` });
+		const llm: ReviewLlm = {
+			async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+				calls += 1;
+				yield* base.stream(options);
+			},
+		};
+		const dispose = createReviewScheduler(h, { store, llm }, {
+			enabled: true, read: () => settings(), minIntervalMs: 0,
+		});
+		h.handlers.get("agent/turn-stopping")?.({ agent: agent("sess-1", WS) } as never);
+		await flush();
+
+		expect(h.infos.some((line) => line.startsWith("review-unchanged-events") && line.includes("memory:still"))).toBe(true);
+		expect(calls).toBe(0);
+		expect(store.getDaily(todayUtc())?.reviewed ?? 0).toBe(0);
+		dispose();
+	});
 });

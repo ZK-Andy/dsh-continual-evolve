@@ -56,6 +56,21 @@ function verdictOf(id: string, verdict: string, workspaceId = WS): void {
 	store.logReview({ workspaceId, itemKind: "memory", itemId: id, verdict: verdict as never });
 }
 
+/**
+ * P1 unchanged-gate scaffolding: the queue only requeues event items changed
+ * since their last verdict. These tests pin downstream verdict landing, not
+ * queue admission — backdate the verdict so the row reads as changed while
+ * the (real-time) linkage event stays pending.
+ */
+function backdateVerdict(id: string): void {
+	const db = new DatabaseSync(dbPath);
+	db.prepare("UPDATE review_log SET ts = ? WHERE item_kind = 'memory' AND item_id = ?").run(
+		new Date(Date.now() - 60_000).toISOString(),
+		id,
+	);
+	db.close();
+}
+
 function fakeLlm(evolve: string, gate = '{"worthReview":true,"reason":"ok"}'): ReviewLlm {
 	return {
 		async *stream(options: Record<string, unknown>): AsyncIterable<unknown> {
@@ -181,6 +196,7 @@ describe("dry runs change nothing", () => {
 	it("records archive advice without archiving", async () => {
 		create("m-a");
 		verdictOf("m-a", "quarantine");
+		backdateVerdict("m-a");
 		store.recordItemEvents([{ workspaceId: WS, kind: "memory", id: "m-a", event: "similar" }]);
 		await runReviewBatch({ store, llm: fakeLlm('{"verdict":"archive","reason":"空话"}') }, candidateFor("m-a"), opts(true));
 		expect(statusOf(WS, "m-a")).toBe("active");
@@ -364,6 +380,7 @@ describe("landing failures are ledgered as misses", () => {
 	it("ledgers an archive write failure", async () => {
 		create("m-a");
 		verdictOf("m-a", "quarantine");
+		backdateVerdict("m-a");
 		store.recordItemEvents([{ workspaceId: WS, kind: "memory", id: "m-a", event: "similar" }]);
 		const wrapped = failingStore(store, "archiveMemory", false);
 		await runReviewBatch({ store: wrapped, llm: fakeLlm('{"verdict":"archive","reason":"空话"}') }, candidateFor("m-a"), opts());
@@ -437,6 +454,7 @@ describe("success paths and fallbacks", () => {
 	it("lands a demote verdict on a global row", async () => {
 		create("m-p", "person");
 		store.promoteMemory(WS, "m-p");
+		backdateVerdict("m-p");
 		store.recordItemEvents([{ workspaceId: "", kind: "memory", id: "m-p", event: "similar" }]);
 		await runReviewBatch(
 			{ store, llm: fakeLlm('{"verdict":"demote","reason":"绑仓库"}') },
@@ -450,6 +468,7 @@ describe("success paths and fallbacks", () => {
 	it("lands an archive verdict once the gate clears", async () => {
 		create("m-a");
 		verdictOf("m-a", "quarantine");
+		backdateVerdict("m-a");
 		store.recordItemEvents([{ workspaceId: WS, kind: "memory", id: "m-a", event: "similar" }]);
 		await runReviewBatch({ store, llm: fakeLlm('{"verdict":"archive","reason":"空话"}') }, candidateFor("m-a"), opts());
 		expect(statusOf(WS, "m-a")).toBe("archived");

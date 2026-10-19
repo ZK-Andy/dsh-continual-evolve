@@ -42,6 +42,8 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是记忆提取专员。你的唯一
 
 **落点测试（三测之外的追加判据，不替代三测）：** 这条事实的家是哪个文件？用户本轮若已把它写进、或明确要把它写进仓库里的某个文件（"记到/写进/加到 <任意落点>"），那个文件就是它的家——判 skip，reason 里引用用户原话。落点叫什么名字、是已有文件还是新文件、位于哪一层目录，都不影响判定；只看"这句事实已落进仓库文件"这个动作。增量里的 tools-this-turn 行只给工具名不给路径，用来判断"本轮发生过文件写入"，不据此猜测落点是哪个文件。同一句话在记忆与仓库文件里各存一份即为违规——记忆是另一个家，不是备份。
 
+**正文去会话细节：** 正文写跟人走的可复用事实，剥离本轮的事故叙述、临时状态与一次性过程（"刚才那轮报错是因为……"这类只对本轮有意义的上下文不进正文；feedback 的 Why 行要的是用户给的可复用理由，不是本轮事故经过）。
+
 ## 更新优先于新建
 
 已有记忆的状态变了，提案 update 改原条目；新旧并存比没有记忆更糟。要更新或删除的条目会连同全文给你，提案里写它的 id。没有值得沉淀的东西就明确说 skip——宁缺勿滥。
@@ -164,10 +166,30 @@ export interface ParsedAnswer {
 export const MAX_PROPOSALS_PER_RUN = 8;
 
 /**
- * Parse the model's JSON answer. Tolerates code fences; rejects anything
- * that is not the agreed shape. A genuine "skip" is a model decision the
- * caller may act on (consume the increment); "error" marks an unparseable
- * or shape-violating answer, which must never land as a silent success.
+ * Raw ISO control characters JSON forbids (`U+0000`–`U+001F` except the
+ * whitespace JSON itself allows) plus `DEL`. Models occasionally leak one
+ * into an otherwise valid answer; stripping them and re-parsing saves the
+ * whole batch. Kept in the prompt module (not the caller) so every parse
+ * site — extraction and both subagent definitions — shares the tolerance.
+ */
+// eslint-disable-next-line no-control-regex -- intentional: the exact JSON-illegal raw set, retried once before failing
+const BARE_CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+
+/** Parse one JSON candidate, or return the thrown message. */
+function tryParseJson(candidate: string): { parsed?: unknown; message?: string } {
+	try {
+		return { parsed: JSON.parse(candidate) };
+	} catch (error) {
+		return { message: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/**
+ * Parse the model's JSON answer. Tolerates code fences and bare control
+ * characters (one sanitized retry); rejects anything that is not the agreed
+ * shape. A genuine "skip" is a model decision the caller may act on (consume
+ * the increment); "error" marks an unparseable or shape-violating answer,
+ * which must never land as a silent success.
  */
 export function parseExtractionAnswer(text: string): ParsedAnswer {
 	const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
@@ -176,13 +198,16 @@ export function parseExtractionAnswer(text: string): ParsedAnswer {
 	if (start < 0 || end <= start) {
 		return { decision: "error", reason: "unparseable output: no JSON object found", proposals: [] };
 	}
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(stripped.slice(start, end + 1));
-	} catch (error) {
+	const candidate = stripped.slice(start, end + 1);
+	const first = tryParseJson(candidate);
+	// P1: a single control character no longer drops the batch — strip the
+	// JSON-illegal ones and retry once. Still failing keeps the old error
+	// path (raw head ledgered, increment unconsumed, next trigger retries).
+	const parsed = first.parsed ?? tryParseJson(candidate.replace(BARE_CONTROL_RE, "")).parsed;
+	if (parsed === undefined) {
 		return {
 			decision: "error",
-			reason: `unparseable output: ${error instanceof Error ? error.message : String(error)}`,
+			reason: `unparseable output: ${first.message ?? "unknown parse error"}`,
 			proposals: [],
 		};
 	}

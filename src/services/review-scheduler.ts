@@ -10,7 +10,7 @@
  */
 import { resolveCallRoute, type ResolvedRoute, type RouteSource } from "./model-route.js";
 import { routeRefOf } from "./extraction-failure.js";
-import { collectCandidates } from "./review-candidates.js";
+import { collectCandidatesWithUnchanged } from "./review-candidates.js";
 import { failureHead } from "./review-ring.js";
 import { runReviewBatch, type ReviewDeps } from "./review.js";
 import { cwdOf } from "./agent.js";
@@ -188,14 +188,28 @@ async function runDrain(
 			);
 			return;
 		}
-		const candidates = collectCandidates(deps.store, {
+		const candidates = collectCandidatesWithUnchanged(deps.store, {
 			staleDays: settings.staleDays,
 			batchSize: settings.batchSize,
 			limit: settings.batchSize * 2,
 		});
+		// P1 unchanged gate (D7): event-pending items held back for zero
+		// change cost no LLM call; the count rides the log, not the daily
+		// rollup (whose requeued = link+clock+sampled sum stays intact).
+		if (candidates.unchangedEvents.length > 0) {
+			const shown = candidates.unchangedEvents
+				.slice(0, 20)
+				.map((entry) => `${entry.kind}:${entry.id}`)
+				.join(", ");
+			host.log.info(
+				"review-unchanged-events",
+				`event tier held back ${candidates.unchangedEvents.length} unchanged since last review (${shown})`,
+				{ workspaceId: workspace },
+			);
+		}
 		const ordered = workspace === undefined
-			? candidates
-			: [...candidates.filter((c) => c.workspaceId === workspace), ...candidates.filter((c) => c.workspaceId !== workspace)];
+			? candidates.candidates
+			: [...candidates.candidates.filter((c) => c.workspaceId === workspace), ...candidates.candidates.filter((c) => c.workspaceId !== workspace)];
 		// The trace's review half: whatever candidate the scheduler settled on is
 		// in the log before the first item pays for a verdict (2026-10-16). The
 		// log face never throws — a trace must not take a drain down.

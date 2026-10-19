@@ -114,7 +114,8 @@ window.__ModuleLoader__.load({
 			buildLine: "运行代 {code} · 盘面代 {disk}（v{version}）",
 			buildStale: "盘面代码已换，需重启宿主才会生效",
 			buildUnknown: "代际不可读（无法定位入口文件）",
-			injectionLine: "近 {days} 天注入 {sessions} 次会话 / {injected} 条，被读 {read} 条（{rate}）",
+			injectionLine: "近 {days} 天 {sessions} 次会话：索引召回 {latest}/{total} · 正文取回 {read}（转化 {readThrough}）",
+			injectionLineSmall: "近 {days} 天 {sessions} 次会话：索引召回 {latest}/{total} · 正文取回 {read}（样本不足，暂不显示比率）",
 			notWhenLabel: "不适用：",
 						readError: "读取失败：",
 			previewLoading: "正在加载记忆…",
@@ -171,7 +172,8 @@ window.__ModuleLoader__.load({
 			buildLine: "Running {code} · on disk {disk} (v{version})",
 			buildStale: "Disk code changed — restart the host to load it",
 			buildUnknown: "Generation unreadable (entry file not locatable)",
-			injectionLine: "Last {days} days: {sessions} sessions injected {injected} memories, {read} read ({rate})",
+			injectionLine: "Last {days} days, {sessions} sessions: index recall {latest}/{total} · text reads {read} ({readThrough} read-through)",
+			injectionLineSmall: "Last {days} days, {sessions} sessions: index recall {latest}/{total} · text reads {read} (too few sessions to show a rate)",
 			notWhenLabel: "Not when: ",
 						readError: "Read failed: ",
 			previewLoading: "Loading memory…",
@@ -883,22 +885,26 @@ window.__ModuleLoader__.load({
 		}
 
 		/** Recent injection volume and how much of it was read. */
-		function injectionLine(t, injection) {
+		function injectionLine(t, injection, total) {
 			if (injection === null || injection === undefined || typeof injection !== "object") {
 				return null;
 			}
 			if (injection.injected === 0) {
 				return null;
 			}
+			// P1: index recall N/M + text reads K; the read-through rate only
+			// shows with enough sessions to read as a trend, never from one.
+			var key = injection.sessions < 10 ? "injectionLineSmall" : "injectionLine";
 			return createElement(
 				"div",
 				{ key: "injection", className: "dce-stats" },
-				t("injectionLine", {
+				t(key, {
 					days: injection.days,
 					sessions: injection.sessions,
-					injected: injection.injected,
+					latest: injection.latestInjected,
+					total: total,
 					read: injection.read,
-					rate: Math.round(injection.rate * 100) + "%",
+					readThrough: Math.round(injection.readThrough * 100) + "%",
 				}),
 			);
 		}
@@ -927,7 +933,7 @@ window.__ModuleLoader__.load({
 			var parts = [
 				createElement("div", { key: "stats", className: "dce-stats" }, t("stats", { files: vm.snapshot.fileCount })),
 				buildLine(t, vm.snapshot.build),
-				injectionLine(t, vm.snapshot.injection),
+				injectionLine(t, vm.snapshot.injection, vm.snapshot.fileCount),
 				quarantineLine(t, vm.snapshot.quarantined),
 				fileSearchInput(t, vm.query, vm.onQueryChange),
 				createElement(

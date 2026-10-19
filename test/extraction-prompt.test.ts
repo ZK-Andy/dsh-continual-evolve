@@ -26,6 +26,8 @@ describe("EXTRACTION_SYSTEM_PROMPT", () => {
 		// The answer contract is a JSON object, nothing else.
 		expect(EXTRACTION_SYSTEM_PROMPT).toContain('"decision"');
 		expect(EXTRACTION_SYSTEM_PROMPT).toContain('"proposals"');
+		// P1: bodies carry reusable facts, never the current session's narrative.
+		expect(EXTRACTION_SYSTEM_PROMPT).toContain("正文去会话细节");
 	});
 
 	it("carries the project-agnostic ownership triple-test", () => {
@@ -131,6 +133,27 @@ describe("parseExtractionAnswer", () => {
 		);
 		expect(parsed.decision).toBe("apply");
 		expect(parsed.proposals).toHaveLength(1);
+	});
+
+	it("recovers an answer with a bare control character instead of dropping the batch (P1)", () => {
+		const json = JSON.stringify({
+			decision: "apply",
+			reason: "ok",
+			proposals: [{ action: "create", type: "user", title: "t", description: "d", body: "正文" }],
+		});
+		// A raw NUL leaked into a string value: strict JSON.parse fails.
+		const poisoned = json.replace("正文", "正文\u0000");
+		expect(() => JSON.parse(poisoned)).toThrow();
+		const parsed = parseExtractionAnswer(poisoned);
+		expect(parsed.decision).toBe("apply");
+		expect(parsed.proposals).toHaveLength(1);
+		expect(parsed.proposals[0]?.body).toBe("正文");
+	});
+
+	it("still fails when the answer is unparseable after sanitizing (P1)", () => {
+		const parsed = parseExtractionAnswer('{"decision":\u0000');
+		expect(parsed.decision).toBe("error");
+		expect(parsed.reason).toContain("unparseable output");
 	});
 });
 
