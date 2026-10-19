@@ -91,7 +91,7 @@
 - **断言**：周任务对 `src/services/` 抽样跑 stryker，mutation score 门槛 60；低于门槛在 PR 评论里报，不阻塞合并。
 - **理由**：覆盖率高不代表断言有效；变异测试是唯一能机械给出"测试是否真在测"信号的工具。
 - **验收**：把某测试的断言改成 `expect(true)` → 该文件 mutation score 显著下降。
-- **接入评估（2026-10-19 G-batch3 已做，结论：可行，独立成轨，不在本批落地）**：隔离 trial（vitest 3 + TS 5.9 + stryker 10 core/vitest-runner/typescript-checker，版本兼容已确认）实测——安装约 70 秒、node_modules +109MB（含 vitest 全栈）；12 行样本 20 个变异 16 秒跑完，分值 50.00 随弱断言真实下降；typescript-checker 正确过滤类型非法变异（空块无返回判 CompileError，不计分）。按此推算 `src/services/` 抽样（数百变异、perTest 覆盖）单次约 5–20 分钟，适合非阻塞周任务。落地清单（约 0.5–1 天，另起一轨）：3 个 devDeps + `stryker.conf.json`（mutate 限 2–3 个 services 文件、thresholds break:null）+ `test:mutation` 脚本 + 每周 schedule workflow（报告传 artifact）；PR 评论播报需 pull_request 触发或评论机器人，v1 先落周报 artifact，评论通道另议。未验证风险：node:sqlite 在插桩下的表现、globalSetup 透传——首跑 trial 必须覆盖这两项再定终版配置。
+- **落地（2026-10-19 G10 收尾）**：`stryker.conf.json`（vitest runner + typescript checker，抽样 `prompt-date.ts` + `token-usage.ts`，thresholds break:null 永不阻断）+ `test:mutation` 脚本 + `.github/workflows/mutation.yml`（周一 02:00 UTC schedule + dispatch + services 变更 PR 触发；score 进 step summary、报告传 artifact、低于 60 才 PR 评论）。真实抽样 trial：59 秒跑完，86.49 分（token-usage 5 survived 真信号，prompt-date 100），19 个 CompileError 系 checker 正确过滤（类型非法变异不计分）；node:sqlite 插桩与 globalSetup 均已通过 trial 验证。接入坑两处：① stryker 10 的 `@stryker-mutator/*` glob 发现在 pnpm 隔离布局下扫不到兄弟插件（按 core 自身路径上溯）——配置改用仓库相对路径直载 `plugins`；② pnpm 沙箱 store 只读，装依赖走 `--store-dir` workspace 路径。抽样集轮换与 60 分基线复核留待周报跑顺后再定。
 
 ### G11 函数形状规则
 

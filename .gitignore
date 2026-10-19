@@ -9,6 +9,8 @@ dist/
 # Test artifacts
 coverage/
 test/.tmp/
+reports/
+.stryker-tmp/
 
 # Logs
 *.log

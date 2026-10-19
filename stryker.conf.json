@@ -1,0 +1,14 @@
+{
+	"$schema": "https://stryker-mutator.io/schema/stryker-schema.json",
+	"testRunner": "vitest",
+	"plugins": ["./node_modules/@stryker-mutator/vitest-runner/dist/src/index.js", "./node_modules/@stryker-mutator/typescript-checker/dist/src/index.js"],
+	"reporters": ["clear-text", "json"],
+	"coverageAnalysis": "perTest",
+	"mutate": ["src/services/prompt-date.ts", "src/services/token-usage.ts"],
+	"thresholds": { "high": 80, "low": 60, "break": null },
+	"checkers": ["typescript"],
+	"concurrency": 4,
+	"cleanTempDir": true,
+	"tempDirName": ".stryker-tmp",
+	"ignorePatterns": ["lib/**", "snapshot/**", "test/fixtures/**"]
+}

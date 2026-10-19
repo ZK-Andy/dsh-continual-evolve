@@ -1,0 +1,86 @@
+# Mutation sampling (backlog G10): weekly sampled stryker run over
+# src/services/ (see stryker.conf.json for the sample set). Non-blocking by
+# design: thresholds break nothing, this workflow is never a required check;
+# a score below 60 only produces a PR comment (and a red-ish summary line).
+name: Mutation sampling
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/services/**"
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run mutation sampling (never blocks)
+        id: stryker
+        run: pnpm test:mutation 2>&1 | tee mutation.log
+        continue-on-error: true
+
+      - name: Score to outputs
+        if: always()
+        id: score
+        run: |
+          node -e "
+          const fs = require('node:fs');
+          let killed = 0, total = 0;
+          try {
+            const report = JSON.parse(fs.readFileSync('./reports/mutation/mutation.json', 'utf8'));
+            for (const file of Object.values(report.files || {})) {
+              for (const m of file.mutants || []) {
+                if (m.status === 'CompileError' || m.status === 'RuntimeError' || m.status === 'Ignored') continue;
+                total += 1;
+                if (m.status === 'Killed' || m.status === 'Timeout') killed += 1;
+              }
+            }
+          } catch { total = -1; }
+          const score = total > 0 ? (100 * killed / total).toFixed(2) : 'n/a';
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, \`score=\${score}\n\`);
+          "
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Mutation sampling (G10)"
+            echo "score: **${{ steps.score.outputs.score }}** (threshold 60, non-blocking)"
+            echo '```'
+            sed -n '/Mutation score/,/Done in/p' mutation.log | head -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: warn
+
+      - name: PR comment when below threshold
+        if: github.event_name == 'pull_request' && steps.score.outputs.score != 'n/a' && steps.score.outputs.score < 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body "变异抽样 score **${{ steps.score.outputs.score }}**（门槛 60，未阻塞合并）。弱断言嫌疑见 run 报告 artifact（reports/mutation）。抽样集见 \`stryker.conf.json\` 的 mutate 段。"
