@@ -45,8 +45,12 @@ export const MEMORIES: ResourceKind = {
 	insertSql:
 		"INSERT INTO memories (workspace_id, id, type, title, description, body, scope, status, source_session, source_seqs, source_run, corrects, not_when, created_at, updated_at) " +
 		"VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
+	// Live rows only: an archived row is history and a quarantined one is out of
+	// injection, so a rewrite there would report success over a memory nobody
+	// reads. The write gate names the status first; this predicate is the
+	// mechanical backstop (0 changes = the gate regressed, never a silent edit).
 	updateSql:
-		"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, scope = ?, corrects = COALESCE(?, corrects), not_when = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",
+		"UPDATE memories SET type = ?, title = ?, description = ?, body = ?, scope = ?, corrects = COALESCE(?, corrects), not_when = ?, updated_at = ? WHERE workspace_id = ? AND id = ? AND status = 'active'",
 	deleteSql: "DELETE FROM memories WHERE workspace_id = ? AND id = ?",
 	archiveReasonedSql:
 		"UPDATE memories SET status = 'archived', archive_reason = ?, merged_into = ?, updated_at = ? WHERE workspace_id = ? AND id = ?",

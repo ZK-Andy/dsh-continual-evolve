@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-996%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-945%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -80,7 +80,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 ### 唯一写路径
 
 - `evolve_write(kind, …)` 承接 `create` / `update` / `delete`（`kind = memory | skill`），技能另有 `move-to-global`。
-- 门禁在一个事务内完成：id 规范、type 枚举、feedback 的 **Why:**/**How to apply:** 契约、secret 筛查、64KB 正文上限、可选 `corrects` 纠错链、可选 `notWhen` 不适用条件。
+- 门禁在一个事务内完成：id 规范、type 枚举、feedback 的 **Why:**/**How to apply:** 契约、secret 筛查、64KB 正文上限、可选 `corrects` 纠错链、可选 `notWhen` 不适用条件；记忆的 `update` 只改 `active` 行，已归档或已隔离的按状态拒绝（归档是历史、隔离待人工复核，要改只能重建）。
 - `evolve_read(kind, …)` 按 id 取正文、按关键词检索：先按词组取 AND（trigram FTS，兜底 LIKE），再退 OR，中文片段按 3 字窗口展开。
 - 按 id 取到的每份正文计一次查阅——这是存在心跳，不是有用证明。长期零查阅是删除候选，但剪枝始终人工。
 
@@ -157,7 +157,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ```bash
 pnpm install && pnpm build   # 装依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（996 个测试）
+pnpm test                    # vitest（945 个测试）
 pnpm test:coverage           # v8 覆盖率，CI 门禁 91/83
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR 格式、文档预算、链接、治理、交接

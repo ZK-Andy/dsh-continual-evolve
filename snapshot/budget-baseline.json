@@ -18,7 +18,7 @@
       "outDegree": 0
     },
     "data/eval-cases.ts": {
-      "lines": 121,
+      "lines": 119,
       "outDegree": 2
     },
     "data/injection-log.ts": {
@@ -50,11 +50,11 @@
       "outDegree": 0
     },
     "data/repository.ts": {
-      "lines": 345,
+      "lines": 352,
       "outDegree": 3
     },
     "data/resource-kinds.ts": {
-      "lines": 154,
+      "lines": 158,
       "outDegree": 1
     },
     "data/review-accounts.ts": {
@@ -166,7 +166,7 @@
       "outDegree": 1
     },
     "services/memory-apply.ts": {
-      "lines": 394,
+      "lines": 395,
       "outDegree": 8
     },
     "services/memory-linkage.ts": {
@@ -178,7 +178,7 @@
       "outDegree": 8
     },
     "services/memory-rules.ts": {
-      "lines": 250,
+      "lines": 267,
       "outDegree": 1
     },
     "services/model-route.ts": {

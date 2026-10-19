@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-996%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-945%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -80,7 +80,7 @@ Writes made mid-session become visible in the next session — the injected sect
 ### One write path
 
 - `evolve_write(kind, …)` handles `create` / `update` / `delete` for `kind = memory | skill`, plus `move-to-global` for skills.
-- Gates, one transaction: id shape, type enum, the feedback **Why:**/**How to apply:** contract, secret screening, 64KB body cap, optional `corrects` link, optional `notWhen` caveat.
+- Gates, one transaction: id shape, type enum, the feedback **Why:**/**How to apply:** contract, secret screening, 64KB body cap, optional `corrects` link, optional `notWhen` caveat; a memory `update` rewrites `active` rows only — archived or quarantined rows are refused by status (archive is history, quarantine waits for a human, so rebuilding is the only way forward).
 - `evolve_read(kind, …)` serves bodies by id and searches by keyword: AND over the query's token groups (trigram FTS, LIKE underneath), then an OR pass, with CJK fragments expanded into 3-character windows.
 - A body served by id bumps its view counter — a presence heartbeat, not proof of use. Long-unviewed rows become removal candidates; pruning stays human.
 
@@ -157,7 +157,7 @@ Every `review.*` field is volatile: the settings card edits it without a remount
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (996 tests)
+pnpm test                    # vitest (945 tests)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds (91/83)
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR format, doc budgets, links, governance, handoff

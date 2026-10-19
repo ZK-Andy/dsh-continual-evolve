@@ -10,6 +10,7 @@ import { shouldStorePromptJson } from "./extraction-prompt.js";
 import {
 	fieldGateReasons,
 	isValidMemoryId,
+	rewriteBlockedReason,
 	type MemoryProposal,
 	type MemoryScope,
 	type MemoryType,
@@ -275,18 +276,18 @@ function updateMemory(job: MemoryApplyJob): ProposalOutcome {
 	if (existing === undefined) {
 		return fail(proposal, `no memory "${id}" to update — create it instead`);
 	}
-	db.memories.updateRow([
-		fields.type,
-		fields.title,
-		fields.description,
-		fields.body,
-		fields.scope,
-		link,
-		fields.notWhen,
-		db.now(),
-		ctx.workspaceId,
-		id,
+	const frozen = rewriteBlockedReason(existing);
+	if (frozen !== undefined) {
+		return fail(proposal, frozen);
+	}
+	const changed = db.memories.updateRow([
+		fields.type, fields.title, fields.description, fields.body, fields.scope,
+		link, fields.notWhen, db.now(), ctx.workspaceId, id,
 	]);
+	/* v8 ignore next 3 — the status gate above proves the row live; 0 changes means the descriptor predicate drifted */
+	if (changed !== 1) {
+		return fail(proposal, `memory "${id}" refused the rewrite (${String(changed)} rows changed)`);
+	}
 	db.memories.syncFts(ctx.workspaceId, id);
 	files.push({ id, action, before: existing, after: recordOf(db.memories.getRow(ctx.workspaceId, id) as MemoryRow) });
 	// A plain text update (the review's own rewrite included) links nobody.

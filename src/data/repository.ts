@@ -244,9 +244,16 @@ export class Repository<Row> {
 		this.insertOne.run(...values);
 	}
 
-	/** Update one row; values follow the kind's updateSql placeholders. */
-	updateRow(values: readonly SqlValue[]): void {
-		this.updateOne.run(...values);
+	/**
+	 * Update one row; values follow the kind's updateSql placeholders.
+	 * @param values - The bound values, in the descriptor's placeholder order.
+	 * @returns How many rows changed (0 or 1). A status-filtered kind returns 0
+	 * for a row its predicate excludes — the caller must read that as a refusal,
+	 * never as a landed edit.
+	 */
+	updateRow(values: readonly SqlValue[]): number {
+		const result = this.updateOne.run(...values) as { changes?: unknown };
+		return Number(result.changes ?? 0);
 	}
 
 	/** Delete one row by primary key. */

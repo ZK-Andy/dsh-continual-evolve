@@ -155,3 +155,65 @@ describe("card archive zone", () => {
 		expect(store.listArchived(WS).length).toBe(3);
 	});
 });
+
+/**
+ * Only `active` rows accept an in-place rewrite. Archived rows are history and
+ * quarantined ones are out of injection, so a rewrite there would edit a
+ * snapshot nobody reads back while the proposal reported success.
+ */
+describe("rewrites stop at frozen rows", () => {
+	function rewrite(id: string, body: string): { ok: boolean; reason?: string } {
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [{ action: "update", id, body }]);
+		if (outcome === undefined) {
+			throw new Error("update proposal produced no outcome");
+		}
+		return outcome;
+	}
+
+	it("refuses an archived row and keeps its snapshot", () => {
+		create("m-a");
+		expect(store.archiveMemory(WS, "m-a")).toBe(true);
+		const outcome = rewrite("m-a", "改写后的正文");
+		expect(outcome.ok).toBe(false);
+		expect(outcome.reason).toContain("is archived (review-archive)");
+		expect(store.get(WS, "m-a")).toMatchObject({ body: "正文", status: "archived", archiveReason: "review-archive" });
+	});
+
+	it("names the merge pointer on a folded row", () => {
+		create("m-a", "person");
+		expect(store.promoteMemory(WS, "m-a").ok).toBe(true);
+		expect(rewrite("m-a", "改写后的正文").reason).toContain("is archived (promoted-source)");
+	});
+
+	it("refuses a quarantined row", () => {
+		create("m-q");
+		expect(store.quarantine(WS, "memory", "m-q")).toBe(true);
+		const outcome = rewrite("m-q", "消毒后的正文");
+		expect(outcome.ok).toBe(false);
+		expect(outcome.reason).toContain("is quarantined");
+		expect(store.get(WS, "m-q")?.body).toBe("正文");
+	});
+
+	it("still rewrites a live row in place (one row changed)", () => {
+		create("m-a");
+		create("m-b");
+		const [outcome] = store.applyProposals({ workspaceId: WS, trigger: "explicit" }, [
+			{ action: "update", id: "m-b", corrects: "m-a" },
+		]);
+		expect(outcome).toMatchObject({ ok: true, id: "m-b" });
+		expect(store.get(WS, "m-b")).toMatchObject({ corrects: "m-a", status: "active", body: "正文" });
+	});
+
+	it("the descriptor predicate itself refuses an archived row", () => {
+		create("m-a");
+		expect(store.archiveMemory(WS, "m-a")).toBe(true);
+		const db = new DatabaseSync(dbPath);
+		const { memories } = openRepositories(db);
+		const changed = memories.updateRow([
+			"user", "改写标题", "钩子", "改写后的正文", "project", null, "", new Date().toISOString(), WS, "m-a",
+		]);
+		db.close();
+		expect(changed).toBe(0);
+		expect(store.get(WS, "m-a")).toMatchObject({ title: "标题 m-a", body: "正文", status: "archived" });
+	});
+});

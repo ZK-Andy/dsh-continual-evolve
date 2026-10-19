@@ -248,3 +248,20 @@ export function fieldGateReasons(fields: ProposedFields): string[] {
 	}
 	return reasons;
 }
+
+/**
+ * Gates that depend on the stored row's lifecycle state: only `active` rows
+ * accept an in-place rewrite. Archived rows are history — a rewrite edits a
+ * snapshot that never re-enters injection — and quarantined rows stay out of
+ * injection until a human clears them. Either rewrite would report success
+ * over a memory nobody reads back.
+ * @param row - The stored row's id, status, and archive reason.
+ * @returns The blocking reason, `undefined` when the row accepts rewrites.
+ */
+export function rewriteBlockedReason(row: { id: string; status: string; archiveReason: string }): string | undefined {
+	if (row.status === "active") {
+		return undefined;
+	}
+	const why = row.status === "archived" && row.archiveReason !== "" ? ` (${row.archiveReason})` : "";
+	return `memory "${row.id}" is ${row.status}${why} — only active memories accept rewrites; create a new memory instead`;
+}
