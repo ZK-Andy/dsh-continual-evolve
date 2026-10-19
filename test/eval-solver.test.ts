@@ -89,4 +89,8 @@ describe("checkExpects", () => {
 		expect(checkExpects(bad, "", tmpdir())[0]?.pass).toBe(false);
 		expect(checkExpects(task({ expect: [{ kind: "test-pass" }] }), "", tmpdir())[0]?.pass).toBe(false);
 	});
+	it("reports unspawnable commands instead of throwing", () => {
+		const missing = task({ expect: [{ kind: "test-pass", cmd: "node -e \"process.exit(0)\"" }] });
+		expect(checkExpects(missing, "", join(tmpdir(), "no-such-dir-eval-solver"))[0]?.pass).toBe(false);
+	});
 });

@@ -45,6 +45,7 @@ P5a 实测：`445a479` 单批 43 文件 +1636/-218（含 ADR v2–v4 三轮评�
 - 求解与判官走同一装载器：`streamOnce` 直调回归测试继续覆盖全部 `src/services`，新增 eval 模块自动受锁。
 - 预算约束收紧处：store-types 零增长（双行合并换方法）、store.ts 出度已顶满 12——下一次 store 加方法前须先合边。
 - P6 注入决策门（D3）的数据源就绪：首跑后 recall_hit/acc/cost 三数可在 compare 里直接读。
+- 落地返工注记：求解初版直调传输层，被 `subagent` 结构性回归测试拦下（传输只许装载器碰），改走按臂定义 + 装载器（system 位 parity 保持；臂可变上下文住 eval 模块是刻意例外，静态表只收固定岗）；覆盖率门随后追平（assemble 挂载双路径、runner 判官/落盘失败分支、solver 不可达 catch 改删）。
 
 ## Alternatives considered
 

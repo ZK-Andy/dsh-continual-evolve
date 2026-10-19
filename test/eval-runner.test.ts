@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EVAL_LAST_FOUR_ARM_KEY } from "../src/data/eval-cases.js";
 import { EVAL_ARMS } from "../src/data/records.js";
-import { runEvalBatch, type EvalRunDeps } from "../src/services/eval-runner.js";
-import { loadTaskset, taskDirOfSelf } from "../src/services/eval-taskset.js";
+import { judgeOf, runEvalBatch, type EvalRunDeps } from "../src/services/eval-runner.js";
+import { loadTaskset, taskDirOfSelf, type EvalTask } from "../src/services/eval-taskset.js";
 import type { LlmRuntime } from "../src/services/llm-call.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
 
@@ -96,6 +96,141 @@ describe("runEvalBatch", () => {
 			const out = await runEvalBatch(depsOf(store, steadyLlm()), { workspaceId: REPO, subset: 6, repeat: 1 });
 			expect(out.report.arms.current.totals.recallTotal).toBeLessThanOrEqual(expected);
 			expect(out.warnings).toEqual([]);
+		} finally {
+			cleanup();
+		}
+	});
+	it("runs the full set with identity and a fitting cap", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const out = await runEvalBatch(depsOf(store, steadyLlm()), {
+				workspaceId: REPO,
+				repeat: 1,
+				runId: "eval-manual",
+				commit: "abc123",
+				budgetCapTokens: 100000000,
+			});
+			expect(out.report.taskCount).toBe(22);
+			expect(out.report.runId).toBe("eval-manual");
+			expect(out.report.commit).toBe("abc123");
+			expect(out.report.budgetNote).toMatch(/within cap/);
+			expect(out.cases).toBe(22 * 4 * 1);
+		} finally {
+			cleanup();
+		}
+	});
+	it("marks unaccounted usage without failing the task", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const bare: LlmRuntime = {
+				stream: async function* () {
+					yield { type: "text-delta", text: KITCHEN_SINK };
+					yield { type: "finish", reason: { kind: "stop" } };
+				},
+			} as unknown as LlmRuntime;
+			const out = await runEvalBatch(depsOf(store, bare), { workspaceId: REPO, subset: 1, repeat: 1 });
+			expect(out.report.arms.base.tasks[0]?.note).toMatch(/unaccounted/);
+		} finally {
+			cleanup();
+		}
+	});
+	it("records ledger-write failures as warnings, not throws", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const failing = {
+				...store,
+				writeEvalCases: () => { throw new Error("disk full"); },
+				setState: () => { throw new Error("locked"); },
+			} as unknown as MemoryStore;
+			const out = await runEvalBatch(depsOf(failing, steadyLlm()), { workspaceId: REPO, subset: 1, repeat: 1 });
+			expect(out.cases).toBe(0);
+			expect(out.warnings.join("\n")).toMatch(/eval_cases write failed/);
+			expect(out.warnings.join("\n")).toMatch(/last-four-arm write failed/);
+		} finally {
+			cleanup();
+		}
+	});
+	it("notes recall checks the store cannot serve", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const blind = { ...store, search: () => { throw new Error("fts down"); } } as unknown as MemoryStore;
+			const out = await runEvalBatch(depsOf(blind, steadyLlm()), { workspaceId: REPO, subset: 1, repeat: 1 });
+			expect(out.warnings.join("\n")).toMatch(/recall check failed/);
+		} finally {
+			cleanup();
+		}
+	});
+});
+
+function judgeTask(): EvalTask {
+	return {
+		id: "task-judge",
+		from: "session-test#seq-9",
+		prompt: "这个回答好不好？",
+		expect: [{ kind: "output-contains", any: ["CI 全绿"] }],
+		tags: ["judge"],
+	};
+}
+
+function judgeLlm(judgeTexts: string[]): LlmRuntime {
+	const queue = [...judgeTexts];
+	return {
+		stream: async function* (options: unknown) {
+			const messages = (options as { messages?: { content?: { text?: string }[] }[] }).messages ?? [];
+			const prompt = messages.map((message) => (message.content ?? []).map((part) => part.text ?? "").join("")).join("\n");
+			const text = prompt.includes("---") ? (queue.shift() ?? "") : "CI 全绿";
+			yield { type: "text-delta", text };
+			yield { type: "usage", usage: { inputTokens: 5, outputTokens: 5 } };
+			yield { type: "finish", reason: { kind: "stop" } };
+		},
+	} as unknown as LlmRuntime;
+}
+
+describe("judgeOf", () => {
+	it("passes through non-judge tasks", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const verdict = await judgeOf(
+				depsOf(store, steadyLlm()),
+				{ ...judgeTask(), tags: ["memory"] },
+				"CI 全绿",
+				[],
+			);
+			expect(verdict).toEqual({ pass: true, note: "" });
+		} finally {
+			cleanup();
+		}
+	});
+	it("passes a task the judge confirms twice", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const verdict = await judgeOf(depsOf(store, judgeLlm(["PASS\n好", "PASS\n确实好"])), judgeTask(), "CI 全绿", []);
+			expect(verdict).toEqual({ pass: true, note: "" });
+		} finally {
+			cleanup();
+		}
+	});
+	it("fails disagreement and empty verdicts", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const warnings: string[] = [];
+			expect((await judgeOf(depsOf(store, judgeLlm(["PASS", "FAIL"])), judgeTask(), "CI 全绿", warnings)).note).toMatch(
+				/disagreed/,
+			);
+			expect((await judgeOf(depsOf(store, judgeLlm(["嗯", "嗯"])), judgeTask(), "CI 全绿", warnings)).note).toMatch(
+				/no verdict/,
+			);
+		} finally {
+			cleanup();
+		}
+	});
+	it("fails a judge task with no LLM route", async () => {
+		const { store, cleanup } = await testStore();
+		try {
+			const warnings: string[] = [];
+			const verdict = await judgeOf({ ...depsOf(store, steadyLlm()), llm: undefined }, judgeTask(), "CI 全绿", warnings);
+			expect(verdict.pass).toBe(false);
+			expect(warnings.join("\n")).toMatch(/without an LLM route/);
 		} finally {
 			cleanup();
 		}

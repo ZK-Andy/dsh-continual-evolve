@@ -98,4 +98,24 @@ describe("executeEvalRun", () => {
 			cleanup();
 		}
 	});
+	it("accepts a fitting cap and ignores invalid knobs", async () => {
+		const { store, dir, cleanup } = await testStore();
+		try {
+			const text = await executeEvalRun(store, fixedWith(steadyLlm(), true), dir, execWith(dir), {
+				subset: 1,
+				repeat: 1,
+				budgetCapTokens: 100000000,
+			});
+			expect(text).toMatch(/within cap/);
+			const sloppy = await executeEvalRun(store, fixedWith(steadyLlm(), true), dir, execWith(dir), {
+				subset: "many",
+				repeat: -2,
+				budgetCapTokens: Number.NaN,
+				dryRun: "yes",
+			});
+			expect(sloppy).toMatch(/# 四臂对照/);
+		} finally {
+			cleanup();
+		}
+	});
 });

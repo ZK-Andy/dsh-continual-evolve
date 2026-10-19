@@ -66,7 +66,8 @@ function recallOf(deps: EvalRunDeps, workspaceId: string, task: EvalTask, warnin
 	}
 }
 
-async function judgeOf(
+/** Judge one reply when the task carries the judge tag (exported for tests; the batch is the only caller). */
+export async function judgeOf(
 	deps: EvalRunDeps,
 	task: EvalTask,
 	reply: string,

@@ -110,16 +110,12 @@ function checkTestPass(expect: EvalExpect, workspaceId: string): ExpectVerdict {
 	if (typeof expect.cmd !== "string" || expect.cmd.length === 0) {
 		return { kind: "test-pass", pass: false, detail: "判据 lacks a cmd" };
 	}
-	try {
-		const run = spawnSync(expect.cmd, { cwd: workspaceId, timeout: EVAL_TEST_TIMEOUT_MS, shell: "/bin/sh", encoding: "utf8" });
-		const out = `${run.stdout ?? ""}${run.stderr ?? ""}`.slice(0, EVAL_TEST_OUTPUT_MAX);
-		if (run.error !== undefined) {
-			return { kind: "test-pass", pass: false, detail: `spawn failed: ${run.error.message.slice(0, 200)}` };
-		}
-		return { kind: "test-pass", pass: run.status === 0, detail: run.status === 0 ? "exit 0" : `exit ${run.status ?? "?"}: ${out.slice(0, 200)}` };
-	} catch (error) {
-		return { kind: "test-pass", pass: false, detail: error instanceof Error ? error.message.slice(0, 200) : "spawn threw" };
+	const run = spawnSync(expect.cmd, { cwd: workspaceId, timeout: EVAL_TEST_TIMEOUT_MS, shell: "/bin/sh", encoding: "utf8" });
+	const out = `${run.stdout ?? ""}${run.stderr ?? ""}`.slice(0, EVAL_TEST_OUTPUT_MAX);
+	if (run.error !== undefined) {
+		return { kind: "test-pass", pass: false, detail: `spawn failed: ${run.error.message.slice(0, 200)}` };
 	}
+	return { kind: "test-pass", pass: run.status === 0, detail: run.status === 0 ? "exit 0" : `exit ${run.status ?? "?"}: ${out.slice(0, 200)}` };
 }
 
 /**
