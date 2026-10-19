@@ -186,6 +186,27 @@ export const GATE_CASES: readonly GateCase[] = [
 		fixtures: [],
 		runtime: true,
 	},
+	{
+		id: "history-words",
+		script: "scripts/verify-history-words.ts",
+		violation: (fx) => at(fx),
+		clean: (fx) => at(fx),
+		fixtures: ["violation/history.md", "clean/other.md"],
+	},
+	{
+		id: "adr-alternatives",
+		script: "scripts/verify-adr-alternatives.ts",
+		violation: (fx) => at(join(fx, "notes")),
+		clean: (fx) => at(join(fx, "notes")),
+		fixtures: ["violation/notes/proposed/bad.md", "clean/notes/proposed/good.md"],
+	},
+	{
+		id: "fn-shape",
+		script: "scripts/verify-fn-shape.ts",
+		violation: (fx) => ({ args: [fx, "--baseline", join(fx, "baseline.json")], cwd: root }),
+		clean: (fx) => ({ args: [fx, "--baseline", join(fx, "baseline.json")], cwd: root }),
+		fixtures: ["violation/evil.ts", "violation/baseline.json", "clean/small.ts", "clean/baseline.json"],
+	},
 ];
 
 /** A gate run's outcome. */

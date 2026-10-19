@@ -74,7 +74,7 @@
 
 - **断言**：`docs/**`、`README*.md`、`.agents/notes/implemented/**` 命中 `previously|now |no longer|renamed|曾经|后来改成` 即失败（规则见项目 `AGENTS.md`「durable 文档写当前状态」）。
 - **豁免**：`docs/upstream/**`、`release-notes.md`、`HANDOFF*`、`archive/**`。
-- **验收**：fixture 里写一句 "previously we used X" → 红。
+- **验收**：fixture 里写一句含历史词的英文旧句式 → 红。
 
 ### G8 ADR Alternatives 质量
 
@@ -91,11 +91,13 @@
 - **断言**：周任务对 `src/services/` 抽样跑 stryker，mutation score 门槛 60；低于门槛在 PR 评论里报，不阻塞合并。
 - **理由**：覆盖率高不代表断言有效；变异测试是唯一能机械给出"测试是否真在测"信号的工具。
 - **验收**：把某测试的断言改成 `expect(true)` → 该文件 mutation score 显著下降。
+- **接入评估（2026-10-19 G-batch3 已做，结论：可行，独立成轨，不在本批落地）**：隔离 trial（vitest 3 + TS 5.9 + stryker 10 core/vitest-runner/typescript-checker，版本兼容已确认）实测——安装约 70 秒、node_modules +109MB（含 vitest 全栈）；12 行样本 20 个变异 16 秒跑完，分值 50.00 随弱断言真实下降；typescript-checker 正确过滤类型非法变异（空块无返回判 CompileError，不计分）。按此推算 `src/services/` 抽样（数百变异、perTest 覆盖）单次约 5–20 分钟，适合非阻塞周任务。落地清单（约 0.5–1 天，另起一轨）：3 个 devDeps + `stryker.conf.json`（mutate 限 2–3 个 services 文件、thresholds break:null）+ `test:mutation` 脚本 + 每周 schedule workflow（报告传 artifact）；PR 评论播报需 pull_request 触发或评论机器人，v1 先落周报 artifact，评论通道另议。未验证风险：node:sqlite 在插桩下的表现、globalSetup 透传——首跑 trial 必须覆盖这两项再定终版配置。
 
 ### G11 函数形状规则
 
 - **断言**：ast-grep 规则集：参数 >4、返回 `any`、空 `catch {}`、`console.log` 进 `src/`（非 scripts）。
 - **验收**：每类各一条 fixture，必须红。
+- **实现注记（2026-10-19 G-batch3）**：引擎用 TypeScript 编译器 API（已声明依赖）而非 ast-grep 系统二进制——同四条纯语法规则，干净 CI 可跑，无新依赖；语义见 `scripts/verify-fn-shape.ts` 头注。另：真实树有 35 处历史形状，门禁按 G4 式棘轮基线落地（`scripts/fn-shape-baseline.json`，只收敛不发散），逐个重构签名超出门禁批次范围。
 
 ### G12 新目录归层白名单
 

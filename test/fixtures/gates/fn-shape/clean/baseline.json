@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": {
+    "src/small.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    }
+  }
+}

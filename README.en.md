@@ -98,7 +98,7 @@ The second background track, independent by construction: own prompts, own daily
 
 - A cheap gate decides whether an entry deserves a close look; only approvals run the evolve pass.
 - The evolve pass judges content quality and proposes a rewrite — memories on home-ownership plus accuracy/usability/reusability/duplication/freshness; skills on trigger precision/executability/duplication, with reuse judged scope-aware.
-- Four outcomes: rewrite · quarantine (hidden, never deleted) · archive (history kept, no longer injected) · advice-only "this belongs in the repo docs". The plugin never writes into your repository.
+- Four outcomes: rewrite · quarantine (hidden, never deleted) · archive (history kept, excluded from injection) · advice-only "this belongs in the repo docs". The plugin never writes into your repository.
 - New writes are reviewed as they land; requeues are event-driven; the calendar is only a sampling backstop (`review.staleDays`, the longest exemption window, doubles on consecutive keeps). Ships in dry-run.
 
 ### Layers and promotion
@@ -121,7 +121,7 @@ The second background track, independent by construction: own prompts, own daily
 - Upper card: global `review.*` settings — explicit save; `enabled` needs a restart, the rest apply on the next drain.
 - Lower card: read-only projection — build identity, 7-day conversion, workspace selector over the store's partitions, search, relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, and skills (global rows badged, project shadows global) with view counts.
 
-Types follow the ZCode taxonomy: `user` (profile and environment facts), `feedback` (corrected or confirmed practices — bodies must carry **Why:** and **How to apply:**), `reference` (resource pointers). `notWhen` is a one-sentence caveat rendered next to the hook ("不适用：…") — presentation only, never a retrieval filter. Extraction boundary: person- and environment-scoped knowledge; decisions and trade-offs are repo-scoped and belong to the repo's ADR route. Legacy markdown stores (`<workspace>/.evolve/memory/*.md`) are imported losslessly on first contact, and the directory is renamed aside as `memory-imported-<date>/` — never deleted.
+Types follow the ZCode taxonomy: `user` (profile and environment facts), `feedback` (corrected or confirmed practices — bodies must carry **Why:** and **How to apply:**), `reference` (resource pointers). `notWhen` is a one-sentence caveat rendered next to the hook ("不适用：…") — presentation only, never a retrieval filter. Extraction boundary: person- and environment-scoped knowledge; decisions and trade-offs are repo-scoped and belong to the repo's ADR route. Legacy markdown stores (`<workspace>/.evolve/memory/*.md`) are imported losslessly on first contact, and the directory is moved aside as `memory-imported-<date>/` — never deleted.
 
 ## Configuration
 

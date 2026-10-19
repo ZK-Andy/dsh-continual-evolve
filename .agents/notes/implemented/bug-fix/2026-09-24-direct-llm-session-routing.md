@@ -21,4 +21,4 @@ The v0.7.3 memory agent did run in the desktop profile, but opencode-go rejected
 
 ## Consequences
 
-Auxiliary review, memory extraction, planner, and wrap-up calls now use the same provider routing identity as the Agent loop. Providers that do not require the field remain compatible; tests and capability-less hosts may omit it. No new provider-specific header logic enters the plugin.
+Auxiliary review, memory extraction, planner, and wrap-up calls use the same provider routing identity as the Agent loop. Providers that do not require the field remain compatible; tests and capability-less hosts may omit it. No new provider-specific header logic enters the plugin.

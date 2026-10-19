@@ -1,0 +1,443 @@
+{
+  "version": 1,
+  "rules": {
+    "src/assemble.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/accounts.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/database.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/injection-log.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/item-events.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/ledger.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/data/migrate.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/patrol.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/records.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/repository.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/resource-kinds.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/review-accounts.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/schema.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/data/secret.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/tiering.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/data/usage-accounts.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 3,
+      "console-log": 0
+    },
+    "src/index.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/pages/memory-card/card-http.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/pages/memory-card/card-routes.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 2,
+      "console-log": 0
+    },
+    "src/pages/memory-card/mount.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/pages/memory-card/prompt-routes.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/pages/memory-card/settings.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/pages/memory-card/workspace-hint.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/agent.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/build-identity.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/chain.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-failure.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-item.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-prompt.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-propose.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-ring.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-screen.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction-surface.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/extraction.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/services/import-md.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/injection-stats.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/services/llm-call.ts": {
+      "params": 1,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/memory-apply.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/memory-linkage.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/services/memory-rules.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/model-route.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/plugin-log.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/services/pre-screen.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/prompt-apply.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/prompt-date.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/prompt-rules.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/retention.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/review-candidates.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/services/review-prompt.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/review-ring.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/review-row.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/review-scheduler.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/review-tiering.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/review.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/skill-apply.ts": {
+      "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/skill-files.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/skill-rules.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/subagent-defs.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/subagent.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/services/token-budget.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 1,
+      "console-log": 0
+    },
+    "src/services/token-usage.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/store-types.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/store.ts": {
+      "params": 1,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/evolve-fields.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/evolve-memory.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/evolve-prompts.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/evolve-skills.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/evolve-tools.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/memory-guide.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/surfaces/memory-section.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 2,
+      "console-log": 0
+    },
+    "src/surfaces/memory-snapshot.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 2,
+      "console-log": 0
+    },
+    "src/surfaces/prompt-snapshot.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 2,
+      "console-log": 0
+    },
+    "src/surfaces/skill-provider.ts": {
+      "params": 0,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    }
+  }
+}

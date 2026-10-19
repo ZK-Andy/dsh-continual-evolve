@@ -21,7 +21,7 @@ Status: implemented
 
 - `streamOnce`（`src/llm-call.ts`）发出去的只有两件东西——定义表里的 `system` 与一条 user 消息，没有 runtime context、没有时间戳。DSH 给正常会话轮注入的日期被这条直调路径整个绕开。
 - 评审的 user prompt 逐行只渲染 `id / scope / title / 钩子 / 全文` 与同类候选（`src/review-prompt.ts`），条目自己的 `created_at` / `updated_at` 从不进 prompt——尽管 `collectCandidates` 为了算 staleness 已经解析过 `updatedAt`。
-- 而 rubric 要的正是时间相对判断：记忆五维里的「①准确」「⑤不过时」。要 now 却不给 now，模型只能用自己的先验填洞，把近期过去日期读成未来。
+- 而 rubric 要的正是时间相对判断：记忆五维里的「①准确」「⑤不过时」。要 `now` 却不给 `now`，模型只能用自己的先验填洞，把近期过去日期读成未来。
 - 同病的第二处：提取提示词要求「相对日期一律转成绝对日期（"周四"→"2026-10-08"）」，同样没有基准日可折算。
 
 `rewrite` 是当前唯一把误判变成实际伤害的通道（拟改稿会删掉用户刚立的硬规则），而 dry-run 关停的前置正是可采纳率——噪声直接挡在放权门口。
