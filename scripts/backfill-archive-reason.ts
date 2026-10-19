@@ -1,6 +1,9 @@
 #!/usr/bin/env -S ../../node_modules/.bin/tsx
 /**
  * Backfill `archive_reason` for rows archived before P4 (one-shot, idempotent).
+ * Manual escape hatch: `migrateDatabase` already runs the same backfill on
+ * every store open, so normal users never need this script. Keep it for
+ * diagnosis and for re-running against an explicit store copy.
  * Projects each unclassified archived row's reason from the ledgers and stamps
  * rows with exactly one evidence; ambiguous rows stay `''` for a human.
  *

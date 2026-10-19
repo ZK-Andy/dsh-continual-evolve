@@ -154,4 +154,16 @@ describe("backfill projects reasons", () => {
 		expect(result.skipped).toEqual([{ workspaceId: "", id: "m-g" }]);
 		db.close();
 	});
+
+	it("backfills automatically when the store reopens (no manual script)", async () => {
+		create("m-auto");
+		expect(store.archiveMemory(WS, "m-auto")).toBe(true);
+		store.logReview({ workspaceId: WS, itemKind: "memory", itemId: "m-auto", verdict: "archive" as never, applied: 1 });
+		resetReason("m-auto");
+		expect(reasonOf("m-auto").reason).toBe("");
+		// Reopen the same file: migrateDatabase runs the backfill on mount.
+		store.close();
+		store = await openMemoryStore(dbPath);
+		expect(reasonOf("m-auto").reason).toBe("review-archive");
+	});
 });

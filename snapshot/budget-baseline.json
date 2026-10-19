@@ -34,8 +34,8 @@
       "outDegree": 2
     },
     "data/migrate.ts": {
-      "lines": 393,
-      "outDegree": 3
+      "lines": 398,
+      "outDegree": 4
     },
     "data/patrol.ts": {
       "lines": 120,

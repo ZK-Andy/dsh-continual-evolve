@@ -7,6 +7,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { LEDGER_OCCURRENCES } from "../store-types.js";
+import { backfillArchiveReasons } from "./archive-backfill.js";
 import { extractionLogDdl, itemEventsDdl, memoriesDdl, rebuildDriftedTables, reviewLogDdl } from "./schema.js";
 import { INJECTION_LOG_DDL } from "./injection-log.js";
 
@@ -187,6 +188,10 @@ export function migrateDatabase(database: DatabaseSync): void {
 	// Columns first, then shape: the rebuild copies the guard's column list,
 	// and the ALTERs above are what make an old table carry all of it.
 	rebuildDriftedTables(database);
+	// Data second: project reasons for rows archived before P4 on every open,
+	// so no user ever runs the backfill script by hand. Idempotent (only
+	// `''` rows) and ledger-local, safe to re-run on each mount.
+	backfillArchiveReasons(database);
 }
 
 /**
@@ -359,8 +364,8 @@ function ensureMemoriesNotWhen(database: DatabaseSync): void {
 
 /**
  * Add the P4 archive columns to a store created before them: `archive_reason`
- * (existing archived rows read `''` until the backfill script
- * `scripts/backfill-archive-reason.ts` projects their reason) and
+ * (existing archived rows gain their reason from the ledgers by the automatic
+ * backfill at the end of `migrateDatabase`; unprovable rows stay `''`) and
  * `merged_into` (only `merged-duplicate` rows carry it). One function for one
  * batch, the same discipline as the rollup's per-source counters below.
  */

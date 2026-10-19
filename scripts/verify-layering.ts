@@ -43,7 +43,7 @@ const EDGES: Record<string, readonly string[]> = {
 	"data/archive-backfill.ts": [],
 	"data/search-query.ts": [],
 	"data/ledger.ts": ["store-types"],
-	"data/migrate.ts": ["data/injection-log", "data/schema", "store-types"],
+	"data/migrate.ts": ["data/archive-backfill", "data/injection-log", "data/schema", "store-types"],
 	"data/patrol.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	"data/records.ts": [],
 	"data/repository.ts": ["data/records", "data/resource-kinds", "data/search-query"],
