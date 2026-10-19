@@ -100,7 +100,7 @@ PilotDeck 的任何借鉴均为**设计重写**（AGPL-3.0，代码不得进入�
 | judge 型 QA + 四臂报告 | 含 `recall_hit`（读注入账本）；外锚改双月 60 天（见 P5a ADR） |
 | **runner 设计与脚本**（D11=A） | 宿主命令边界（scripts 离线 vs 宿主在线）、多轮求解环路、`--repeat 2`、同一模型双 judge；`scripts/eval-tasks.ts` + `pnpm eval:tasks --list/--dry-run/--subset` |
 
-架构落点：执行平面待 D11 拍板（P5b 不开工直到定案，P5a 可先行）；caseTrace 落库同 D8 纪律（截断上限、采样率、回复脱敏规则，P5 ADR 定死；列还是新表由 P5 ADR 定——若新表，G6 加的是表，"同列入快照"说法随之改）；`evals/` 为仓库根新建目录（G12 只管 `src/`，不触发）；runner 若走宿主平面，模型路由复用 `services/llm-call.ts` + `model-route.ts`（`ctx.get("agentDefaultModel")`），不自建传输。
+架构落点：执行平面 D11=A 已定（runner 设计与脚本归 P5b，P5a 零 ctx 代码可先行）；caseTrace 落库同 D8 纪律（截断上限、采样率、回复脱敏规则，P5 ADR 定死；列还是新表由 P5 ADR 定——若新表，G6 加的是表，"同列入快照"说法随之改）；`evals/` 为仓库根新建目录（G12 只管 `src/`，不触发）；runner 若走宿主平面，模型路由复用 `services/llm-call.ts` + `model-route.ts`（`ctx.get("agentDefaultModel")`），不自建传输。
 
 ### P6 注入演进（0.5 天 + 条件项 + 一个决策门）
 
@@ -127,7 +127,7 @@ PilotDeck 的任何借鉴均为**设计重写**（AGPL-3.0，代码不得进入�
 
 依赖链：**P0（G3 门禁可信 + G6 schema 基线）→ P1（独立，速赢）→ P2（新枚举/新列在 G6 快照下变更）→ P4（schema 变更同理）→ P5a（实现）→ P5b（跑批，用评测闭环验收前面所有改动）→ P6（注入决策依赖 P5b 数据）**。**P3 为平行轨**：G-batch2/3 与 P5a 改动面零重叠（`scripts/` vs `evals/`），可并行；G-batch1 的 G1（ADR 覆盖率）与 G9（测试配对）建议尽早落地——在此之前 P1/P2 的行为变更靠人工 ADR/测试纪律顶着，G-batch1 完成后须回溯补查一次。
 
-总预算约 **24 人日 + 缓冲（占位符：P5b 待 D11 定案后单独重估，在此之前对外不承诺总数）**（P0 2.5 + P1 1.5 + P2 3 + P3 7 + P4 3 + P5a/P5b 原 6.5 拆分 + P6 0.5）。每阶段独立提交、独立验收，可随时在阶段边界停下，不存在跨阶段半成品。
+总预算约 **24 人日 + 缓冲（占位符：P5b 待 P5a 实测后单独重估，在此之前对外不承诺总数）**（P0 2.5 + P1 1.5 + P2 3 + P3 7 + P4 3 + P5a/P5b 原 6.5 拆分 + P6 0.5）。每阶段独立提交、独立验收，可随时在阶段边界停下，不存在跨阶段半成品。
 
 ## 6. Alternatives considered
 
