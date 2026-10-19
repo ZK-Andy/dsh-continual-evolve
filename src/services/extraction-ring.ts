@@ -16,56 +16,19 @@ import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
 import { observedUsageOf } from "./llm-call.js";
 import type { ModelSelection } from "./model-route.js";
 import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
-import {
-	CHEAP_INCREMENT_MAX,
-	cheapPrompt,
-	classifyPrompt,
-	type ClassifyResult,
-} from "./extraction-prompt.js";
+import { CHEAP_INCREMENT_MAX, cheapPrompt, classifyPrompt } from "./extraction-prompt.js";
 import { todayUtc } from "./prompt-date.js";
 import { extractionClassify, extractionGate } from "./subagent-defs.js";
-import { cutFailureOf, subagentLoaderFor, type SubagentCall, type SubagentLoader } from "./subagent.js";
-import type { LedgerEntry } from "../store.js";
+import { cutFailureOf, subagentLoaderFor, type SubagentCall } from "./subagent.js";
 import type { ExtractionDeps, ExtractionResult, ExtractionTarget, RunOptions } from "./extraction.js";
+import { errorText, runIdOf, type ExtractionItem } from "./extraction-item.js";
 import { proposeLink } from "./extraction-propose.js";
-
-/** Head length of an unexpected error's message/stack trace kept in the ledger `files` column. */
-const UNEXPECTED_ERROR_RAW_MAX = 2048;
 
 /** Head length of an error message embedded in a ledger `skip_reason`. */
 export const ERROR_REASON_MAX = 300;
 
 /** Head length of a failed pre-gate call's error kept in the ledger `cheap_error` column. */
 const GATE_ERROR_MAX = 200;
-
-/** One run's walk through the chain: the context every link reads and fills in. */
-export interface ExtractionItem {
-	readonly deps: ExtractionDeps;
-	readonly target: ExtractionTarget;
-	readonly opts: RunOptions;
-	readonly ledgerBase: { sessionId: string; workspaceId: string; trigger: LedgerEntry["trigger"] };
-	readonly route: ModelSelection;
-	readonly loader: SubagentLoader;
-	readonly increment: string;
-	readonly userSeqs: readonly number[];
-	readonly userText: string;
-	readonly boundarySeq: number | undefined;
-	readonly advanceCursor: () => void;
-	/** The pre-gate's observed usage, carried onto the run's own row. */
-	cheapUsage: unknown;
-	/** Why the pre-gate left no payload (fail open); `undefined` when it never ran or answered. */
-	cheapError: string | undefined;
-	/** The classification prior (P2 two-stage); `undefined` when it never answered. */
-	classify: ClassifyResult | undefined;
-	/** The classification call's observed usage, carried onto the run's own row. */
-	classifyUsage: unknown;
-	/** Why the classify call left no prior (fail open); `undefined` when it answered. */
-	classifyError: string | undefined;
-	/** The exact classify prompt text (P2 audit input); `undefined` when classify never ran. */
-	classifyPromptText: string | undefined;
-	/** The terminal outcome, set by the link that handles the item. */
-	result?: ExtractionResult;
-}
 
 /**
  * The pipeline body: one bounded increment of one session, one LLM call, one
@@ -272,18 +235,6 @@ function classifyLink(): ChainLink<ExtractionItem> {
 			return "next";
 		},
 	};
-}
-
-/** The run id every ledger row of one extraction run carries. */
-export function runIdOf(item: Pick<ExtractionItem, "target" | "boundarySeq">): string {
-	return `extract:${item.target.sessionId}:${item.boundarySeq ?? "tail"}`;
-}
-
-/** Split an unexpected throw into a ledger-sized reason head and file body. */
-export function errorText(error: unknown): { message: string; detail: string } {
-	const message = error instanceof Error && error.message.length > 0 ? error.message : String(error);
-	const stack = error instanceof Error && typeof error.stack === "string" ? error.stack : message;
-	return { message, detail: `${message}\n${stack}`.slice(0, UNEXPECTED_ERROR_RAW_MAX) };
 }
 
 /** One-line head of a thrown pre-gate error (flat, so the column stays greppable). */

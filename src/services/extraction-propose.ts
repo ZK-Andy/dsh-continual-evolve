@@ -17,7 +17,7 @@ import { pruneIfDue } from "./retention.js";
 import { cutFailureOf, type SubagentAnswer } from "./subagent.js";
 import { extractionMain } from "./subagent-defs.js";
 import { ROUTE_REJECTED_REASON, type MemoryStore } from "../store.js";
-import { errorText, runIdOf, type ExtractionItem } from "./extraction-ring.js";
+import { errorText, runIdOf, type ExtractionItem } from "./extraction-item.js";
 
 /** Head length of a failed run's raw answer kept in the ledger `files` column. */
 const FAILURE_RAW_MAX = 2048;

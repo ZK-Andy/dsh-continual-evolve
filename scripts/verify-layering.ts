@@ -100,6 +100,7 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/extraction.ts": [
 		"services/extraction-failure",
 		"services/agent",
+		"services/extraction-item",
 		"services/extraction-ring",
 		"services/extraction-surface",
 		"services/llm-call",
@@ -110,10 +111,18 @@ const EDGES: Record<string, readonly string[]> = {
 	// The route-failure record: the backoff ladder and the state rows it lives in.
 	"services/extraction-failure.ts": ["services/llm-call", "services/plugin-log", "store", "store-types"],
 	"services/extraction-prompt.ts": [],
+	// The run vocabulary both the ring and the proposal link share (leaf: no value imports).
+	"services/extraction-item.ts": [
+		"services/extraction",
+		"services/extraction-prompt",
+		"services/model-route",
+		"services/subagent",
+		"store",
+	],
 	"services/extraction-propose.ts": [
 		"services/chain",
+		"services/extraction-item",
 		"services/extraction-prompt",
-		"services/extraction-ring",
 		"services/extraction-screen",
 		"services/llm-call",
 		"services/retention",
@@ -124,6 +133,7 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/extraction-ring.ts": [
 		"services/chain",
 		"services/extraction",
+		"services/extraction-item",
 		"services/extraction-prompt",
 		"services/extraction-propose",
 		"services/extraction-surface",
@@ -132,7 +142,6 @@ const EDGES: Record<string, readonly string[]> = {
 		"services/prompt-date",
 		"services/subagent",
 		"services/subagent-defs",
-		"store",
 	],
 	"services/extraction-surface.ts": [],
 	"services/import-md.ts": ["services/memory-rules", "store"],

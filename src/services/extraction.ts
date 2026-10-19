@@ -21,7 +21,8 @@
  * The model proposes; the store disposes. A failed or rejected run never
  * advances the cursor, so the increment is retried on the next trigger.
  */
-import { ERROR_REASON_MAX, errorText, runExtractionInner } from "./extraction-ring.js";
+import { ERROR_REASON_MAX, runExtractionInner } from "./extraction-ring.js";
+import { errorText } from "./extraction-item.js";
 import { isInternalAgent, type SkipReason, type SurfaceReader } from "./extraction-surface.js";
 import { GLOBAL_WORKSPACE, type LedgerEntry, type MemoryStore } from "../store.js";
 import { cwdOf } from "./agent.js";
