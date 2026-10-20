@@ -119,7 +119,7 @@ The second background track, independent by construction: own prompts, own daily
 
 - Mounted on the plugin's page in the official plugin manager; hosts without the slot silently degrade.
 - Upper card: global `review.*` settings — explicit save; `enabled` needs a restart, the rest apply on the next drain.
-- Lower card: read-only projection — build identity, 7-day conversion, workspace selector over the store's partitions, search, relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, archived zone (read-only, collapsed: reason + merge target, no actions), and skills (global rows badged, project shadows global) with view counts.
+- Lower card: read-only projection — build identity, 7-day conversion, workspace selector over the store's partitions, search, relative updated times, click-to-preview bodies (5 MiB cap), patrol warnings, archived zone (read-only, collapsed: the same row shape as the list, a localized reason, and a "content lives in global (id)" pointer on promoted rows, no actions), and skills (global rows badged, project shadows global) with view counts.
 
 Types follow the ZCode taxonomy: `user` (profile and environment facts), `feedback` (corrected or confirmed practices — bodies must carry **Why:** and **How to apply:**), `reference` (resource pointers). `notWhen` is a one-sentence caveat rendered next to the hook ("不适用：…") — presentation only, never a retrieval filter. Extraction boundary: person- and environment-scoped knowledge; decisions and trade-offs are repo-scoped and belong to the repo's ADR route. Legacy markdown stores (`<workspace>/.evolve/memory/*.md`) are imported losslessly on first contact, and the directory is moved aside as `memory-imported-<date>/` — never deleted.
 
@@ -159,7 +159,7 @@ Every `review.*` field is volatile: the settings card edits it without a remount
 pnpm install && pnpm build   # deps + clean build -> lib/
 pnpm test                    # vitest (948 tests / 77 files)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds (91/83)
-pnpm lint                    # oxlint src test client scripts
+pnpm lint                    # oxlint src test client
 pnpm check:docs              # ADR format, doc budgets, links, governance, handoff
 pnpm check:pack              # published-artifact consistency (also runs on prepack)
 pnpm eval:recall             # offline recall baseline (hit@1 / MRR over a fixture)
@@ -171,7 +171,7 @@ pnpm eval:recall             # offline recall baseline (hit@1 / MRR over a fixtu
 | `client/` | hand-written client bundle for the cards |
 | `locale/` | localized display name and description (zh/en) |
 | `scripts/` | gates (ADR, docs, layering, budgets, pack) and `eval:recall` |
-| `test/` | vitest suite, 84 files |
+| `test/` | vitest suite, 77 files |
 | `docs/` | `design.md` (design) · `FAQ.md` (real-world pitfalls) |
 | `.agents/` | AI collaboration layer (AGENTS.md, skills, ADR notes) |
 

@@ -119,7 +119,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 - 挂在官方插件管理的本 bundle 页面；老宿主自动降级为无卡片。
 - 上面的卡片：全局 `review.*`——显式保存；`enabled` 需重启，其余下一轮生效。
-- 下面的卡片：只读投影——运行代/盘面代、近 7 天注入转化率、工作区下拉（= 库内分区）、搜索、相对更新时间、点击展开正文预览（5 MiB 上限）、巡检异常、已归档区（只读折叠：原因 + 合并去向，无操作按钮）、技能区（全局行打标记，项目遮蔽全局）与查阅次数。
+- 下面的卡片：只读投影——运行代/盘面代、近 7 天注入转化率、工作区下拉（= 库内分区）、搜索、相对更新时间、点击展开正文预览（5 MiB 上限）、巡检异常、已归档区（只读折叠：与列表行同形、原因走内联字典、被提级的行带「内容在全局（id）」指针，无操作按钮）、技能区（全局行打标记，项目遮蔽全局）与查阅次数。
 
 类型沿 ZCode 分类法：`user`（画像与环境事实）、`feedback`（被纠正/确认的做法——正文必带 **Why:** 与 **How to apply:**）、`reference`（资源指针）。`notWhen` 是可选的「不适用条件」，随钩子渲染成「（不适用：…）」——只做提示，不参与检索过滤。提取边界：只收跟人与环境走的知识；决策与取舍天然属于仓库，走仓库的 ADR 路线。旧版 markdown 记忆库（`<workspace>/.evolve/memory/*.md`）首次接触时无损导入，原目录改名为 `memory-imported-<date>/` 保留——不删不丢。
 
@@ -159,7 +159,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 pnpm install && pnpm build   # 装依赖 + 干净构建 -> lib/
 pnpm test                    # vitest（948 个测试 / 77 文件）
 pnpm test:coverage           # v8 覆盖率，CI 门禁 91/83
-pnpm lint                    # oxlint src test client scripts
+pnpm lint                    # oxlint src test client
 pnpm check:docs              # ADR 格式、文档预算、链接、治理、交接
 pnpm check:pack              # 发布产物一致性（prepack 也跑）
 pnpm eval:recall             # 离线检索基线（fixture 上的 hit@1 / MRR）
@@ -171,7 +171,7 @@ pnpm eval:recall             # 离线检索基线（fixture 上的 hit@1 / MRR�
 | `client/` | 手写客户端 bundle（记忆卡 + 评审设置卡） |
 | `locale/` | 双语显示名与描述（zh/en） |
 | `scripts/` | 门禁（ADR/文档/分层/预算/产物）+ `eval:recall` |
-| `test/` | vitest 套件，84 个文件 |
+| `test/` | vitest 套件，77 个文件 |
 | `docs/` | `design.md`（设计）· `FAQ.md`（踩坑记录） |
 | `.agents/` | AI 协作层（AGENTS.md、技能、ADR） |
 
