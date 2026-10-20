@@ -3,7 +3,9 @@
  * as stored) next to its record (camelCased as served) plus the mapping
  * between them. The repository moves rows; the mapping here translates
  * them. Table/column knowledge lives here and in `./resource-kinds.js`,
- * nowhere else.
+ * nowhere else. The memories table's DDL and its copy list live here too:
+ * a table's shape follows the table's module, and the schema guard
+ * aggregates them.
  */
 
 export interface MemoryRow {
@@ -40,26 +42,69 @@ export const ARCHIVE_REASONS = ["", "promoted-source", "review-archive", "demote
 /** One `archive_reason` value (derived from {@link ARCHIVE_REASONS}, never hand-written). */
 export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
 
+/** The memories table's columns in DDL order: the rebuild's explicit copy list (P4). */
+export const MEMORIES_COLUMNS = [
+	"workspace_id",
+	"id",
+	"type",
+	"title",
+	"description",
+	"body",
+	"status",
+	"source_session",
+	"source_seqs",
+	"source_run",
+	"corrects",
+	"scope",
+	"probation_until",
+	"origin_workspace",
+	"not_when",
+	"archive_reason",
+	"merged_into",
+	"created_at",
+	"updated_at",
+] as const;
+
 /**
- * The closed eval arm value set (P5): the four GDPevo arms. Single home for
- * the `eval_cases` whitelist, mirroring {@link ARCHIVE_REASONS}.
+ * The memories table's DDL, parameterized by table name so the fresh-file path
+ * (`migrate.ts` `SCHEMA_DDL`), the rebuild, and the G6 snapshot share one text.
+ * The `archive_reason` whitelist is generated from {@link ARCHIVE_REASONS}.
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function memoriesDdl(name: string): string {
+	const reasons = ARCHIVE_REASONS.map((reason) => `'${reason}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  workspace_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 65536),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','quarantined','archived')),
+  source_session TEXT,
+  source_seqs TEXT,
+  source_run TEXT,
+  corrects TEXT,
+  scope TEXT NOT NULL DEFAULT 'project',
+  probation_until TEXT,
+  origin_workspace TEXT,
+  not_when TEXT NOT NULL DEFAULT '',
+  archive_reason TEXT NOT NULL DEFAULT '' CHECK (archive_reason IN (${reasons})),
+  merged_into TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+) STRICT`;
+}
+
+/**
+ * The closed eval arm value set (P5): the four GDPevo arms, the `eval_cases`
+ * whitelist's single home (its write path retired with the runner, so no
+ * record shape references them any more).
  */
 export const EVAL_ARMS = ["base", "current", "candidate", "reflect"] as const;
-
-/** One eval arm value (derived from {@link EVAL_ARMS}, never hand-written). */
-export type EvalArm = (typeof EVAL_ARMS)[number];
-
-/** One eval case write: the query / injection-preview / reply triple plus run identity. */
-export interface EvalCaseWrite {
-	readonly runId: string;
-	readonly taskId: string;
-	readonly arm: EvalArm;
-	readonly workspaceId: string;
-	readonly query: string;
-	readonly injectionPreview: string;
-	readonly reply: string;
-	readonly createdAt: string;
-}
 
 /** One stored memory record (snake_case columns camelCased). */
 export interface MemoryRecord {

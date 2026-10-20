@@ -7,7 +7,7 @@
  * `./item-events.js`; usage counters in `./usage-accounts.js`.
  *
  * The shapes below are this module's own (re-exported through `store-types`):
- * they describe the two tables the accounts read and write.
+ * they describe the two tables the accounts read and write, DDL included.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type { MemoryStore } from "../store-types.js";
@@ -67,8 +67,8 @@ export interface DailyDelta {
 
 /**
  * The verdict whitelist: what `review_log`'s `CHECK` accepts and what a row
- * carries. One home — the DDL text is generated from it (`data/schema.ts`),
- * so a new verdict cannot land in one place only. `archive` / `promote` /
+ * carries. One home — the DDL text below is generated from it, so a new
+ * verdict cannot land in one place only. `archive` / `promote` /
  * `demote` are the tiering exits and `export-suggestion` the half-automatic
  * one: "this belongs in the repo's docs" is advice for a human, never an
  * automatic write into the user's repository
@@ -80,6 +80,33 @@ export const REVIEW_VERDICTS = [
 
 /** One verdict a review row can carry. */
 export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+
+/** The review ledger's columns in DDL order: the rebuild's explicit copy list. */
+export const REVIEW_LOG_COLUMNS = [
+	"run_id", "ts", "workspace_id", "item_kind", "item_id", "verdict",
+	"reason", "proposed", "model", "cheap_usage", "evolve_usage", "applied", "evolve_count",
+] as const;
+/**
+ * The review ledger's DDL, parameterized by table name so the fresh-file path
+ * and the rebuild share one text; both whitelists come from `REVIEW_VERDICTS`.
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function reviewLogDdl(name: string): string {
+	const whitelist = REVIEW_VERDICTS.map((verdict) => `'${verdict}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
+  item_id TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN (${whitelist})),
+  reason TEXT,
+  proposed TEXT,
+  model TEXT,
+  cheap_usage TEXT, evolve_usage TEXT,
+  applied INTEGER NOT NULL DEFAULT 0,
+  evolve_count INTEGER NOT NULL DEFAULT 0
+)`;
+}
 
 /** One per-item content-review verdict (the `item-review` account's row). */
 export interface ReviewLogEntry {

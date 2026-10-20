@@ -6,7 +6,7 @@
       "outDegree": 9
     },
     "data/accounts.ts": {
-      "lines": 30,
+      "lines": 31,
       "outDegree": 6
     },
     "data/archive-backfill.ts": {
@@ -18,24 +18,28 @@
       "outDegree": 0
     },
     "data/eval-cases.ts": {
-      "lines": 119,
-      "outDegree": 2
+      "lines": 43,
+      "outDegree": 1
     },
     "data/injection-log.ts": {
       "lines": 121,
       "outDegree": 1
     },
     "data/item-events.ts": {
-      "lines": 189,
+      "lines": 217,
       "outDegree": 1
     },
     "data/ledger.ts": {
-      "lines": 274,
+      "lines": 318,
       "outDegree": 1
     },
     "data/memory-lifecycle.ts": {
       "lines": 83,
       "outDegree": 2
+    },
+    "data/memory-reads.ts": {
+      "lines": 89,
+      "outDegree": 3
     },
     "data/migrate.ts": {
       "lines": 400,
@@ -46,7 +50,7 @@
       "outDegree": 4
     },
     "data/records.ts": {
-      "lines": 253,
+      "lines": 298,
       "outDegree": 0
     },
     "data/repository.ts": {
@@ -58,19 +62,19 @@
       "outDegree": 1
     },
     "data/review-accounts.ts": {
-      "lines": 373,
+      "lines": 400,
       "outDegree": 3
     },
     "data/schema.ts": {
-      "lines": 400,
-      "outDegree": 5
+      "lines": 247,
+      "outDegree": 6
     },
     "data/search-query.ts": {
       "lines": 55,
       "outDegree": 0
     },
     "data/secret.ts": {
-      "lines": 77,
+      "lines": 60,
       "outDegree": 0
     },
     "data/tiering.ts": {
@@ -117,10 +121,6 @@
       "lines": 39,
       "outDegree": 0
     },
-    "services/eval-taskset.ts": {
-      "lines": 163,
-      "outDegree": 0
-    },
     "services/extraction-failure.ts": {
       "lines": 252,
       "outDegree": 3
@@ -138,7 +138,7 @@
       "outDegree": 9
     },
     "services/extraction-ring.ts": {
-      "lines": 243,
+      "lines": 271,
       "outDegree": 11
     },
     "services/extraction-screen.ts": {
@@ -202,7 +202,7 @@
       "outDegree": 0
     },
     "services/prompt-rules.ts": {
-      "lines": 61,
+      "lines": 70,
       "outDegree": 2
     },
     "services/retention.ts": {
@@ -246,7 +246,7 @@
       "outDegree": 4
     },
     "services/skill-rules.ts": {
-      "lines": 201,
+      "lines": 223,
       "outDegree": 2
     },
     "services/subagent-defs.ts": {
@@ -266,11 +266,11 @@
       "outDegree": 0
     },
     "store-types.ts": {
-      "lines": 400,
+      "lines": 388,
       "outDegree": 8
     },
     "store.ts": {
-      "lines": 391,
+      "lines": 327,
       "outDegree": 12
     },
     "surfaces/evolve-fields.ts": {
@@ -298,7 +298,7 @@
       "outDegree": 4
     },
     "surfaces/memory-snapshot.ts": {
-      "lines": 287,
+      "lines": 283,
       "outDegree": 3
     },
     "surfaces/skill-provider.ts": {

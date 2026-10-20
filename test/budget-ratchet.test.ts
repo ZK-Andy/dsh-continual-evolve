@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkRatchet, snapshotTree, type BudgetBaseline } from "../scripts/verify-budget-ratchet.js";
+import { checkRatchet, reasonRefusal, snapshotTree, type BudgetBaseline } from "../scripts/verify-budget-ratchet.js";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -50,5 +50,25 @@ describe("budget-ratchet fixtures", () => {
 		const dir = join(root, "test/fixtures/gates/budget-ratchet/violation");
 		const committed = JSON.parse(readFileSync(join(dir, "baseline.json"), "utf-8")) as BudgetBaseline;
 		expect(checkRatchet(snapshotTree(join(dir, "src")), committed).ok).toBe(false);
+	});
+});
+
+describe("reasonRefusal (--update needs a named Agent Note)", () => {
+	it("refuses a bare --update", () => {
+		expect(reasonRefusal(undefined)).toContain("--update 需要理由");
+		expect(reasonRefusal("  ")).toContain("--update 需要理由");
+	});
+
+	it("refuses a `..` path that escapes the notes tree", () => {
+		expect(reasonRefusal(".agents/notes/proposed/../../../README.md")).toContain("不认 ..");
+	});
+
+	it("refuses a path outside the notes tree or a missing note", () => {
+		expect(reasonRefusal("snapshot/budget-baseline.json")).toContain(".agents/notes/");
+		expect(reasonRefusal(".agents/notes/proposed/process/no-such-note.md")).toContain("不存在");
+	});
+
+	it("accepts a live note under proposed or implemented", () => {
+		expect(reasonRefusal(".agents/notes/implemented/process/2026-10-20-architecture-drift-remediation.md")).toBeUndefined();
 	});
 });

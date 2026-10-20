@@ -2,10 +2,54 @@
  * Ledger writers: the extraction ledger (`extraction_log`) and the skill
  * ledger (`skill_log`). Rows are audit + rollback payloads; preparation
  * stays with the store assembly, JSON encoding and skip coalescing live
- * here exactly once.
+ * here exactly once. The `extraction_log` DDL and its copy list live here
+ * with the writers: a table's shape follows the table's module, and the
+ * schema guard aggregates them.
  */
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import { COALESCED_SKIP_REASONS, LEDGER_OCCURRENCES, type LedgerEntry } from "../store-types.js";
+import { COALESCED_SKIP_REASONS, LEDGER_OCCURRENCES, LEDGER_TRIGGERS, type LedgerEntry } from "../store-types.js";
+
+/** The extraction ledger's columns in DDL order: the rebuild's explicit copy list. */
+export const EXTRACTION_LOG_COLUMNS = [
+	"run_id",
+	"ts",
+	"session_id",
+	"workspace_id",
+	"trigger",
+	"decision",
+	"skip_reason",
+	"status",
+	"duration_ms",
+	"model",
+	"usage",
+	"cheap_usage",
+	"cheap_error",
+	"classify_usage",
+	"classify_error",
+	"prompt_json",
+	"dropped_warnings",
+	"files",
+	LEDGER_OCCURRENCES,
+] as const;
+
+/**
+ * The extraction ledger's DDL, parameterized by table name so the fresh-file
+ * path and the rebuild migration share one text.
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function extractionLogDdl(name: string): string {
+	const whitelist = LEDGER_TRIGGERS.map((trigger) => `'${trigger}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
+  trigger TEXT CHECK (trigger IN (${whitelist})),
+  decision TEXT, skip_reason TEXT,
+  status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
+  cheap_usage TEXT, cheap_error TEXT,
+  classify_usage TEXT, classify_error TEXT, prompt_json TEXT, dropped_warnings TEXT,
+  files TEXT, ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1
+)`;
+}
 
 /**
  * JSON-encode the optional ledger fields and insert the row.

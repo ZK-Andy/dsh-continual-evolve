@@ -8,14 +8,18 @@
  */
 import type { MemoryProposal } from "./services/memory-rules.js";
 import type { PromptProposal } from "./services/prompt-rules.js";
-import type { SkillProposal } from "./services/skill-rules.js";
+import type { SkillFileWarning, SkillProposal, SkillProposalOutcome, SkillUse } from "./services/skill-rules.js";
+import type { PromptProposalOutcome } from "./services/prompt-rules.js";
 import type { ProposalContext, ProposalOutcome } from "./services/memory-apply.js";
-import type { EvalCaseWrite, InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
+import type { InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
 import type { ItemEventEntry, ReviewSettled } from "./data/item-events.js";
 import type { DailyDelta, DailyStats, ReviewLogEntry } from "./data/review-accounts.js";
 import type { TieringOutcome } from "./data/tiering.js";
 
 export type { MemoryProposal, ProposalContext, ProposalOutcome };
+/** The proposal outcomes live with the gates that produce them; re-exported for one import site. */
+export type { SkillFileWarning, SkillProposalOutcome, SkillUse } from "./services/skill-rules.js";
+export type { PromptProposalOutcome } from "./services/prompt-rules.js";
 export type { InjectionRow, InjectionWrite, MemoryRecord, PromptRecord, SkillRecord } from "./data/records.js";
 /** The queue's event shapes live with the table they describe (`data/item-events.ts`). */
 export { ITEM_EVENT_KINDS } from "./data/item-events.js";
@@ -82,37 +86,6 @@ export type LedgerTrigger = (typeof LEDGER_TRIGGERS)[number];
 
 /** The ledger column counting the wake-ups one coalesced row stands for. */
 export const LEDGER_OCCURRENCES = "occurrences";
-
-/** What a single skill proposal produced. */
-export interface SkillProposalOutcome {
-	id: string;
-	action: SkillProposal["action"];
-	ok: boolean;
-	/** Blocking reason when `ok` is false. */
-	reason?: string;
-}
-
-/** A non-fatal file-projection problem the caller should surface. */
-export interface SkillFileWarning {
-	id: string;
-	warning: string;
-}
-
-/** Aggregate consumption of one skill (the V2 usage loop's only counter). */
-export interface SkillUse {
-	useCount: number;
-	/** ISO instant of the last counted use, `null` when never consumed. */
-	lastUsedAt: string | null;
-}
-
-/** What a single prompt proposal produced. */
-export interface PromptProposalOutcome {
-	id: string;
-	action: "create" | "update" | "delete";
-	ok: boolean;
-	/** Blocking reason when `ok` is false. */
-	reason?: string;
-}
 
 /**
  * One mutation's audit payload, embedded in a ledger row's `files` JSON
@@ -209,6 +182,15 @@ export interface PatrolResult {
 	promptQuarantined: { workspaceId: string; id: string; reason: string }[];
 }
 
+/** Which partition a merged row was read from: the open workspace, or the global (L0) one. */
+export type MemoryScopeTag = "project" | "global";
+
+/** One memory row plus the partition it came from (the merged readers' row shape). */
+export interface MergedMemoryRow {
+	record: MemoryRecord;
+	scope: MemoryScopeTag;
+}
+
 /** The store surface every consumer (tool, extraction, card, injection) uses. */
 export interface MemoryStore {
 	readonly path: string;
@@ -217,6 +199,14 @@ export interface MemoryStore {
 	list(workspaceId: string): MemoryRecord[];
 	/** Every non-archived record regardless of status (the card's projection). */
 	listAll(workspaceId: string): MemoryRecord[];
+	/**
+	 * Every non-archived record of one partition with the global (L0) partition
+	 * merged in, local rows first — the single home of the projection rule every
+	 * merged reader applies (a local row shadows the global row of the same id,
+	 * because the only ids both partitions hold are promoted ones whose source
+	 * row is archived). The card renders this; it must not re-derive it.
+	 */
+	mergedVisible(workspaceId: string): MergedMemoryRow[];
 	/** Archived records, newest first, capped (the card's archive zone). */
 	listArchived(workspaceId: string, limit?: number): MemoryRecord[];
 	/**
@@ -256,8 +246,6 @@ export interface MemoryStore {
 	logPlugin(entry: PluginLogEntry): void;
 	/** Ledger, eval-case, and log rows older than the cutoff, removed (the unbounded tables). */
 	pruneLedger(beforeIso: string): number;
-	/** Eval case rows for one manual run (the runner writes, the card reads staleness). */
-	writeEvalCases(cases: readonly EvalCaseWrite[]): number;
 	/**
 	 * Record one session's injection (the ids the index named and its estimated
 	 * tokens). The section is frozen per session, so this writes once per

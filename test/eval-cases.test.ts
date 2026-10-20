@@ -3,40 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EVAL_PREVIEW_CHAR_CAP, EVAL_QUERY_CHAR_CAP, EVAL_REPLY_CHAR_CAP, pruneEvalCases, writeEvalCases, type EvalCaseWrite } from "../src/data/eval-cases.js";
 import { openMemoryStore, type MemoryStore } from "../src/store.js";
-import { pruneIfDue } from "../src/services/retention.js";
-import { redactText } from "../src/data/secret.js";
 
 /**
- * Eval cases (P5a): truncate at the door, mask secrets in replies, prune at
- * 30 days with the ledgers. The fake credential below is synthetic
- * (`ghp_` + repeated letter) and matches the GitHub-token pattern on shape
- * alone — no live secret.
+ * Eval cases (P5a, write path and reader retired 2026-10-20): the table keeps
+ * its shape — the arm whitelist and the column order — although nothing writes
+ * it any more. Rows are seeded with raw SQL on purpose: the store has no writer
+ * to seed them with, and the ledger's own prune is the only thing that still
+ * reaches the table.
  */
 const WS = "/tmp/work/eval-cases";
-const FAKE_TOKEN = `ghp_${"A".repeat(36)}`;
 
-function entry(overrides: Partial<EvalCaseWrite> = {}): EvalCaseWrite {
-	return {
-		runId: "run-1",
-		taskId: "task-001",
-		arm: "current",
-		workspaceId: WS,
-		query: "什么时候可以 publish",
-		injectionPreview: "发版前必须 CI 全绿",
-		reply: "先看 CI 状态再决定",
-		createdAt: "2026-10-19T00:00:00.000Z",
-		...overrides,
-	};
-}
-
-function rowsOf(dbPath: string): { reply: string; query: string }[] {
-	const db = new DatabaseSync(dbPath);
-	const rows = db.prepare("SELECT query, reply FROM eval_cases").all() as { query: string; reply: string }[];
-	db.close();
-	return rows;
-}
 
 let dbPath = "";
 let store: MemoryStore;
@@ -50,76 +27,38 @@ afterEach(() => {
 	store.close();
 });
 
-describe("redactText", () => {
-	it("masks every credential match and leaves clean text alone", () => {
-		expect(redactText(`token is ${FAKE_TOKEN} ok`)).toBe("token is [redacted-GitHub token] ok");
-		expect(redactText(`first ${FAKE_TOKEN} second ${FAKE_TOKEN}`)).toBe("first [redacted-GitHub token] second [redacted-GitHub token]");
-		expect(redactText("nothing secret here")).toBe("nothing secret here");
+describe("eval_cases retention", () => {
+	it("is swept by the ledger's own prune, not by a module-local helper", () => {
+		const db = new DatabaseSync(dbPath);
+		db
+			.prepare(
+				"INSERT INTO eval_cases (run_id, task_id, arm, workspace_id, query, injection_preview, reply, created_at) VALUES ('r', 't', 'base', ?, 'q', 'p', 'r', '2026-08-01T00:00:00.000Z')",
+			)
+			.run(WS);
+		db.close();
+		// Exactly one row, and only the expired one: in production code the
+		// ledger's own statement is the only thing that still touches the table.
+		expect(store.pruneLedger("2026-09-19T00:00:00.000Z")).toBe(1);
 	});
 });
 
-describe("writeEvalCases", () => {
-	it("creates the table on migrate and stores the triple", async () => {
+describe("eval_cases table", () => {
+	it("exists after migrate and holds the eight P5a columns", async () => {
 		const db = new DatabaseSync(dbPath);
-		expect(writeEvalCases(db, [entry()])).toBe(1);
+		const columns = (db.prepare("PRAGMA table_info(eval_cases)").all() as { name: string }[]).map((column) => column.name);
 		db.close();
-		expect(rowsOf(dbPath)).toEqual([{ query: "什么时候可以 publish", reply: "先看 CI 状态再决定" }]);
-	});
-
-	it("writes nothing for an empty batch", async () => {
-		const db = new DatabaseSync(dbPath);
-		expect(writeEvalCases(db, [])).toBe(0);
-		db.close();
-	});
-
-	it("truncates over-long fields at the caps", async () => {
-		const db = new DatabaseSync(dbPath);
-		writeEvalCases(db, [
-			entry({
-				query: "q".repeat(EVAL_QUERY_CHAR_CAP + 10),
-				injectionPreview: "p".repeat(EVAL_PREVIEW_CHAR_CAP + 10),
-				reply: "r".repeat(EVAL_REPLY_CHAR_CAP + 10),
-			}),
-		]);
-		db.close();
-		const [row] = rowsOf(dbPath);
-		expect(row?.query.length).toBe(EVAL_QUERY_CHAR_CAP);
-		expect(row?.reply.length).toBe(EVAL_REPLY_CHAR_CAP);
-	});
-
-	it("masks a fake key in the stored reply (observable masked state)", async () => {
-		const db = new DatabaseSync(dbPath);
-		writeEvalCases(db, [entry({ reply: `token ${FAKE_TOKEN} done` })]);
-		db.close();
-		const [row] = rowsOf(dbPath);
-		expect(row?.reply).toBe("token [redacted-GitHub token] done");
-		expect(row?.reply).not.toContain(FAKE_TOKEN);
+		expect(columns).toEqual(["run_id", "task_id", "arm", "workspace_id", "query", "injection_preview", "reply", "created_at"]);
 	});
 
 	it("rejects an arm outside the whitelist", async () => {
 		const db = new DatabaseSync(dbPath);
-		expect(() => writeEvalCases(db, [entry({ arm: "turbo" as never })])).toThrow();
+		expect(() =>
+			db
+				.prepare(
+					"INSERT INTO eval_cases (run_id, task_id, arm, workspace_id, query, injection_preview, reply, created_at) VALUES ('r', 't', 'turbo', ?, 'q', 'p', 'r', '2026-10-19')",
+				)
+				.run(WS),
+		).toThrow();
 		db.close();
-	});
-
-	it("replaces the same run/task/arm row idempotently", async () => {
-		const db = new DatabaseSync(dbPath);
-		writeEvalCases(db, [entry({ reply: "first" })]);
-		writeEvalCases(db, [entry({ reply: "second" })]);
-		db.close();
-		expect(rowsOf(dbPath)).toEqual([{ query: "什么时候可以 publish", reply: "second" }]);
-	});
-});
-
-describe("pruneEvalCases", () => {
-	it("drops rows older than the cutoff, swept by retention with the ledgers", async () => {
-		const db = new DatabaseSync(dbPath);
-		writeEvalCases(db, [entry({ taskId: "old", createdAt: "2026-08-01T00:00:00.000Z" })]);
-		writeEvalCases(db, [entry({ taskId: "new", createdAt: "2026-10-19T00:00:00.000Z" })]);
-		expect(pruneEvalCases(db, "2026-09-19T00:00:00.000Z")).toBe(1);
-		writeEvalCases(db, [entry({ taskId: "older", createdAt: "2026-08-01T00:00:00.000Z" })]);
-		db.close();
-		// Retention sweeps eval cases with the same 30-day mouth as the ledgers.
-		expect(pruneIfDue(store, new Date("2026-10-19T00:00:00.000Z"))).toBeGreaterThanOrEqual(1);
 	});
 });

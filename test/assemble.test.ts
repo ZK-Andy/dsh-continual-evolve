@@ -41,12 +41,6 @@ afterEach(() => {
 	rmSync(dbDir, { recursive: true, force: true });
 });
 
-function fullExtractionConfig(extraction: boolean): {
-	memoryIndex: { enabled: boolean; guide: boolean; order: number; maxChars: number; extraction: boolean };
-} {
-	return { memoryIndex: { enabled: true, guide: true, order: 400, maxChars: 6000, extraction } };
-}
-
 /** A host stub carrying nested inject plus the scheduler event subscription. */
 function fakeHost(
 	scoped: unknown,
@@ -124,15 +118,15 @@ describe("shared mount assembly", () => {
 	it("extraction mount stays off when disabled or the host cannot arm it", () => {
 		const { events, log } = makeLog();
 		const noInject = { systemPrompt: { section: () => {} } } as HostContext;
-		mountExtractionWhenAvailable(noInject, store, fullExtractionConfig(false), log);
-		mountExtractionWhenAvailable(noInject, store, fullExtractionConfig(true), log);
+		mountExtractionWhenAvailable(noInject, store, false, log);
+		mountExtractionWhenAvailable(noInject, store, true, log);
 		expect(events).toEqual(["info:extraction-disabled", "warn:extraction-not-armed"]);
 	});
 
 	it("extraction mount warns when the session surface is missing", () => {
 		const { events, log } = makeLog();
 		const host = fakeHost({}, []);
-		mountExtractionWhenAvailable(host, store, fullExtractionConfig(true), log);
+		mountExtractionWhenAvailable(host, store, true, log);
 		expect(events).toContain("warn:extraction-no-surface");
 	});
 
@@ -149,7 +143,7 @@ describe("shared mount assembly", () => {
 			},
 		};
 		const host = fakeHost(scoped, heard);
-		mountExtractionWhenAvailable(host, store, fullExtractionConfig(true), log);
+		mountExtractionWhenAvailable(host, store, true, log);
 		expect(heard).toContain("agent/turn-stopping");
 		expect(disposers).toHaveLength(1);
 		for (const dispose of disposers) dispose();

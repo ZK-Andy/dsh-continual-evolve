@@ -30,8 +30,6 @@
     "cordis.patch.yml",
     "assets/*.md",
     "locale/*.json",
-    "evals/tasks/*.json",
-    "evals/baseline/recall.json",
     "evals/README.md",
     "README.md",
     "LICENSE"

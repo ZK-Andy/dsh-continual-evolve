@@ -1,6 +1,6 @@
 /**
- * The schema shape guard: one home for the DDL of the tables whose `CHECK`
- * whitelists can drift, for the drift probe, and for the rebuild migration.
+ * The schema shape guard: the drift probe and the rebuild migration for the
+ * tables whose `CHECK` whitelists can drift.
  *
  * Why it exists (2026-10-16): `SCHEMA_DDL` creates tables with
  * `CREATE TABLE IF NOT EXISTS` and every later migration only ever ran
@@ -10,186 +10,33 @@
  * already committed: the body changed, the audit row was lost, and the
  * ledger recorded a failure.
  *
- * One entry per guarded table keeps the cure generic: the fresh-file path and
- * the rebuild share one DDL text, the rebuild copies an explicit column list,
- * and the probe compares the live whitelists against the same declaration the
+ * Each table's DDL and copy list live with that table's module; this file
+ * aggregates them into one guard list. The fresh-file path and the rebuild
+ * share that one DDL text, the rebuild copies an explicit column list, and
+ * the probe compares the live whitelists against the same declaration the
  * code writes rows with. A future value-set change is one entry here, not
  * another bespoke migration.
  */
 import type { DatabaseSync } from "node:sqlite";
-import { ITEM_EVENT_KINDS } from "./item-events.js";
-import { ARCHIVE_REASONS, EVAL_ARMS } from "./records.js";
+import { ITEM_EVENT_KINDS, ITEM_EVENTS_COLUMNS, itemEventsDdl } from "./item-events.js";
+import { ARCHIVE_REASONS, EVAL_ARMS, MEMORIES_COLUMNS, memoriesDdl } from "./records.js";
+import { EXTRACTION_LOG_COLUMNS, extractionLogDdl } from "./ledger.js";
+import { REVIEW_LOG_COLUMNS, REVIEW_VERDICTS, reviewLogDdl } from "./review-accounts.js";
 import { EVAL_CASES_COLUMNS, evalCasesDdl } from "./eval-cases.js";
-import { REVIEW_VERDICTS } from "./review-accounts.js";
-import { LEDGER_OCCURRENCES, LEDGER_TRIGGERS } from "../store-types.js";
+import { LEDGER_TRIGGERS } from "../store-types.js";
 
-/** The extraction ledger's columns in DDL order: the rebuild's explicit copy list. */
-export const EXTRACTION_LOG_COLUMNS = [
-	"run_id",
-	"ts",
-	"session_id",
-	"workspace_id",
-	"trigger",
-	"decision",
-	"skip_reason",
-	"status",
-	"duration_ms",
-	"model",
-	"usage",
-	"cheap_usage",
-	"cheap_error",
-	"classify_usage",
-	"classify_error",
-	"prompt_json",
-	"dropped_warnings",
-	"files",
-	LEDGER_OCCURRENCES,
-] as const;
-
-/**
- * The extraction ledger's DDL, parameterized by table name so the fresh-file
- * path and the rebuild migration share one text.
- * @param name - The table to create (the rebuild passes its temporary name).
- * @returns The `CREATE TABLE` statement.
- */
-export function extractionLogDdl(name: string): string {
-	const whitelist = LEDGER_TRIGGERS.map((trigger) => `'${trigger}'`).join(",");
-	return `CREATE TABLE IF NOT EXISTS ${name} (
-  run_id TEXT, ts TEXT NOT NULL, session_id TEXT, workspace_id TEXT,
-  trigger TEXT CHECK (trigger IN (${whitelist})),
-  decision TEXT, skip_reason TEXT,
-  status TEXT, duration_ms INTEGER, model TEXT, usage TEXT,
-  cheap_usage TEXT, cheap_error TEXT,
-  classify_usage TEXT, classify_error TEXT, prompt_json TEXT, dropped_warnings TEXT,
-  files TEXT, ${LEDGER_OCCURRENCES} INTEGER NOT NULL DEFAULT 1
-)`;
-}
-
-/** The review-queue event's columns in DDL order: the rebuild's explicit copy list. */
-export const ITEM_EVENTS_COLUMNS = [
-	"ts",
-	"workspace_id",
-	"item_kind",
-	"item_id",
-	"event",
-	"source_id",
-	"reason",
-] as const;
-
-/**
- * The review-queue event table's DDL, parameterized by table name so the
- * fresh-file path and the rebuild share one text. The `event` whitelist is
- * generated from {@link ITEM_EVENT_KINDS}, its single home.
- * @param name - The table to create (the rebuild passes its temporary name).
- * @returns The `CREATE TABLE` statement.
- */
-export function itemEventsDdl(name: string): string {
-	const whitelist = ITEM_EVENT_KINDS.map((kind) => `'${kind}'`).join(",");
-	return `CREATE TABLE IF NOT EXISTS ${name} (
-  ts TEXT NOT NULL, workspace_id TEXT NOT NULL,
-  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
-  item_id TEXT NOT NULL,
-  event TEXT CHECK (event IN (${whitelist})),
-  source_id TEXT, reason TEXT
-) STRICT`;
-}
-
-/** The review ledger's columns in DDL order: the rebuild's explicit copy list. */
-export const REVIEW_LOG_COLUMNS = [
-	"run_id",
-	"ts",
-	"workspace_id",
-	"item_kind",
-	"item_id",
-	"verdict",
-	"reason",
-	"proposed",
-	"model",
-	"cheap_usage",
-	"evolve_usage",
-	"applied",
-	"evolve_count",
-] as const;
-
-/**
- * The review ledger's DDL, parameterized by table name so the fresh-file path
- * and the rebuild share one text. Both whitelists are generated from their
- * single homes (`REVIEW_VERDICTS` here, the item-kind pair inline).
- * @param name - The table to create (the rebuild passes its temporary name).
- * @returns The `CREATE TABLE` statement.
- */
-export function reviewLogDdl(name: string): string {
-	const whitelist = REVIEW_VERDICTS.map((verdict) => `'${verdict}'`).join(",");
-	return `CREATE TABLE IF NOT EXISTS ${name} (
-  run_id TEXT, ts TEXT NOT NULL, workspace_id TEXT,
-  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
-  item_id TEXT NOT NULL,
-  verdict TEXT NOT NULL CHECK (verdict IN (${whitelist})),
-  reason TEXT,
-  proposed TEXT,
-  model TEXT,
-  cheap_usage TEXT, evolve_usage TEXT,
-  applied INTEGER NOT NULL DEFAULT 0,
-  evolve_count INTEGER NOT NULL DEFAULT 0
-)`;
-}
-
-/** The memories table's columns in DDL order: the rebuild's explicit copy list (P4). */
-export const MEMORIES_COLUMNS = [
-	"workspace_id",
-	"id",
-	"type",
-	"title",
-	"description",
-	"body",
-	"status",
-	"source_session",
-	"source_seqs",
-	"source_run",
-	"corrects",
-	"scope",
-	"probation_until",
-	"origin_workspace",
-	"not_when",
-	"archive_reason",
-	"merged_into",
-	"created_at",
-	"updated_at",
-] as const;
-
-/**
- * The memories table's DDL, parameterized by table name so the fresh-file path
- * (`migrate.ts` `SCHEMA_DDL`), the rebuild, and the G6 snapshot share one text.
- * The `archive_reason` whitelist is generated from {@link ARCHIVE_REASONS}.
- * @param name - The table to create (the rebuild passes its temporary name).
- * @returns The `CREATE TABLE` statement.
- */
-export function memoriesDdl(name: string): string {
-	const reasons = ARCHIVE_REASONS.map((reason) => `'${reason}'`).join(",");
-	return `CREATE TABLE IF NOT EXISTS ${name} (
-  workspace_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('user','feedback','reference')),
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  body TEXT NOT NULL CHECK (length(body) <= 65536),
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active','quarantined','archived')),
-  source_session TEXT,
-  source_seqs TEXT,
-  source_run TEXT,
-  corrects TEXT,
-  scope TEXT NOT NULL DEFAULT 'project',
-  probation_until TEXT,
-  origin_workspace TEXT,
-  not_when TEXT NOT NULL DEFAULT '',
-  archive_reason TEXT NOT NULL DEFAULT '' CHECK (archive_reason IN (${reasons})),
-  merged_into TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (workspace_id, id)
-) STRICT`;
-}
+// The guarded tables' shapes, re-exported from their homes so every importer
+// (the fresh-file path, the rebuild, the G6 snapshot) keeps one entry point.
+export {
+	EXTRACTION_LOG_COLUMNS,
+	ITEM_EVENTS_COLUMNS,
+	MEMORIES_COLUMNS,
+	REVIEW_LOG_COLUMNS,
+	extractionLogDdl,
+	itemEventsDdl,
+	memoriesDdl,
+	reviewLogDdl,
+};
 
 /** One `CHECK` whitelist as the code declares it. */
 export interface CheckedColumn {

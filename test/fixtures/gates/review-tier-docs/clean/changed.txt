@@ -1,0 +1,2 @@
+docs/plans/2026-10-20-an-idea.md
+docs/research/some-survey.md

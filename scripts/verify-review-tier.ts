@@ -13,7 +13,8 @@
  *   - gate-criteria: scripts/verify-*.ts, scripts/layers.json,
  *     scripts/fn-shape-baseline.json, cordis.patch.yml, .githooks/**
  *   - adr-promises-full: proposed ADR whose body contains "三重审核"
- *   - behavior-surface: .github/workflows/**, templates/**, docs/**,
+ *   - behavior-surface: .github/workflows/**, templates/**, docs/** (except
+ *     docs/plans/** and docs/research/**, which are planning prose),
  *     client/**, evals/**, assets/**
  *
  * Evidence = an implemented ADR in THIS change set whose header zone carries
@@ -117,6 +118,25 @@ function adrCommitsFull(rel: string, repo: string, stagedOnly: boolean): boolean
 const SURFACE_DIRS = ["templates", "docs", "client", "evals", "assets"] as const;
 
 /**
+ * Planning and research prose is not a contract surface: a plan file carries no
+ * promise the code must keep, so judging it FULL forces every plan through an
+ * implemented ADR. `docs/` top level (design, FAQ, architecture and coding
+ * standards) stays a contract surface — that is what the rule protects.
+ */
+const NON_CONTRACT_DOC_PREFIXES = ["docs/plans/", "docs/research/"] as const;
+
+/** Whether one changed path belongs to a behavior-contract surface. */
+function isBehaviorSurface(rel: string, segs: readonly string[]): boolean {
+	if (rel.startsWith(".github/workflows/")) {
+		return true;
+	}
+	if (NON_CONTRACT_DOC_PREFIXES.some((prefix) => rel.startsWith(prefix))) {
+		return false;
+	}
+	return SURFACE_DIRS.some((dir) => (segs as readonly string[]).includes(dir));
+}
+
+/**
  * Pure tier classification (importable by tests). The adr-promises-full leg
  * reads proposed ADR bodies from repo (staged index in --staged mode, else
  * the worktree); everything else is path-only.
@@ -144,7 +164,7 @@ export function classifyTier(
 			rel.includes("/.githooks/")
 		) {
 			hit = `gate-criteria: ${rel}`;
-		} else if (rel.startsWith(".github/workflows/") || SURFACE_DIRS.some((d) => (segs as readonly string[]).includes(d))) {
+		} else if (isBehaviorSurface(rel, segs)) {
 			hit = `behavior-surface: ${rel}`;
 		} else if (adrCommitsFull(rel, repo, stagedOnly)) {
 			hit = `adr-promises-full: ${rel}`;

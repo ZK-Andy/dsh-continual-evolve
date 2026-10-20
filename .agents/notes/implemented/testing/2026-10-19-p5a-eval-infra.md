@@ -23,7 +23,7 @@ P5a 只交付零 ctx 代码，任何需调模型的 runner 归 P5b。
 
 **recall 接线**：基线 `evals/baseline/recall.json` 提交进仓库；`eval:recall` 报 recall@1/recall@3/逐条覆盖/负例误命中，退出码 0=过、2=相对基线不一致、1=fixture 不可用。正当改进走 `eval:recall --update-baseline` 刷新且同 PR 说明原因，手改无说明即打回。
 
-**caseTrace 落库（新表 `eval_cases`）**：列 `run_id/task_id/arm/query/injection_preview/reply/created_at`，主键 `(run_id, task_id, arm)`，`arm` 带 `CHECK` 白名单并进 G6 快照；`workspace_id` 记被测工作区。写入走 data 层纯函数 `writeEvalCases`（入库截断 + `reply` 过公开 `redactText` 掩蔽；无来源会话列）。迁移走 `migrate.ts` 链，`pruneIfDue` 经 `pruneLedger` 同口径裁剪 30 天。裁剪行实现在 `data/ledger.ts` 的汇总语句里（store 表面零新增，硬预算 400/12 不动）。
+**caseTrace 落库（新表 `eval_cases`）**：列 `run_id/task_id/arm/query/injection_preview/reply/created_at`，主键 `(run_id, task_id, arm)`，`arm` 带 `CHECK` 白名单并进 G6 快照；`workspace_id` 记被测工作区。写入走 data 层纯函数 `writeEvalCases`（入库截断 + `reply` 过公开 `redactText` 掩蔽；无来源会话列）。迁移走 `migrate.ts` 链，`pruneIfDue` 经 `pruneLedger` 同口径裁剪 30 天。裁剪行实现在 `data/ledger.ts` 的汇总语句里（store 表面零新增，硬预算 400/12 不动）。2026-10-20 退役：写入面 `writeEvalCases` 与公开的 `redactText` 随四臂 runner 一并删除，`eval_cases` 表与 30 天裁剪保留（见 `../process/2026-10-20-architecture-drift-remediation.md`）。
 
 **防忘 infra**：`scripts/verify-eval-freshness.ts` 仅发版预检跑（`release-flow` 步骤 2；`compare.md` 头部记 `commit/date/arms/结论`，新鲜度按发版窗口定义，纯文档改动豁免）。卡片"上次四臂/外锚"行读死键名 `eval:last-four-arm` / `eval:last-external`（值 `{"date","commit"}`，超 60 天标红）。`.github/workflows/eval-anchor.yml` 每月 1 日跑离线部分 + 检查（60 天 warning、67 天 FAIL），在线部分永远手动。
 

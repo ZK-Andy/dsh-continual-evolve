@@ -113,6 +113,13 @@ window.__ModuleLoader__.load({
 			quarantined: "巡检隔离（疑似密钥泄漏等异常，已隐藏）：",
 			archivedHeading: "已归档（只读，最多 50 条）",
 			archivedMergedInto: "并入",
+			archivedGlobalCopy: "内容在全局（{id}）",
+			archiveReasonPromotedSource: "已提级至全局",
+			archiveReasonReviewArchive: "评审归档",
+			archiveReasonDemotedSource: "降级归档",
+			archiveReasonMergedDuplicate: "重复合并",
+			archiveReasonNone: "未分类",
+			archivedId: "id：{id}",
 			buildLine: "运行代 {code} · 盘面代 {disk}（v{version}）",
 			buildStale: "盘面代码已换，需重启宿主才会生效",
 			buildUnknown: "代际不可读（无法定位入口文件）",
@@ -173,6 +180,13 @@ window.__ModuleLoader__.load({
 			quarantined: "Quarantined by patrol (suspected secrets, hidden): ",
 			archivedHeading: "Archived (read-only, up to 50)",
 			archivedMergedInto: "merged into",
+			archivedGlobalCopy: "lives in global ({id})",
+			archiveReasonPromotedSource: "promoted to global",
+			archiveReasonReviewArchive: "archived by review",
+			archiveReasonDemotedSource: "demoted",
+			archiveReasonMergedDuplicate: "merged duplicate",
+			archiveReasonNone: "unclassified",
+			archivedId: "id: {id}",
 			buildLine: "Running {code} · on disk {disk} (v{version})",
 			buildStale: "Disk code changed — restart the host to load it",
 			buildUnknown: "Generation unreadable (entry file not locatable)",
@@ -508,6 +522,7 @@ window.__ModuleLoader__.load({
 				".dce-item+.dce-item{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}",
 				".dce-row{display:flex;width:100%;align-items:center;gap:10px;padding:8px 12px;background:0 0;border:0;font:inherit;color:inherit;text-align:left;cursor:pointer}",
 				".dce-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.03))}",
+				".dce-row-readonly{cursor:default}",
 				".dce-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}",
 				".dce-file-icon{display:inline-flex;flex:none;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--dsw-alias-bg-module-platform,#eef1f4)}",
 				".dce-file-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500;line-height:18px}",
@@ -596,6 +611,16 @@ window.__ModuleLoader__.load({
 			// is a presence heartbeat (viewed, not applied), not a value score.
 			if (typeof file.useCount === "number" && file.useCount > 0) {
 				rowChildren.push(createElement("span", { key: "usage", className: "dce-file-time" }, t("skillViewed", { count: file.useCount })));
+			}
+			if (props.readOnly === true) {
+				// Archived rows keep the list's own shape and drop only the
+				// actions: one row renderer, two modes, so the two lists cannot
+				// drift apart again (the archive zone used to be plain text).
+				return createElement(
+					"li",
+					{ className: "dce-item" },
+					createElement("div", { key: "row", className: "dce-row dce-row-readonly" }, rowChildren),
+				);
 			}
 			var children = [
 				createElement(
@@ -928,8 +953,40 @@ window.__ModuleLoader__.load({
 			return labels.join(" · ");
 		}
 
-		/** The archive zone: collapsed by default, plain text rows, no actions. */
-		function archivedBlock(t, archived) {
+		/** The store's closed archive-reason set, named in the reader's language. */
+		var ARCHIVE_REASON_KEYS = {
+			"promoted-source": "archiveReasonPromotedSource",
+			"review-archive": "archiveReasonReviewArchive",
+			"demoted-source": "archiveReasonDemotedSource",
+			"merged-duplicate": "archiveReasonMergedDuplicate",
+		};
+
+		/** One archive reason as a label; an unclassified row says so instead of printing a token. */
+		function archiveReasonLabel(t, reason) {
+			var key = typeof reason === "string" ? ARCHIVE_REASON_KEYS[reason] : undefined;
+			return key === undefined ? t("archiveReasonNone") : t(key);
+		}
+
+		/** An archived row's annotation: why it left the list, what it merged into, where it still lives. */
+		function archivedBadge(t, entry) {
+			var labels = [archiveReasonLabel(t, entry.reason)];
+			if (typeof entry.mergedInto === "string" && entry.mergedInto.length > 0) {
+				labels.push(t("archivedMergedInto") + " " + entry.mergedInto);
+			}
+			if (typeof entry.globalCopyId === "string" && entry.globalCopyId.length > 0) {
+				labels.push(t("archivedGlobalCopy", { id: entry.globalCopyId }));
+			}
+			// The id is what `evolve_read` needs; an archived row without it is not
+			// reconcilable from the card (the old text row carried it). A promoted
+			// row already printed it next to "内容在全局", so it is not repeated.
+			if (typeof entry.id === "string" && entry.id.length > 0 && entry.globalCopyId !== entry.id) {
+				labels.push(t("archivedId", { id: entry.id }));
+			}
+			return labels.join(" · ");
+		}
+
+		/** The archive zone: collapsed by default, the list's own rows, read-only. */
+		function archivedBlock(t, UI, now, archived) {
 			if (!Array.isArray(archived) || archived.length === 0) {
 				return null;
 			}
@@ -941,11 +998,15 @@ window.__ModuleLoader__.load({
 					"ul",
 					{ key: "rows", className: "dce-list" },
 					archived.map(function (entry) {
-						var reason = typeof entry.reason === "string" && entry.reason.length > 0 ? entry.reason : "—";
-						var merged = typeof entry.mergedInto === "string" && entry.mergedInto.length > 0
-							? " · " + t("archivedMergedInto") + " " + entry.mergedInto
-							: "";
-						return createElement("li", { key: entry.id }, entry.title + " (" + entry.id + ") · " + reason + merged);
+						return createElement(FileRow, {
+							key: entry.id,
+							file: entry,
+							now: now,
+							t: t,
+							UI: UI,
+							badge: archivedBadge(t, entry),
+							readOnly: true,
+						});
 					}),
 				),
 			);
@@ -997,7 +1058,7 @@ window.__ModuleLoader__.load({
 					),
 				);
 			}
-			parts.push(archivedBlock(t, vm.snapshot.archived));
+			parts.push(archivedBlock(t, UI, vm.now, vm.snapshot.archived));
 			return parts;
 		}
 
@@ -1793,6 +1854,9 @@ window.__ModuleLoader__.load({
 		exports.resolveScopeCurrent = resolveScopeCurrent;
 		exports.resolveSelectedWorkspace = resolveSelectedWorkspace;
 		exports.matchQueryFields = matchQueryFields;
+		exports.archiveReasonLabel = archiveReasonLabel;
+		exports.archivedBadge = archivedBadge;
+		exports.memoryFilesBlock = memoryFilesBlock;
 		exports.apply = function apply(ctx) {
 			var tRaw = null;
 			try {

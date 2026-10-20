@@ -18,7 +18,11 @@ describe("gate-fixtures matrix", () => {
 			.filter((name) => name.startsWith("verify-") && name.endsWith(".ts"))
 			.filter((name) => name !== "verify-gate-fixtures.ts")
 			.sort();
-		const covered = GATE_CASES.map((gate) => gate.script.split("/").at(-1)).sort();
+		// A script may hold more than one pair: a rule with its own trigger logic
+		// (layering's R3, review-tier's docs leg) needs a sample that isolates it,
+		// because the gate-level sample is already red for another reason. What
+		// must hold is that no gate script goes uncovered.
+		const covered = [...new Set(GATE_CASES.map((gate) => gate.script.split("/").at(-1)))].sort();
 		expect(covered).toEqual(scripts);
 	});
 

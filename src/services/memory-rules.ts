@@ -258,7 +258,7 @@ export function fieldGateReasons(fields: ProposedFields): string[] {
  * @param row - The stored row's id, status, and archive reason.
  * @returns The blocking reason, `undefined` when the row accepts rewrites.
  */
-export function rewriteBlockedReason(row: { id: string; status: string; archiveReason: string }): string | undefined {
+export function rewriteBlockedReason(row: { id: string; status: MemoryStatus; archiveReason: string }): string | undefined {
 	if (row.status === "active") {
 		return undefined;
 	}

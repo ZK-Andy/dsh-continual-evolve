@@ -1,6 +1,6 @@
 # evals/ 回归集（22 条任务，离线部分存活）
 
-任务文件现仅服务离线 `eval:recall`（召回段）与 `eval-tasks --dry-run` 校验；合成四臂跑批已随 2026-10-20 simplification 移除。判据段（`expect`）与种子记忆（`seed_memories`）保留为历史形状，不再执行。
+任务文件现仅服务离线 `eval:recall`（召回段）与 `eval-tasks --dry-run` 校验；合成四臂跑批已随 2026-10-20 simplification 移除。判据段（`expect`）与种子记忆（`seed_memories`）保留为历史形状，不再执行。任务集与召回基线都与 `scripts/` 同命运：只活在仓库里，发行包内没有读者，`package.json` 的 `files` 不再收录 `evals/tasks` 与 `evals/baseline`。
 
 ## 任务文件（`tasks/*.json`）
 
@@ -37,7 +37,7 @@
 
 ## 回放说明（查账先看 status 与裁剪）
 
-`eval_cases` 表保留历史行（2026-10-19 首跑 176 行），停止写入；`eval:recall` 的 recall 段仍是活口径（见上）。
+`eval_cases` 表保留历史行（2026-10-19 首跑 176 行），停止写入；`eval:recall` 的 recall 段仍是活口径（见上）。`runs/2026-10-19/compare.md` 是那次跑批的留存读数，没有生产者——四臂 runner 已删，不要再指望它随新跑批次更新。
 
 ## 维护周期
 

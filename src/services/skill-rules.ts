@@ -58,6 +58,28 @@ export interface SkillProposal {
 	sourceSeqs?: string | undefined;
 }
 
+/** What a single skill proposal produced. */
+export interface SkillProposalOutcome {
+	id: string;
+	action: SkillProposal["action"];
+	ok: boolean;
+	/** Blocking reason when `ok` is false. */
+	reason?: string;
+}
+
+/** A non-fatal file-projection problem the caller should surface. */
+export interface SkillFileWarning {
+	id: string;
+	warning: string;
+}
+
+/** Aggregate consumption of one skill (the V2 usage loop's only counter). */
+export interface SkillUse {
+	useCount: number;
+	/** ISO instant of the last counted use, `null` when never consumed. */
+	lastUsedAt: string | null;
+}
+
 /** The merged field values a create/update would write (delete checks none). */
 export interface SkillFields {
 	title: string;

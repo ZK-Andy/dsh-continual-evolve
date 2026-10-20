@@ -13,9 +13,8 @@ import { INCOMPLETE_REVIEW_SQL } from "./review-accounts.js";
 
 /**
  * The review queue's event whitelist: why an item re-enters review without
- * waiting out its exemption window. One home — the `item_events` DDL is
- * generated from it (`data/schema.ts`), so a new kind cannot land in the
- * table's `CHECK` alone.
+ * waiting out its exemption window. One home — the `item_events` DDL below is
+ * generated from it, so a new kind cannot land in the table's `CHECK` alone.
  *
  * - `similar`: a drop-in write landed text the item is lexically near.
  * - `corrects`: a landed row names the item as the thing it corrects.
@@ -26,6 +25,35 @@ export const ITEM_EVENT_KINDS = ["similar", "corrects", "correction"] as const;
 
 /** One review-queue event kind. */
 export type ItemEventKind = (typeof ITEM_EVENT_KINDS)[number];
+
+/** The review-queue event's columns in DDL order: the rebuild's explicit copy list. */
+export const ITEM_EVENTS_COLUMNS = [
+	"ts",
+	"workspace_id",
+	"item_kind",
+	"item_id",
+	"event",
+	"source_id",
+	"reason",
+] as const;
+
+/**
+ * The review-queue event table's DDL, parameterized by table name so the
+ * fresh-file path and the rebuild share one text. The `event` whitelist is
+ * generated from {@link ITEM_EVENT_KINDS}, its single home.
+ * @param name - The table to create (the rebuild passes its temporary name).
+ * @returns The `CREATE TABLE` statement.
+ */
+export function itemEventsDdl(name: string): string {
+	const whitelist = ITEM_EVENT_KINDS.map((kind) => `'${kind}'`).join(",");
+	return `CREATE TABLE IF NOT EXISTS ${name} (
+  ts TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('memory','skill')),
+  item_id TEXT NOT NULL,
+  event TEXT CHECK (event IN (${whitelist})),
+  source_id TEXT, reason TEXT
+) STRICT`;
+}
 
 /**
  * One linkage event: the item it puts back in the queue, and the write that

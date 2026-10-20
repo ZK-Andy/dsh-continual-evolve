@@ -14,7 +14,7 @@ import { registerEvolveTools } from "./surfaces/evolve-tools.js";
 import { packageAssetsDir, registerCreatorSkills } from "./surfaces/skill-provider.js";
 import type { PluginLog } from "./services/plugin-log.js";
 import type { MemoryStore } from "./store.js";
-import type { EvolveConfig, HostContext, NestedInjectHost } from "./index.js";
+import type { HostContext, NestedInjectHost } from "./index.js";
 
 /** Mutable plugin state the async store open fills in. */
 export interface StoreState {
@@ -86,8 +86,8 @@ export function mountToolsWhenAvailable(host: HostContext, store: MemoryStore, s
  * without either service (or without `.on`) simply never arms — injection
  * and the explicit tools remain functional.
  */
-export function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, config: EvolveConfig, log: PluginLog): void {
-	if (config.memoryIndex?.extraction === false) {
+export function mountExtractionWhenAvailable(host: HostContext, store: MemoryStore, extractionEnabled: boolean, log: PluginLog): void {
+	if (!extractionEnabled) {
 		log.info("extraction-disabled", "extraction disabled by config — injection and evolve_write remain active");
 		return;
 	}

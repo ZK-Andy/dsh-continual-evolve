@@ -13,7 +13,8 @@ export {
 	type ItemEventStmts,
 } from "./item-events.js";
 export { createUsageCounters } from "./usage-accounts.js";
-export { writeEvalCases } from "./eval-cases.js";
+/** The merged memory reads ride along: the assembly root still has one account import site. */
+export { createMemoryReads } from "./memory-reads.js";
 export {
 	createInjectionMethods,
 	prepareInjectionStmts,

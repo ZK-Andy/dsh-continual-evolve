@@ -252,7 +252,7 @@ export function apply(host: HostContext, config: EvolveConfig): void {
 			}
 			mountToolsWhenAvailable(host, store, state, log);
 			mountCreatorSkillsWhenAvailable(host, log);
-			mountExtractionWhenAvailable(host, store, config, log);
+			mountExtractionWhenAvailable(host, store, config.memoryIndex?.extraction !== false, log);
 			// One live reader built by the root, shared by the loop and the card:
 			// volatile config is unpacked here, never in the mounts.
 			const readReviewSettings = readReviewSettingsOf(config);

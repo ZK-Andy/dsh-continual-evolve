@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-945%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-948%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -157,7 +157,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ```bash
 pnpm install && pnpm build   # 装依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（945 个测试）
+pnpm test                    # vitest（948 个测试 / 77 文件）
 pnpm test:coverage           # v8 覆盖率，CI 门禁 91/83
 pnpm lint                    # oxlint src test client scripts
 pnpm check:docs              # ADR 格式、文档预算、链接、治理、交接
@@ -167,7 +167,7 @@ pnpm eval:recall             # 离线检索基线（fixture 上的 hit@1 / MRR�
 
 | 路径 | 内容 |
 |---|---|
-| `src/` | 85 个模块：注册、存储、`data/` 后端、`services/` 应用服务、`surfaces/` 表现层、`pages/memory-card/` |
+| `src/` | 77 个模块：注册、存储、`data/` 后端、`services/` 应用服务、`surfaces/` 表现层、`pages/memory-card/` |
 | `client/` | 手写客户端 bundle（记忆卡 + 评审设置卡） |
 | `locale/` | 双语显示名与描述（zh/en） |
 | `scripts/` | 门禁（ADR/文档/分层/预算/产物）+ `eval:recall` |

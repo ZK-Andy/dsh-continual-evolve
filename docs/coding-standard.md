@@ -20,7 +20,7 @@
 ## 3. 错误处理
 
 - **fail loud**：缺失引用、误配置绝不静默跳过。
-- `catch` 必须命名它吞掉什么；`try` 只包一个语句；空 `catch {}` 禁止。
+- `catch` 必须命名它吞掉什么；`try` 只包一个语句；空 `catch {}` 禁止。**例外**：事务与批处理块（`BEGIN`…`COMMIT` 夹多行写入，如 `data/tiering.ts` 的 promote/demote、`services/memory-apply.ts` 的批量落地）必须整体包在一个 `try` 里——把那几行拆开就等于让半途失败留在事务里；这类块的判据是「`try` 内是一个完整事务/一条写入批」，不是语句条数。
 - 领域错误用具名 Error 类（如 `EvolutionApplyPostCommitError` 携带批次数据）；错误信息必须可操作。
 - **审计语义不变**：失败不推进 cursor、不静默重试、判断落账本行可对账；"用户没回答"≠"用户拒绝"。
 

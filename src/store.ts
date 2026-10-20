@@ -23,10 +23,11 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { openDatabase } from "./data/database.js";
 import { migrateDatabase } from "./data/migrate.js";
 import { coalesceSkipRun, latestWorkspaceId, prepareLedgerStmts, prepareStateStmts, writeMemoryLedger, type LedgerStmts, type StateStmts } from "./data/ledger.js";
-import { promptRecordOf, recordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
+import { promptRecordOf, skillRecordOf, type MemoryRow, type PromptRow, type SkillRow } from "./data/records.js";
 import { openRepositories, type Repository } from "./data/repository.js";
 import {
 	createInjectionMethods,
+	createMemoryReads,
 	createItemEventMethods,
 	createReviewAccounts,
 	createTieringMethods,
@@ -36,7 +37,6 @@ import {
 	prepareItemEventStmts,
 	prepareReviewStmts,
 	prepareTieringStmts,
-	writeEvalCases as writeEvalCaseRows,
 	type InjectionStmts,
 	type ItemEventStmts,
 	type ReviewAccountStmts,
@@ -49,10 +49,8 @@ import { reconcileSkillFiles, removeSkillFile, skillRootOf, writeSkillFile } fro
 import { applyProposals } from "./services/memory-apply.js";
 import {
 	CURSOR_KEY_PREFIX,
-	GLOBAL_WORKSPACE,
 	PLUGIN_LOG_MESSAGE_MAX,
 	type ItemEventEntry,
-	type MemoryRecord,
 	type MemoryStore,
 } from "./store-types.js";
 
@@ -63,7 +61,9 @@ export type {
 	LedgerEntry,
 	MemoryProposal,
 	MemoryRecord,
+	MemoryScopeTag,
 	MemoryStore,
+	MergedMemoryRow,
 	PatrolResult,
 	PluginLogEntry,
 	ProposalContext,
@@ -130,68 +130,6 @@ export async function openMemoryStore(explicitPath?: string): Promise<MemoryStor
 	return store;
 }
 
-/**
- * The memory reads, with the global (L0) partition merged in: a project
- * session sees person-level rows without owning them, and a local row with the
- * same id shadows the global one (the L0/L1 rule of
- * `2026-10-13-memory-tiering-and-promotion`).
- * @param memories - The memories repository.
- * @returns The five read methods.
- */
-function memoryReads(memories: Repository<MemoryRow>): Pick<MemoryStore, "get" | "list" | "listAll" | "listArchived" | "search"> {
-	return {
-		get(workspaceId, id) {
-			// A local row shadows the global one unless it is archived: promotion
-			// archives the source row, and the promoted copy must then be what a
-			// read returns (the archived row is history, not a shadow).
-			const local = memories.getRow(workspaceId, id);
-			if (local !== undefined && local.status !== "archived") {
-				return recordOf(local);
-			}
-			const global = workspaceId === GLOBAL_WORKSPACE ? undefined : memories.getRow(GLOBAL_WORKSPACE, id);
-			if (global !== undefined && global.status !== "archived") {
-				return recordOf(global);
-			}
-			return local === undefined ? undefined : recordOf(local);
-		},
-		list(workspaceId) {
-			// L0 first: the injection index is this list, so a person-level fact
-			// outranks project detail inside the section budget.
-			if (workspaceId === GLOBAL_WORKSPACE) {
-				return memories.listRows(GLOBAL_WORKSPACE).map(recordOf);
-			}
-			const local = memories.listRows(workspaceId).map(recordOf);
-			return [...unshadowed(memories, local), ...local];
-		},
-		listAll(workspaceId) {
-			// The card's projection stays partition-scoped: the global partition
-			// lists itself, and merging here would show every row twice.
-			return memories.listVisibleRows(workspaceId).map(recordOf);
-		},
-		listArchived(workspaceId, limit = 50) {
-			return memories.listArchivedRows(workspaceId, limit).map(recordOf);
-		},
-		search(workspaceId, query, limit = 20) {
-			const local = memories.searchRows(workspaceId, query, limit).map(recordOf);
-			if (workspaceId === GLOBAL_WORKSPACE) {
-				return local;
-			}
-			return [...unshadowed(memories, local), ...local].slice(0, limit);
-		},
-	};
-}
-
-/**
- * The global rows no local record shadows, in injection order.
- * @param memories - The memories repository.
- * @param local - The partition's own records.
- * @returns The global records eligible for the merged read.
- */
-function unshadowed(memories: Repository<MemoryRow>, local: readonly MemoryRecord[]): MemoryRecord[] {
-	const shadowed = new Set(local.map((record) => record.id));
-	return memories.listRows(GLOBAL_WORKSPACE).map(recordOf).filter((record) => !shadowed.has(record.id));
-}
-
 /** The memory read/write methods over one memories repository. */
 function buildMemoryMethods(
 	memories: Repository<MemoryRow>,
@@ -206,6 +144,7 @@ function buildMemoryMethods(
 	| "get"
 	| "list"
 	| "listAll"
+	| "mergedVisible"
 	| "listArchived"
 	| "search"
 	| "applyProposals"
@@ -219,7 +158,7 @@ function buildMemoryMethods(
 	| "listWorkspaces"
 > {
 	return {
-		...memoryReads(memories),
+		...createMemoryReads(memories),
 		applyProposals(ctx, proposals) {
 			return applyProposals(
 				{ database, now: () => new Date().toISOString(), memories, ledger: stmts.ledger, events },
@@ -343,7 +282,7 @@ function buildCommonMethods(
 		| "pluginLogPrune"
 		| "pluginLog"
 	>,
-): Pick<MemoryStore, "mostRecentlyActiveWorkspace" | "patrol" | "logPlugin" | "pruneLedger" | "writeEvalCases" | "close"> {
+): Pick<MemoryStore, "mostRecentlyActiveWorkspace" | "patrol" | "logPlugin" | "pruneLedger" | "close"> {
 	return {
 		mostRecentlyActiveWorkspace() {
 			return latestWorkspaceId([
@@ -380,9 +319,6 @@ function buildCommonMethods(
 			const logs = Number(stmts.pluginLogPrune.run(beforeIso).changes);
 			const evalRows = Number(stmts.evalPrune.run(beforeIso).changes);
 			return memory + skillRows + promptRows + reviews + events + logs + evalRows;
-		},
-		writeEvalCases(cases) {
-			return writeEvalCaseRows(database, cases);
 		},
 		close() {
 			database.close();

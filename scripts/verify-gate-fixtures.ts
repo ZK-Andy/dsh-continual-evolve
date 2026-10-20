@@ -105,6 +105,24 @@ export const GATE_CASES: readonly GateCase[] = [
 		fixtures: ["violation/evil.ts", "clean/data/database.ts"],
 	},
 	{
+		// R3 has its own pair: the R1 sample above is red for R1 alone, so only a
+		// rule-level sample proves the config-leak check actually fires.
+		id: "layering-r3",
+		script: "scripts/verify-layering.ts",
+		violation: (fx) => at(fx),
+		clean: (fx) => at(fx),
+		fixtures: ["violation/assemble.ts", "violation/index.ts", "clean/data/database.ts"],
+	},
+	{
+		// The docs leg has its own pair: plans/research must pass, contract docs
+		// must not — the R1 sample above proves neither of those.
+		id: "review-tier-docs",
+		script: "scripts/verify-review-tier.ts",
+		violation: (fx) => at(fx, ["--changed-file", join(fx, "changed.txt")]),
+		clean: (fx) => at(fx, ["--changed-file", join(fx, "changed.txt")]),
+		fixtures: ["violation/changed.txt", "clean/changed.txt"],
+	},
+	{
 		id: "handoff-structure",
 		script: "scripts/verify-handoff-structure.ts",
 		violation: (fx) => at(fx, ["--handoff", join(fx, "HANDOFF.md")]),

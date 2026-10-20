@@ -28,7 +28,7 @@
     "src/data/eval-cases.ts": {
       "params": 0,
       "return-any": 0,
-      "empty-catch": 1,
+      "empty-catch": 0,
       "console-log": 0
     },
     "src/data/injection-log.ts": {
@@ -51,6 +51,12 @@
     },
     "src/data/memory-lifecycle.ts": {
       "params": 2,
+      "return-any": 0,
+      "empty-catch": 0,
+      "console-log": 0
+    },
+    "src/data/memory-reads.ts": {
+      "params": 0,
       "return-any": 0,
       "empty-catch": 0,
       "console-log": 0
@@ -170,12 +176,6 @@
       "console-log": 0
     },
     "src/services/chain.ts": {
-      "params": 0,
-      "return-any": 0,
-      "empty-catch": 0,
-      "console-log": 0
-    },
-    "src/services/eval-taskset.ts": {
       "params": 0,
       "return-any": 0,
       "empty-catch": 0,

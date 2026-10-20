@@ -15,7 +15,7 @@
  * Exit code 0 = pass (or SKIP when the tree does not exist), 1 = ratchet violations.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { lineCount, outDegree } from "./budget-measure.js";
 
@@ -89,13 +89,47 @@ export function checkRatchet(current: BudgetBaseline, baseline: BudgetBaseline):
 	return { ok: failures.length === 0, messages: [...failures.map((f) => `FAIL: ${f}`), ...messages] };
 }
 
+/**
+ * Whether an `--update` reason is acceptable: the ratchet may only be re-pinned
+ * by a change that names the Agent Note justifying it. A bare `--update` is how
+ * a saturated file's ceiling gets raised without anyone recording why.
+ * @param reason - The `--reason` value (a path to the note).
+ * @returns The refusal message, `undefined` when the reason is acceptable.
+ */
+export function reasonRefusal(reason: string | undefined): string | undefined {
+	if (reason === undefined || reason.trim() === "") {
+		return "--update 需要理由：`--reason <ADR 路径>`（指向 .agents/notes/{proposed,implemented}/ 下说明本次基线为何变动的笔记）";
+	}
+	const posix = reason.replace(/\\/g, "/").trim();
+	if (!existsSync(posix)) {
+		return `--reason 指向的笔记不存在：${reason}`;
+	}
+	// Validate the resolved path, not the typed one: `notes/proposed/../../x.md`
+	// passes a prefix test while pointing anywhere in the repo.
+	const resolved = resolve(posix).replace(/\\/g, "/");
+	const notesRoot = resolve(".agents/notes").replace(/\\/g, "/");
+	const insideNotes = resolved.startsWith(`${notesRoot}/`) && resolved.endsWith(".md");
+	if (!insideNotes) {
+		return `--reason 必须是 .agents/notes/ 下的 .md 笔记（不认 .. 绕行）：${reason}`;
+	}
+	const lifecycle = relative(notesRoot, resolved).split("/")[0];
+	if (lifecycle !== "proposed" && lifecycle !== "implemented") {
+		return `--reason 必须指向 proposed/ 或 implemented/ 下的笔记：${reason}`;
+	}
+	return undefined;
+}
+
 function argValue(flag: string): string | undefined {
 	const i = process.argv.indexOf(flag);
 	return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
 function main(): number {
-	const positionals = process.argv.slice(2).filter((a) => !a.startsWith("--") && process.argv[process.argv.indexOf(a) - 1] !== "--baseline");
+	// Values that belong to a flag are not positionals: `--baseline X` and
+	// `--reason X` both used to leak X in as the source root.
+	const argv = process.argv.slice(2);
+	const valueFlags = new Set(["--baseline", "--reason"]);
+	const positionals = argv.filter((arg, i) => !arg.startsWith("--") && !valueFlags.has(argv[i - 1] ?? ""));
 	const root = positionals[0] ?? "src";
 	const baselinePath = argValue("--baseline") ?? join(new URL("..", import.meta.url).pathname.replace(/\/$/, ""), "snapshot/budget-baseline.json");
 	const update = process.argv.includes("--update");
@@ -109,9 +143,15 @@ function main(): number {
 		return 0;
 	}
 	if (update) {
+		const reason = argValue("--reason");
+		const refusal = reasonRefusal(reason);
+		if (refusal !== undefined) {
+			console.log(`FAIL: ${refusal}`);
+			return 1;
+		}
 		mkdirSync(dirname(baselinePath), { recursive: true });
 		writeFileSync(baselinePath, `${JSON.stringify(snapshotTree(root), null, 2)}\n`);
-		console.log(`UPDATED ${baselinePath}`);
+		console.log(`UPDATED ${baselinePath}（依据 ${reason}）`);
 		return 0;
 	}
 	if (!existsSync(baselinePath)) {

@@ -8,14 +8,11 @@
  */
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { GLOBAL_WORKSPACE, MEMORY_FILE_PREVIEW_LIMIT, type MemoryStore, type MemoryRecord } from "../store.js";
+import { GLOBAL_WORKSPACE, MEMORY_FILE_PREVIEW_LIMIT, type MemoryScopeTag, type MemoryStore, type MergedMemoryRow } from "../store.js";
 import { buildIdentity, type BuildIdentity } from "../services/build-identity.js";
 import { injectionStats, type InjectionStats } from "../services/injection-stats.js";
 
 export { MEMORY_FILE_PREVIEW_LIMIT };
-
-/** Which partition a card row was read from: the open workspace, or the global (L0) one. */
-export type MemoryScopeTag = "project" | "global";
 
 /** One memory row the card renders. */
 export interface MemoryFileInfo {
@@ -39,10 +36,19 @@ export interface MemoryFileInfo {
 export interface ArchivedFileInfo {
 	id: string;
 	title: string;
-	/** The archive reason, `""` when unclassified (the client renders "—"). */
+	/** The archive reason, `""` when unclassified (the client renders the empty label). */
 	reason: string;
 	/** The surviving row id for merges, `null` otherwise (plain text, not a link). */
 	mergedInto: string | null;
+	/**
+	 * The global row id holding this memory's live copy, `null` when the global
+	 * partition has no live row of this id (or this view *is* the global one).
+	 * The pointer answers one direction only — a promoted source row archived
+	 * here whose content lives on in the global partition; a demoted global row
+	 * points nowhere, because its live copy is in the origin partition, which
+	 * this view cannot see.
+	 */
+	globalCopyId: string | null;
 	/** Update (archive) time in epoch milliseconds. */
 	updatedAt: number;
 }
@@ -70,32 +76,6 @@ export interface MemorySnapshot {
 }
 
 /**
- * One partition's memory rows with the global (L0) partition merged in — the
- * same visibility the injection index and `get` already apply, so the card
- * cannot claim a workspace holds a memory the model never sees (or omit one it
- * always does). A local row with the same id shadows the global one: the only
- * ids both partitions hold are promoted ones, whose source row is archived and
- * therefore absent here, so a surviving local row is the newer truth.
- * @param store - The store to read.
- * @param root - The partition the card has open.
- * @returns The merged rows with the partition each came from.
- */
-function mergedMemoryRows(store: MemoryStore, root: string): { record: MemoryRecord; scope: MemoryScopeTag }[] {
-	const local = store.listAll(root).map((record) => ({ record, scope: "project" as const }));
-	if (root === GLOBAL_WORKSPACE) {
-		return local;
-	}
-	const seen = new Set(local.map((entry) => entry.record.id));
-	const merged: { record: MemoryRecord; scope: MemoryScopeTag }[] = [...local];
-	for (const record of store.listAll(GLOBAL_WORKSPACE)) {
-		if (!seen.has(record.id)) {
-			merged.push({ record, scope: "global" });
-		}
-	}
-	return merged;
-}
-
-/**
  * The read-only snapshot for one workspace partition. A workspace without
  * rows reports `exists: false` (the card shows the empty state); a failing
  * query reports `readError` instead of throwing — the card must observe,
@@ -118,7 +98,9 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 	};
 	let all;
 	try {
-		all = mergedMemoryRows(store, workspaceRoot);
+		// The projection rule lives in the store: this surface renders what it
+		// answers, so the card cannot fork from the injection index's view.
+		all = store.mergedVisible(workspaceRoot);
 		if (all.length === 0) {
 			return { ...absent, archived: safeArchived(store, workspaceRoot), exists: all.length > 0 };
 		}
@@ -161,11 +143,25 @@ export function memorySnapshot(store: MemoryStore, root: string): MemorySnapshot
 /** The archive zone, degrading to empty when the read itself fails. */
 function safeArchived(store: MemoryStore, workspaceRoot: string): ArchivedFileInfo[] {
 	try {
+		// One read for the whole zone, never one per row. The pointer set is the
+		// global partition's live rows *promoted out of this workspace*: the ids
+		// are partitioned per workspace, so an unrelated partition's global row
+		// of the same id is not this memory's live copy.
+		const promotedHere = new Set(
+			workspaceRoot === GLOBAL_WORKSPACE
+				? []
+				: store
+						.list(GLOBAL_WORKSPACE)
+						.filter((record) => record.originWorkspace === workspaceRoot)
+						.map((record) => record.id),
+		);
 		return store.listArchived(workspaceRoot, 50).map((record) => ({
 			id: record.id,
 			title: record.title,
 			reason: record.archiveReason,
 			mergedInto: record.mergedInto,
+			// Only a promotion archives a source row while the content lives on.
+			globalCopyId: record.archiveReason === "promoted-source" && promotedHere.has(record.id) ? record.id : null,
 			updatedAt: Date.parse(record.updatedAt) || 0,
 		}));
 	} catch {
@@ -191,7 +187,7 @@ function safeInjection(store: MemoryStore, workspaceRoot: string): InjectionStat
 	}
 }
 
-function infoOf(entry: { record: MemoryRecord; scope: MemoryScopeTag }, store: MemoryStore): MemoryFileInfo {
+function infoOf(entry: MergedMemoryRow, store: MemoryStore): MemoryFileInfo {
 	const record = entry.record;
 	return {
 		id: record.id,

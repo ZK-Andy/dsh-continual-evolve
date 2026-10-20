@@ -57,21 +57,3 @@ export function secretLeakReason(content: string): string | undefined {
 	}
 	return undefined;
 }
-
-/**
- * Mask every live-credential match in stored text (P5 `eval_cases` replies):
- * same patterns as detection, but masking instead of blocking — eval rows
- * must stay replayable, so a key blocks nothing and lands masked as
- * `[redacted-<label>]`. Masking is one-way (audit reads masked text).
- * The module patterns carry no `g` flag (detection reads the first match),
- * so each is re-compiled with `g` here.
- * @param content - The text to mask.
- * @returns The text with every secret match masked.
- */
-export function redactText(content: string): string {
-	let masked = content;
-	for (const { label, regex } of SECRET_PATTERNS) {
-		masked = masked.replace(new RegExp(regex.source, "g"), `[redacted-${label}]`);
-	}
-	return masked;
-}

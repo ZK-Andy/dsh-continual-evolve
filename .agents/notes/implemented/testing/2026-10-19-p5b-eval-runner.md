@@ -23,9 +23,9 @@ runner 住 `src/services/`（用户拍板），宿主平面手动触发工具 `e
 
 **预算**：每调用 `usage` 经 `normalizeUsage` 记账为 tokens；上限由工具参数 `budgetCapTokens` 传入（P5a 键契约冻结，不新增 `state` 键），超限记 `budget_exceeded`。首跑即实测：无 cap 时如实记录，供下次发版前折算。30 条上限（`EVAL_TASKS_MAX`）与 100% 全存沿 P5a。
 
-**落盘**：`eval_cases` 行经 store 新方法 `writeEvalCases`（data 层纯函数已存在，store 只做薄委托）；`eval:last-four-arm` 按 P5a 契约写；`compare.md` 文本由工具输出返回，操作员拷入 `evals/runs/<date>/` 提交（`runs/` 全忽略、唯 compare 可交，P5a 语义不变）。
+**落盘**：`eval_cases` 行经 store 新方法 `writeEvalCases`（data 层纯函数已存在，store 只做薄委托）；`eval:last-four-arm` 按 P5a 契约写；`compare.md` 文本由工具输出返回，操作员拷入 `evals/runs/<date>/` 提交（`runs/` 全忽略、唯 compare 可交，P5a 语义不变）。2026-10-20 退役：合成四臂 runner 删除，`writeEvalCases` 与 `eval:last-*` 读数常量随之移除，`files` 白名单里的 `evals/tasks/*.json` 与 `evals/baseline/recall.json` 同时移出（包内无读者，两者仍在仓内）（见 `../process/2026-10-20-architecture-drift-remediation.md`）。
 
-**运行时读盘**：npm `files` 增 `evals/tasks/*.json`、`evals/baseline/recall.json`、`evals/README.md`（pack 门禁只要求白名单非空匹配，相容）；runner 以 `import.meta` 向上定位 `evals/`，缺席即报可用性错误、不抛穿透。
+**运行时读盘**：包内只留 `evals/README.md`（2026-10-20 起；上面退役句移出的两项不再发包，pack 门禁只要求白名单非空匹配，相容）；读 `evals/` 的只有不随包发布的离线脚本（`scripts/eval-tasks.ts`、`scripts/eval-recall.ts`），它们以 `import.meta.dirname` 定位仓库根的 `evals/`。
 
 **任务集 5→22**：每类记忆 ≥3 条、负例 ≥2、冲突 ≥2、`file-exists`/`test-pass` 各 ≥2；全部过 `eval:tasks` 离线校验（含 30 条上限）。
 
@@ -54,4 +54,4 @@ P5a 实测：`445a479` 单批 43 文件 +1636/-218（含 ADR v2–v4 三轮评�
 - **candidate/reflect 首跑伪造差异（如 current 加噪）**：对照差不可复现，违"有可执行验证器才算改进"。落败：恒等 current + 报告明示。
 - **test-pass 判据在 runner 内禁执行（只支持两判据）**：任务集覆盖少一维，RSI 判据三件套缺角；手动触发 + 仓库 fixture + 超时截断下风险可控。落败：执行但设限。
 - **eval_cases 行由工具输出经操作员手写入库**：多一手、多一错，且 P5a 契约"runner 写、卡片读"落空。落败：store 薄委托直写。
-- **任务 fixture 打包进 lib（import JSON）**：fixture 与代码同版本是优点，但 22 文件 import 笨重、diff 噪声大；且 `evals/README.md` 方法文档应同行。落败：`files` 白名单增三项、运行时读盘。
+- **任务 fixture 打包进 lib（import JSON）**：fixture 与代码同版本是优点，但 22 文件 import 笨重、diff 噪声大；且 `evals/README.md` 方法文档应同行。落败：`files` 白名单收 `evals/README.md`、运行时读盘。

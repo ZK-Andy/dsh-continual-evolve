@@ -15,7 +15,7 @@
 import { runChain, type ChainLink, type ChainOutcome } from "./chain.js";
 import { observedUsageOf } from "./llm-call.js";
 import type { ModelSelection } from "./model-route.js";
-import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement } from "./extraction-surface.js";
+import { boundaryCursorOf, eventsAfterCursor, evaluateSlice, seqOfCursor, serializeIncrement, type SurfaceReader } from "./extraction-surface.js";
 import { CHEAP_INCREMENT_MAX, cheapPrompt, classifyPrompt } from "./extraction-prompt.js";
 import { todayUtc } from "./prompt-date.js";
 import { extractionClassify, extractionGate } from "./subagent-defs.js";
@@ -47,31 +47,16 @@ export async function runExtractionInner(deps: ExtractionDeps, target: Extractio
 		workspaceId: target.workspaceId,
 		trigger: opts.trigger,
 	};
-	if (target.internalAgent) {
-		store.logSkipped({ ...ledgerBase, skipReason: "internal-agent", status: "skipped" });
-		return { status: "skipped", skipReason: "internal-agent" };
+	const ready = preflightOf(deps, target, opts, ledgerBase);
+	if ("skipped" in ready) {
+		return ready.skipped;
 	}
-	if (target.workspaceId === undefined) {
-		store.logSkipped({ ...ledgerBase, skipReason: "no-workspace", status: "skipped" });
-		return { status: "skipped", skipReason: "no-workspace" };
-	}
-	if (deps.surface === undefined) {
-		store.logSkipped({ ...ledgerBase, skipReason: "no-surface", status: "skipped" });
-		return { status: "skipped", skipReason: "no-surface" };
-	}
-	if (target.provider === undefined || target.model === undefined || deps.llm === undefined) {
-		store.logSkipped({ ...ledgerBase, skipReason: "no-route", status: "skipped" });
-		return { status: "skipped", skipReason: "no-route" };
-	}
-	// Narrowed once, here: the loader takes one concrete route and session.
-	const workspaceId: string = target.workspaceId;
-	const route: ModelSelection = { provider: target.provider, model: target.model };
-	const call: SubagentCall = { llm: deps.llm, route, sessionId: target.sessionId, today: opts.today ?? todayUtc() };
+	const { workspaceId, route, call, surface } = ready;
 
 	const cursor = store.cursor(workspaceId, target.sessionId);
 	let all: readonly unknown[];
 	try {
-		const snapshot = await deps.surface.readSurface(target.sessionId);
+		const snapshot = await surface.readSurface(target.sessionId);
 		all = Array.isArray(snapshot.events) ? snapshot.events : [];
 	} catch (error) {
 		const { message, detail } = errorText(error);
@@ -121,6 +106,49 @@ export async function runExtractionInner(deps: ExtractionDeps, target: Extractio
 		throw new Error("extraction chain ended without a result");
 	}
 	return item.result;
+}
+
+/** The ledger triple every pre-flight skip writes; `workspaceId` is still optional here. */
+type SkipLedger = Omit<ExtractionItem["ledgerBase"], "workspaceId"> & { workspaceId: string | undefined };
+
+/** What the pre-flight decided: a target that cannot run, or the narrowed inputs a run needs. */
+type Preflight =
+	| { skipped: ExtractionResult }
+	| { workspaceId: string; route: ModelSelection; call: SubagentCall; surface: SurfaceReader };
+
+/**
+ * The pre-flight guards: a target with no partition, no trajectory reader, no
+ * route, or an internal agent lands one ledger row and stops before any read,
+ * so a skipped wake-up is as auditable as a landed run.
+ * @param deps - The store, the trajectory reader, and the LLM.
+ * @param target - Whose session, in which workspace, on which route.
+ * @param opts - The trigger and the increment ceiling.
+ * @param ledgerBase - The run's ledger provenance.
+ * @returns The skip outcome, or the narrowed partition, route, and call.
+ */
+function preflightOf(deps: ExtractionDeps, target: ExtractionTarget, opts: RunOptions, ledgerBase: SkipLedger): Preflight {
+	const { store } = deps;
+	if (target.internalAgent) {
+		store.logSkipped({ ...ledgerBase, skipReason: "internal-agent", status: "skipped" });
+		return { skipped: { status: "skipped", skipReason: "internal-agent" } };
+	}
+	if (target.workspaceId === undefined) {
+		store.logSkipped({ ...ledgerBase, skipReason: "no-workspace", status: "skipped" });
+		return { skipped: { status: "skipped", skipReason: "no-workspace" } };
+	}
+	if (deps.surface === undefined) {
+		store.logSkipped({ ...ledgerBase, skipReason: "no-surface", status: "skipped" });
+		return { skipped: { status: "skipped", skipReason: "no-surface" } };
+	}
+	if (target.provider === undefined || target.model === undefined || deps.llm === undefined) {
+		store.logSkipped({ ...ledgerBase, skipReason: "no-route", status: "skipped" });
+		return { skipped: { status: "skipped", skipReason: "no-route" } };
+	}
+	// Narrowed once, here: the loader takes one concrete route and session.
+	const workspaceId: string = target.workspaceId;
+	const route: ModelSelection = { provider: target.provider, model: target.model };
+	const call: SubagentCall = { llm: deps.llm, route, sessionId: target.sessionId, today: opts.today ?? todayUtc() };
+	return { workspaceId, route, call, surface: deps.surface };
 }
 
 /** Assemble the extraction chain: pre-gate (fail open) → classify (fail open) → proposal call. */

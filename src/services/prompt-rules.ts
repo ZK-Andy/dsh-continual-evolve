@@ -11,6 +11,15 @@ import { secretLeakReason } from "../data/secret.js";
 
 export { isValidMemoryId as isValidPromptId, slugifyId as slugifyPromptId } from "./memory-rules.js";
 
+/** What a single prompt proposal produced. */
+export interface PromptProposalOutcome {
+	id: string;
+	action: "create" | "update" | "delete";
+	ok: boolean;
+	/** Blocking reason when `ok` is false. */
+	reason?: string;
+}
+
 /** One proposed prompt mutation — the closed shape the write paths speak. */
 export interface PromptProposal {
 	action: "create" | "update" | "delete";

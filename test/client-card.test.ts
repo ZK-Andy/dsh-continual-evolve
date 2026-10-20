@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { ARCHIVE_REASONS } from "../src/data/records.js";
 
 const BUNDLE_PATH = fileURLToPath(new URL("../client/client.js", import.meta.url));
 
@@ -1142,5 +1143,151 @@ describe("workspace selection and query helpers", () => {
 		expect(match(row, ["id", "title"], "桌面")).toBe(true);
 		expect(match(row, ["id", "title"], "missing")).toBe(false);
 		expect(match(row, ["count"], "3")).toBe(false);
+	});
+});
+
+describe("archive zone", () => {
+	/** The bundle's own dictionaries, captured from the locale registration. */
+	function dictsOf(): Record<string, Record<string, string>> {
+		const registered: Array<{ dicts: Record<string, Record<string, string>> }> = [];
+		const locale = {
+			register: (_ns: string, dicts: Record<string, Record<string, string>>) => {
+				registered.push({ dicts });
+				return () => undefined;
+			},
+			bind: () => (key: string) => key,
+		};
+		const { exports } = loadBundle(makeReact());
+		(exports.apply as (ctx: unknown) => void)(makeCtx(locale).ctx);
+		return registered[0]!.dicts;
+	}
+
+	/** The bundle's `{placeholder}` interpolation, for a test-side t. */
+	function format(template: string, params: Record<string, unknown>): string {
+		return template.replace(/\{(\w+)\}/g, (match, key: string) => (params[key] === undefined ? match : String(params[key])));
+	}
+
+	/** Every string a rendered tree carries. */
+	function flatText(node: unknown): string {
+		if (Array.isArray(node)) {
+			return node.map(flatText).join(" ");
+		}
+		if (node === null || node === undefined || typeof node !== "object") {
+			return typeof node === "string" ? node : "";
+		}
+		const element = node as ElementLike;
+		return [flatText(element.children)].join(" ");
+	}
+
+	const ARCHIVED = [
+		{
+			id: "release-gate",
+			title: "发版前必须 CI 全绿",
+			reason: "promoted-source",
+			mergedInto: null,
+			globalCopyId: "release-gate",
+			updatedAt: Date.parse("2026-10-19T00:00:00.000Z"),
+		},
+		{
+			id: "old-habit",
+			title: "旧习惯",
+			reason: "review-archive",
+			mergedInto: "new-habit",
+			globalCopyId: null,
+			updatedAt: Date.parse("2026-10-18T00:00:00.000Z"),
+		},
+	];
+
+	it("names every archive reason in both languages", () => {
+		const dicts = dictsOf();
+		const { exports } = loadBundle(makeReact());
+		const label = exports.archiveReasonLabel as (t: (key: string) => string, reason: string) => string;
+		for (const reason of ["promoted-source", "review-archive", "demoted-source", "merged-duplicate"]) {
+			const key = label((name) => name, reason);
+			expect(key).not.toBe(reason);
+			for (const language of ["zh", "en"]) {
+				expect(dicts[language]![key]?.length ?? 0).toBeGreaterThan(0);
+			}
+		}
+		// An unclassified row says so; it never prints a bare token.
+		expect(label((name) => name, "")).toBe("archiveReasonNone");
+		expect(label((name) => name, "something-new")).toBe("archiveReasonNone");
+		// Every token the store can write has a label here: the server set is the
+		// source, so a sixth reason fails this test instead of rendering as 未分类.
+		for (const reason of ARCHIVE_REASONS) {
+			if (reason === "") continue;
+			const key = label((name) => name, reason);
+			expect(key).not.toBe("archiveReasonNone");
+			// A mapping without a translation renders the bare key: check both
+			// dictionaries, not just that the mapping exists.
+			expect(dicts.zh![key]?.length ?? 0).toBeGreaterThan(0);
+			expect(dicts.en![key]?.length ?? 0).toBeGreaterThan(0);
+		}
+	});
+
+	it("renders archived rows in the list's own row shape, read-only and without bare tokens", () => {
+		const dicts = dictsOf();
+		const t = (key: string, params?: Record<string, unknown>): string => {
+			const template = dicts.zh![key] ?? key;
+			return params === undefined ? template : format(template, params);
+		};
+		const { exports } = loadBundle(makeReact());
+		const render = exports.memoryFilesBlock as (t: unknown, UI: unknown, vm: unknown) => ElementLike[];
+		const parts = render(t, null, {
+			query: "",
+			now: Date.parse("2026-10-20T00:00:00.000Z"),
+			snapshot: {
+				files: [
+					{ id: "live", title: "活行", description: "", type: "user", status: "active", scope: "project", updatedAt: Date.parse("2026-10-20T00:00:00.000Z"), suggestExport: false, notWhen: "" },
+				],
+				fileCount: 1,
+				archived: ARCHIVED,
+				quarantined: [],
+				build: null,
+				injection: null,
+			},
+			expandedFile: null,
+			preview: null,
+			onQueryChange: () => undefined,
+			onToggleFile: () => undefined,
+			onRefresh: () => undefined,
+		});
+		const lists = findAllByClassName({ type: "root", children: parts }, "dce-list");
+		// The active list, then the archive zone's own list.
+		expect(lists).toHaveLength(2);
+		/** The row descriptors a list holds (our stub keeps the map's array as one child), rendered. */
+		const rowsOf = (list: ElementLike): ElementLike[] => {
+			const descriptors = (list.children as ElementLike[][])[0] ?? [];
+			return descriptors.map((row) => (row.type as (props: never) => unknown)(row.props as never) as ElementLike);
+		};
+		const archivedRows = rowsOf(lists[1]!);
+		expect(archivedRows).toHaveLength(2);
+		/** Our react stub keeps a children array one level down; unwrap to the element. */
+		const only = (node: unknown): ElementLike => {
+			let current: unknown = node;
+			while (Array.isArray(current)) {
+				current = current[0];
+			}
+			return current as ElementLike;
+		};
+		const [activeRow] = rowsOf(lists[0]!);
+		const activeBody = only(activeRow!.children);
+		for (const row of archivedRows) {
+			// Same item/row shell as the active list; only the actions differ.
+			expect(row.type).toBe("li");
+			expect(row.props?.className).toBe(activeRow!.props?.className);
+			const body = only(row.children);
+			expect(body.props?.className).toBe(`${String(activeBody.props?.className)} dce-row-readonly`);
+			expect(findAllByClassName(body, "dce-file-name")).toHaveLength(1);
+		}
+		const promoted = flatText(archivedRows[0]);
+		expect(promoted).toContain("发版前必须 CI 全绿");
+		expect(promoted).toContain("已提级至全局");
+		expect(promoted).toContain("内容在全局");
+		expect(promoted).not.toContain("promoted-source");
+		const merged = flatText(archivedRows[1]);
+		expect(merged).toContain("评审归档");
+		expect(merged).toContain("并入 new-habit");
+		expect(merged).not.toContain("review-archive");
 	});
 });

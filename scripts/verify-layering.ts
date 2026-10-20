@@ -4,7 +4,9 @@
  * import edge is explicitly listed (R1 — the two assembly files carry explicit
  * edges too, no wildcard privileges); SQL and table-name literals live only in
  * `src/data` (R2); volatile config reads (`config.X?.y?.get(`) stay in
- * `src/index.ts` (R3); the src root holds exactly the four assembly/shape
+ * `src/index.ts` (R3: the volatile `.get(` unpacking and the `EvolveConfig`
+ * name itself — delegates receive resolved values, never the config object);
+ * the src root holds exactly the four assembly/shape
  * files (R4 — every file has a home, no new root central contracts). R5
  * (client function hard 80) is owned by `verify-src-budgets.ts`.
  *
@@ -44,7 +46,7 @@ const EDGES: Record<string, readonly string[]> = {
 	// The account layer's single import site for the store assembly.
 	"data/database.ts": [],
 	"data/archive-backfill.ts": [],
-	"data/eval-cases.ts": ["data/records", "data/secret"],
+	"data/eval-cases.ts": ["data/records"],
 	"data/search-query.ts": [],
 	"data/ledger.ts": ["store-types"],
 	"data/migrate.ts": ["data/archive-backfill", "data/eval-cases", "data/injection-log", "data/schema", "store-types"],
@@ -56,7 +58,8 @@ const EDGES: Record<string, readonly string[]> = {
 	"data/resource-kinds.ts": ["data/repository"],
 	"data/review-accounts.ts": ["data/records", "data/repository", "data/secret", "store-types"],
 	// Guarded table shapes: the DDL single source, the drift probe, and the rebuild.
-	"data/schema.ts": ["data/eval-cases", "data/item-events", "data/records", "data/review-accounts", "store-types"],
+	"data/memory-reads.ts": ["data/records", "data/repository", "store-types"],
+	"data/schema.ts": ["data/eval-cases", "data/item-events", "data/ledger", "data/records", "data/review-accounts", "store-types"],
 	// The review queue's event tier, its writer, and the derived settled streak.
 	"data/item-events.ts": ["data/review-accounts"],
 	// Injection ledger: one row per session, pruned with the other ledgers.
@@ -97,7 +100,6 @@ const EDGES: Record<string, readonly string[]> = {
 	"pages/memory-card/settings.ts": ["pages/memory-card/card-http"],
 	"pages/memory-card/workspace-hint.ts": [],
 	"services/agent.ts": [],
-	"services/eval-taskset.ts": [],
 	"services/chain.ts": [],
 	"services/extraction.ts": [
 		"services/extraction-failure",
@@ -235,7 +237,15 @@ const EDGES: Record<string, readonly string[]> = {
 	"services/review-tiering.ts": ["services/review-prompt", "services/review-ring", "services/review-row"],
 	"data/tiering.ts": ["data/memory-lifecycle", "data/records", "data/repository"],
 	"data/memory-lifecycle.ts": ["data/records", "data/resource-kinds"],
-	"data/accounts.ts": ["data/eval-cases", "data/injection-log", "data/item-events", "data/review-accounts", "data/tiering", "data/usage-accounts"],
+	"data/accounts.ts": [
+		"data/eval-cases",
+		"data/injection-log",
+		"data/item-events",
+		"data/memory-reads",
+		"data/review-accounts",
+		"data/tiering",
+		"data/usage-accounts",
+	],
 	"services/skill-apply.ts": [
 		"data/ledger",
 		"data/records",
@@ -356,6 +366,8 @@ const SQL_RE = new RegExp(
 	"i",
 );
 const CONFIG_GET_RE = /config\.\w+\?\.\w+\?\.get\(/;
+/** The plugin's config type: naming it outside the assembly root is the same leak as reading it. */
+const CONFIG_TYPE_RE = /\bEvolveConfig\b/;
 
 function collectTs(dir: string, out: string[] = []): string[] {
 	for (const name of readdirSync(dir)) {
@@ -421,6 +433,9 @@ function main(): number {
 		// R3: volatile config reads stay in the assembly root.
 		if (key !== "index.ts" && CONFIG_GET_RE.test(text)) {
 			errors.push(`${rel}: R3 config.X?.y?.get( outside src/index.ts — unpack volatile config only in the assembly root`);
+		}
+		if (key !== "index.ts" && CONFIG_TYPE_RE.test(stripComments(text))) {
+			errors.push(`${rel}: R3 EvolveConfig named outside src/index.ts — mounts receive resolved values, never the config object`);
 		}
 	}
 	console.log(`Checked ${files.length} src modules`);

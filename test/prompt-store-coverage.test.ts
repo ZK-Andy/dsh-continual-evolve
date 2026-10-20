@@ -151,18 +151,4 @@ describe("dormant global paths", () => {
 		expect(store.listPrompts(WS).filter((record) => record.id === "sh").map((record) => record.body)).toEqual(["local-body"]);
 		expect(store.listPrompts("").filter((record) => record.id === "sh").map((record) => record.body)).toEqual(["global-body"]);
 	});
-
-	it("writes eval cases through the store surface and reads them back", () => {
-		const rows = [
-			{ runId: "eval-test", taskId: "task-001", arm: "base", workspaceId: WS, query: "q", injectionPreview: "p", reply: "r", createdAt: "2026-10-20" },
-		] as never[];
-		expect(store.writeEvalCases(rows)).toBe(1);
-		const raw = rawDb();
-		try {
-			const saved = raw.prepare("SELECT task_id, arm, reply FROM eval_cases WHERE run_id = 'eval-test'").all() as { task_id: string; arm: string; reply: string }[];
-			expect(saved).toEqual([{ task_id: "task-001", arm: "base", reply: "r" }]);
-		} finally {
-			raw.close();
-		}
-	});
 });

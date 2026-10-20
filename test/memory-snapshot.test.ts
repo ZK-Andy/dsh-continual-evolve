@@ -57,7 +57,7 @@ describe("memorySnapshot", () => {
 	it("renders nothing when the store query throws (the card must observe, never break)", () => {
 		const hostile = new Proxy({}, {
 			get(_target, prop) {
-				if (prop === "listAll") {
+				if (prop === "mergedVisible") {
 					throw new Error("boom");
 				}
 				return undefined;
@@ -141,6 +141,19 @@ describe("memorySnapshot 全局分区可见性", () => {
 		expect(global.files.map((file) => [file.id, file.scope])).toEqual([["fedora-env", "project"]]);
 	});
 
+	it("keeps the card's active set identical to the injection list's", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(seed("project-note", "reference", "项目细节")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		const snapshot = memorySnapshot(store, workspace);
+		// One projection rule: whatever the index injects is what the card lists.
+		expect(snapshot.files.map((file) => file.id).sort()).toEqual(store.list(workspace).map((record) => record.id).sort());
+		expect(snapshot.files.map((file) => [file.id, file.scope]).sort()).toEqual([
+			["fedora-env", "global"],
+			["project-note", "project"],
+		]);
+	});
+
 	it("a workspace with no rows of its own still sees the global partition", () => {
 		expect(seed("fedora-env")).toBe(true);
 		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
@@ -165,6 +178,70 @@ describe("memorySnapshot 全局分区可见性", () => {
 		const snapshot = memorySnapshot(store, workspace);
 		expect(snapshot.files).toEqual([]);
 		expect(snapshot.quarantined).toEqual([{ id: "fedora-env", scope: "global", reason: expect.stringContaining("巡检异常") }]);
+	});
+});
+
+describe("the archived zone", () => {
+	it("points a promoted source row at its live global copy", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.archived).toHaveLength(1);
+		expect(snapshot.archived[0]).toMatchObject({
+			id: "fedora-env",
+			reason: "promoted-source",
+			mergedInto: null,
+			globalCopyId: "fedora-env",
+		});
+	});
+
+	it("leaves the pointer empty when the archived row is the only copy", () => {
+		expect(seed("old-habit")).toBe(true);
+		const raw = new DatabaseSync(store.path);
+		raw
+			.prepare("UPDATE memories SET status = 'archived', archive_reason = 'review-archive' WHERE workspace_id = ? AND id = 'old-habit'")
+			.run(workspace);
+		raw.close();
+		const snapshot = memorySnapshot(store, workspace);
+		expect(snapshot.archived[0]).toMatchObject({ id: "old-habit", reason: "review-archive", globalCopyId: null });
+	});
+
+	it("never points another partition's archived row at a same-id global row", () => {
+		// `memories` is keyed by (workspace_id, id), so a global row promoted out
+		// of one workspace can share an id with another workspace's archived row.
+		// The pointer must be about *this* workspace's promotion, not the id.
+		expect(seed("shared")).toBe(true);
+		expect(store.promoteMemory(workspace, "shared").ok).toBe(true);
+		const other = mkdtempSync(join(tmpdir(), "evolve-snapshot-other-"));
+		try {
+			const raw = new DatabaseSync(store.path);
+			raw
+				.prepare(
+					"INSERT INTO memories (workspace_id, id, type, title, description, body, status, archive_reason, created_at, updated_at) VALUES (?, 'shared', 'user', 't', 'd', 'b', 'archived', 'promoted-source', 't', 't')",
+				)
+				.run(other);
+			raw.close();
+			const snapshot = memorySnapshot(store, other);
+			expect(snapshot.archived[0]).toMatchObject({ id: "shared", globalCopyId: null });
+			// And the promoting workspace still gets its pointer.
+			expect(memorySnapshot(store, workspace).archived[0]?.globalCopyId).toBe("shared");
+		} finally {
+			rmSync(other, { recursive: true, force: true });
+		}
+	});
+
+	it("never points a global view at itself", () => {
+		expect(seed("fedora-env")).toBe(true);
+		expect(store.promoteMemory(workspace, "fedora-env").ok).toBe(true);
+		// Archive the global copy below the gates: a global row is the read's
+		// last resort, so the zone must not claim a live copy of itself.
+		const raw = new DatabaseSync(store.path);
+		raw
+			.prepare("UPDATE memories SET status = 'archived', archive_reason = 'review-archive' WHERE workspace_id = '' AND id = 'fedora-env'")
+			.run();
+		raw.close();
+		const global = memorySnapshot(store, "");
+		expect(global.archived.map((row) => [row.id, row.globalCopyId])).toEqual([["fedora-env", null]]);
 	});
 });
 
