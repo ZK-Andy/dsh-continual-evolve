@@ -24,8 +24,6 @@
 
 Every memory and skill lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace). Session start injects its index as a single prompt section, and the plugin's code is the literal **sole writer** — every model proposal passes mechanical gates inside one transaction before it lands. No safety property depends on the model behaving.
 
-> **Maintenance status (from 2026-11): feature-frozen.** The project is in low-frequency maintenance: security and compatibility fixes only, no new features; issues may go unanswered for a while. Existing versions stay usable; the repository and npm package will not be deleted or unpublished.
-
 ## Highlights
 
 - **One store, one writer** — all state in one SQLite file; the plugin is the only code that writes it.
