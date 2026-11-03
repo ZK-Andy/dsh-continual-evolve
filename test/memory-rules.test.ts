@@ -70,8 +70,24 @@ describe("secretLeakReason", () => {
 		expect(secretLeakReason("token ghp_0123456789abcdefghijklmnopqrstuv")).toBeDefined();
 		expect(secretLeakReason("AKIAIOSFODNN7EXAMPLE")).toBeDefined();
 		expect(secretLeakReason("apiKey: '0123456789abcdefghij'")).toBeDefined();
+		expect(secretLeakReason('X-API-KEY: "0123456789abcdefghij"')).toBeDefined();
 		expect(secretLeakReason("-----BEGIN RSA PRIVATE KEY-----")).toBeDefined();
 		expect(secretLeakReason("as_sk_0123456789")).toBeDefined();
+	});
+
+	it("flags prefixed credential names", () => {
+		expect(secretLeakReason('MY_API_KEY="0123456789abcdefghij"')).toBeDefined();
+		expect(secretLeakReason('OPENAI_API_KEY="0123456789abcdefghij"')).toBeDefined();
+		expect(secretLeakReason('GITHUB_TOKEN="0123456789abcdefghij"')).toBeDefined();
+		expect(secretLeakReason('DB_PASSWORD="0123456789abcdefghij"')).toBeDefined();
+		expect(secretLeakReason('APP_SECRET="0123456789abcdefghij"')).toBeDefined();
+	});
+
+	it("passes prefixed placeholders and non-assignment identifiers", () => {
+		expect(secretLeakReason('MY_API_KEY="YOUR_API_KEY_HERE"')).toBeUndefined();
+		expect(secretLeakReason('API_KEY_ROTATION = "0123456789abcdefghij"')).toBeUndefined();
+		expect(secretLeakReason('TOKENIZER = "0123456789abcdefghij"')).toBeUndefined();
+		expect(secretLeakReason("rotate the api key every 90 days")).toBeUndefined();
 	});
 
 	it("passes placeholders and prose", () => {

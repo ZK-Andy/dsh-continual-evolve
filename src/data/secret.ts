@@ -25,11 +25,12 @@ const SECRET_PATTERNS: readonly { label: string; regex: RegExp }[] = [
 	{ label: "private key block", regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/ },
 	{
 		label: "credential assignment",
-		// The credential-name group is manually case-insensitive ("apiKey" in
-		// JSON, "API_KEY" in env examples) so the placeholder lookahead stays
-		// case-sensitive: it excludes only ALL-CAPS placeholders
-		// ("YOUR_KEY_HERE"), not real mixed/lowercase literals.
-		regex: /\b(?:[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd])\b["']?\s*[:=]\s*["'](?!["']*[A-Z0-9_]+["'])[A-Za-z0-9+/_-]{16,}["']/,
+		// Name group manually case-insensitive ("apiKey" JSON, "API_KEY" env) so
+		// the placeholder lookahead can stay case-sensitive (ALL-CAPS only).
+		// Lookbehind admits `_`/`-` prefixes (MY_API_KEY, X-API-KEY, #904). What
+		// really keeps suffixed identifiers (API_KEY_ROTATION) and prose out is
+		// the mandatory `[:=]` after the name; the `\b` there is belt-and-braces.
+		regex: /(?<![A-Za-z0-9])(?:[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd])\b["']?\s*[:=]\s*["'](?!["']*[A-Z0-9_]+["'])[A-Za-z0-9+/_-]{16,}["']/,
 	},
 ];
 
