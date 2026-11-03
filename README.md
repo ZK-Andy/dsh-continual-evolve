@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-948%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-950%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -23,6 +23,8 @@
 <p align="center">中文 | <a href="README.en.md">English</a></p>
 
 全部记忆与技能住在一个中央 SQLite 库里（`~/.dsh/evolve/memory.db`，按工作区路径行分区）。会话开局注入它的索引，而插件的代码是字面意义的**唯一写者**——每条模型提案都要在一个事务内过机械门禁才会落盘。这里没有任何安全属性依赖模型自觉。
+
+> **维护状态（2026-11 起）：功能冻结。** 项目转入低频维护：只接受安全修复与兼容性补丁，不再新增功能；issue 不保证及时响应。已在用的版本可继续使用，仓库与 npm 包不删除、不收回。
 
 ## 亮点
 
@@ -157,7 +159,7 @@ dsh plugin add ZK-Andy/dsh-continual-evolve
 
 ```bash
 pnpm install && pnpm build   # 装依赖 + 干净构建 -> lib/
-pnpm test                    # vitest（948 个测试 / 77 文件）
+pnpm test                    # vitest（950 个测试 / 77 文件）
 pnpm test:coverage           # v8 覆盖率，CI 门禁 91/83
 pnpm lint                    # oxlint src test client
 pnpm check:docs              # ADR 格式、文档预算、链接、治理、交接

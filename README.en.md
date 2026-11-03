@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome DSH plugin"></a>
-  <img src="https://img.shields.io/badge/tests-948%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-950%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage_statements-97%25-brightgreen" alt="Coverage statements">
   <img src="https://img.shields.io/badge/coverage_branches-92%25-green" alt="Coverage branches">
   <img src="https://img.shields.io/badge/coverage_functions-99%25-brightgreen" alt="Coverage functions">
@@ -23,6 +23,8 @@
 <p align="center"><a href="README.md">中文</a> | English</p>
 
 Every memory and skill lives in one central SQLite database (`~/.dsh/evolve/memory.db`, rows partitioned by workspace). Session start injects its index as a single prompt section, and the plugin's code is the literal **sole writer** — every model proposal passes mechanical gates inside one transaction before it lands. No safety property depends on the model behaving.
+
+> **Maintenance status (from 2026-11): feature-frozen.** The project is in low-frequency maintenance: security and compatibility fixes only, no new features; issues may go unanswered for a while. Existing versions stay usable; the repository and npm package will not be deleted or unpublished.
 
 ## Highlights
 
@@ -157,7 +159,7 @@ Every `review.*` field is volatile: the settings card edits it without a remount
 
 ```bash
 pnpm install && pnpm build   # deps + clean build -> lib/
-pnpm test                    # vitest (948 tests / 77 files)
+pnpm test                    # vitest (950 tests / 77 files)
 pnpm test:coverage           # v8 coverage, CI-enforced thresholds (91/83)
 pnpm lint                    # oxlint src test client
 pnpm check:docs              # ADR format, doc budgets, links, governance, handoff
